@@ -27,6 +27,18 @@ def test_plugin_error_rejects_invalid_codes(code: str) -> None:
         PluginError(code=code, message="message")
 
 
-def test_plugin_error_details_must_be_json_serializable() -> None:
+@pytest.mark.parametrize(
+    "details",
+    [{"x": object()}, {1: "x"}, {"value": float("nan")}, {"value": float("inf")}],
+)
+def test_plugin_error_details_must_be_strict_json(details: object) -> None:
     with pytest.raises(ValueError):
-        PluginExecutionError(code="EXEC_FAILED", message="failed", details={"x": object()})
+        PluginExecutionError(code="EXEC_FAILED", message="failed", details=details)
+
+
+def test_plugin_error_preserves_nested_json_details() -> None:
+    details = {"bounds": [1, 2.5, None, True]}
+
+    error = PluginExecutionError(code="EXEC_FAILED", message="failed", details=details)
+
+    assert error.details == details

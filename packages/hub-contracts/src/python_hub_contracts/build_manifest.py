@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, Field, StringConstraints
+from pydantic import BeforeValidator, Field, StringConstraints, field_validator
 
 from .common import (
     PluginId,
@@ -61,6 +61,14 @@ class PluginBuildManifest(StrictContractModel):
     sdk_version: SemanticVersion
     source_sha256: Sha256
     built_at: datetime
+
+    @field_validator("built_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        """Require audit timestamps to identify an unambiguous instant."""
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("timestamp must be timezone-aware")
+        return value
 
     def assert_matches_plugin(self, plugin: PluginManifest) -> None:
         """Raise when build metadata is incompatible with its source manifest."""

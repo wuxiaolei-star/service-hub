@@ -8,6 +8,7 @@ from pydantic import Field, field_validator, model_validator
 
 from .build_manifest import Sha256
 from .common import PluginId, RelativeProtocolPath, SemanticVersion, StrictContractModel
+from .json_values import validate_json_value
 
 
 class JobStatus(StrEnum):
@@ -92,6 +93,12 @@ class JobRuntimeSpec(StrictContractModel):
     directories: RuntimeDirectories
     execution: RuntimeExecution
 
+    @field_validator("params", mode="before")
+    @classmethod
+    def require_json_params(cls, value: object) -> object:
+        """Reject values that JSON would coerce or serialize non-standardly."""
+        return validate_json_value(value)
+
 
 class RuntimeOutputFile(StrictContractModel):
     """One final file registered by the runner in ``result.json``."""
@@ -109,6 +116,13 @@ class JobError(StrictContractModel):
     type: str = Field(min_length=1)
     code: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    details: Any = None
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def require_json_details(cls, value: object) -> object:
+        """Keep structured error details losslessly JSON-safe."""
+        return validate_json_value(value)
 
 
 class JobResult(StrictContractModel):
@@ -124,6 +138,12 @@ class JobResult(StrictContractModel):
     data: dict[str, Any]
     files: list[RuntimeOutputFile] = Field(default_factory=list)
     error: JobError | None
+
+    @field_validator("data", mode="before")
+    @classmethod
+    def require_json_data(cls, value: object) -> object:
+        """Reject values that JSON would coerce or serialize non-standardly."""
+        return validate_json_value(value)
 
     @field_validator("started_at", "finished_at")
     @classmethod

@@ -12,6 +12,28 @@ def test_parse_progress_event() -> None:
     assert event.percent == 50
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        '@@HUB@@{"protocol_version":"1.0","type":"progress","percent":50}',
+        '@@HUB@@{"protocol_version":"1.0","type":"progress","percent":50,"message":null}',
+    ],
+)
+def test_progress_event_message_is_optional(line: str) -> None:
+    event = parse_runner_line(line)
+
+    assert isinstance(event, ProgressEvent)
+    assert event.message is None
+
+
+def test_progress_event_rejects_blank_message() -> None:
+    with pytest.raises(RunnerEventParseError):
+        parse_runner_line(
+            '@@HUB@@{"protocol_version":"1.0","type":"progress",'
+            '"percent":50,"message":""}'
+        )
+
+
 def test_plain_stdout_is_not_an_event() -> None:
     assert parse_runner_line("ordinary plugin output") is None
 
@@ -36,6 +58,15 @@ def test_progress_percent_must_be_within_protocol_bounds(percent: int) -> None:
         )
 
     assert error.value.code == "RUNNER_EVENT_INVALID"
+
+
+@pytest.mark.parametrize("percent", ['"50"', "50.0", "true", "null"])
+def test_progress_percent_rejects_non_integer_json_types(percent: str) -> None:
+    with pytest.raises(RunnerEventParseError):
+        parse_runner_line(
+            '@@HUB@@{"protocol_version":"1.0","type":"progress",'
+            f'"percent":{percent},"message":"working"}}'
+        )
 
 
 def test_parse_log_event_with_supported_level() -> None:

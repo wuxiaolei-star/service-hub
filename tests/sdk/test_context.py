@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,44 @@ def test_progress_rejects_percent_outside_inclusive_range(tmp_path: Path, percen
         context.progress(percent)
 
 
+@pytest.mark.parametrize("percent", [True, 50.0, "50", None])
+def test_progress_rejects_non_integer_runtime_values(tmp_path: Path, percent: object) -> None:
+    context = _context(tmp_path)
+
+    with pytest.raises(ValueError):
+        context.progress(percent)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("message", ["", 1])
+def test_progress_rejects_invalid_optional_messages(tmp_path: Path, message: object) -> None:
+    context = _context(tmp_path)
+
+    with pytest.raises(ValueError):
+        context.progress(50, message)  # type: ignore[arg-type]
+
+
+def test_context_accepts_standard_logger_format_arguments(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    logger = logging.getLogger("python_hub_sdk.compatibility")
+    context = PluginContext(
+        job_id="job-1",
+        plugin_id="example-plugin",
+        plugin_version="1.2.3",
+        input_dir=tmp_path / "input",
+        work_dir=tmp_path / "work",
+        output_dir=tmp_path / "output",
+        logger=logger,
+        event_sink=RecordingEventSink(),
+        cancellation_probe=lambda: False,
+    )
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        context.logger.info("processing %s", "input.nc")
+
+    assert "processing input.nc" in caplog.messages
+
+
 def test_is_cancelled_delegates_to_probe(tmp_path: Path) -> None:
     probes = 0
 
@@ -113,6 +152,25 @@ def test_output_file_rejects_absolute_and_traversal_paths(tmp_path: Path, path: 
 
 @pytest.mark.parametrize("path", ["C:result.zip", "C:/result.zip"])
 def test_path_helpers_reject_drive_qualified_paths(tmp_path: Path, path: str) -> None:
+    context = _context(tmp_path)
+
+    with pytest.raises(ValueError):
+        context.output_file(path)
+    with pytest.raises(ValueError):
+        context.work_file(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "nested//result.zip",
+        "nested/./result.zip",
+        "nested/\x00result.zip",
+        "nested\\result.zip",
+        "a" * 1025,
+    ],
+)
+def test_path_helpers_reject_non_protocol_lexical_paths(tmp_path: Path, path: str) -> None:
     context = _context(tmp_path)
 
     with pytest.raises(ValueError):

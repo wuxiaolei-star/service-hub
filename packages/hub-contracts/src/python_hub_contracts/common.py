@@ -5,6 +5,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, StringConstraints
 
+MAX_PLUGIN_ID_LENGTH = 64
+MAX_SEMANTIC_VERSION_LENGTH = 64
+MAX_PROTOCOL_PATH_LENGTH = 1024
+
 
 class StrictContractModel(BaseModel):
     """Base model that rejects unknown fields and cannot be mutated."""
@@ -14,13 +18,20 @@ class StrictContractModel(BaseModel):
 
 PluginId = Annotated[
     str,
-    StringConstraints(pattern=r"^[a-z][a-z0-9_]{2,63}$"),
+    StringConstraints(
+        min_length=3,
+        max_length=MAX_PLUGIN_ID_LENGTH,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    ),
 ]
 """A stable, lowercase identifier for a plugin."""
 
 SemanticVersion = Annotated[
     str,
-    StringConstraints(pattern=r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$"),
+    StringConstraints(
+        max_length=MAX_SEMANTIC_VERSION_LENGTH,
+        pattern=r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$",
+    ),
 ]
 """A three-part semantic version without prerelease or build metadata."""
 
@@ -49,7 +60,7 @@ def _normalize_relative_protocol_path(value: object) -> object:
 RelativeProtocolPath = Annotated[
     str,
     BeforeValidator(_normalize_relative_protocol_path),
-    StringConstraints(min_length=1),
+    StringConstraints(min_length=1, max_length=MAX_PROTOCOL_PATH_LENGTH),
 ]
 """A normalized, safe relative path used in serialized protocol messages."""
 

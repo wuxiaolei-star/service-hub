@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
-from python_hub_contracts import JobResult, JobRuntimeSpec, JobStatus
+from python_hub_contracts import JobError, JobResult, JobRuntimeSpec, JobStatus
 
 SHA256 = "a" * 64
 
@@ -124,6 +124,24 @@ def test_runtime_timeout_must_be_positive(valid_job: dict[str, Any]) -> None:
         JobRuntimeSpec.model_validate(valid_job)
 
 
+@pytest.mark.parametrize(
+    "params",
+    [
+        {1: "x"},
+        {"value": float("nan")},
+        {"value": float("inf")},
+        {"value": (1, 2)},
+    ],
+)
+def test_runtime_params_reject_non_json_values(
+    params: dict[object, object], valid_job: dict[str, Any]
+) -> None:
+    valid_job["params"] = params
+
+    with pytest.raises(ValidationError):
+        JobRuntimeSpec.model_validate(valid_job)
+
+
 def test_successful_result_round_trips_with_uppercase_enum_status(
     successful_result: dict[str, Any]
 ) -> None:
@@ -192,6 +210,53 @@ def test_result_output_file_format_is_optional(successful_result: dict[str, Any]
     result = JobResult.model_validate(successful_result)
 
     assert result.files[0].format is None
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {1: "x"},
+        {"value": float("nan")},
+        {"value": float("-inf")},
+        {"value": (1, 2)},
+    ],
+)
+def test_job_result_data_rejects_non_json_values(
+    data: dict[object, object], successful_result: dict[str, Any]
+) -> None:
+    successful_result["data"] = data
+
+    with pytest.raises(ValidationError):
+        JobResult.model_validate(successful_result)
+
+
+def test_job_error_details_round_trip_without_coercion() -> None:
+    error = JobError.model_validate(
+        {
+            "type": "PluginValidationError",
+            "code": "INVALID_RANGE",
+            "message": "invalid range",
+            "details": {"bounds": [1, 2.5, None, True]},
+        }
+    )
+
+    restored = JobError.model_validate_json(error.model_dump_json())
+
+    assert restored == error
+    assert restored.details == {"bounds": [1, 2.5, None, True]}
+
+
+@pytest.mark.parametrize("details", [{1: "x"}, {"value": float("nan")}])
+def test_job_error_details_reject_non_json_values(details: dict[object, object]) -> None:
+    with pytest.raises(ValidationError):
+        JobError.model_validate(
+            {
+                "type": "PluginExecutionError",
+                "code": "EXEC_FAILED",
+                "message": "failed",
+                "details": details,
+            }
+        )
 
 
 def test_success_requires_no_error(successful_result: dict[str, Any]) -> None:

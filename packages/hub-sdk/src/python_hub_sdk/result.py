@@ -1,8 +1,9 @@
 """Value objects returned by Python Service Hub plugins."""
 
-import json
 from dataclasses import dataclass, field
-from pathlib import PurePath, PureWindowsPath
+
+from ._json_values import validate_json_value
+from ._paths import validate_relative_protocol_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,21 +32,10 @@ class InputFile:
 
 
 def _validate_relative_path(path: str) -> None:
-    if not isinstance(path, str) or not path:
-        raise ValueError("OutputFile path must be a non-empty relative path")
-    normalized = path.replace("\\", "/")
-    if (
-        path.startswith(("/", "\\"))
-        or PurePath(path).is_absolute()
-        or PureWindowsPath(path).is_absolute()
-        or PureWindowsPath(path).drive
-    ):
-        raise ValueError("OutputFile path must be relative")
-    segments = normalized.split("/")
-    if any(segment in {"", "."} for segment in segments):
-        raise ValueError("OutputFile path must not contain empty or current segments")
-    if ".." in segments:
-        raise ValueError("OutputFile path must not traverse parent directories")
+    try:
+        validate_relative_protocol_path(path)
+    except ValueError as exc:
+        raise ValueError(f"OutputFile {exc}") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +70,6 @@ class PluginResult:
         if any(not isinstance(output_file, OutputFile) for output_file in self.files):
             raise ValueError("PluginResult files must contain only OutputFile values")
         try:
-            json.dumps(self.data, ensure_ascii=False)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("PluginResult data must be JSON serializable") from exc
+            validate_json_value(self.data)
+        except ValueError as exc:
+            raise ValueError("PluginResult data must be strict JSON") from exc

@@ -24,8 +24,8 @@ class ProgressEvent(StrictContractModel):
 
     protocol_version: Literal["1.0"]
     type: Literal["progress"]
-    percent: int = Field(ge=0, le=100)
-    message: str = Field(min_length=1)
+    percent: int = Field(strict=True, ge=0, le=100)
+    message: Annotated[str, Field(min_length=1)] | None = None
 
 
 class LogEvent(StrictContractModel):

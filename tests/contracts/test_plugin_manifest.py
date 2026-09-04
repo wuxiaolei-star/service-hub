@@ -165,3 +165,125 @@ def test_manifest_models_are_strict_and_frozen(valid_manifest_data: dict[str, An
     manifest = load_plugin_manifest(FIXTURES / "valid-plugin.yaml")
     with pytest.raises(ValidationError):
         manifest.plugin.name = "changed"
+
+
+def test_manifest_accepts_documented_text_and_list_boundaries(
+    valid_manifest_data: dict[str, Any]
+) -> None:
+    valid_manifest_data["plugin"]["name"] = "n" * 256
+    valid_manifest_data["plugin"]["description"] = "d" * 4096
+    valid_manifest_data["plugin"]["tags"] = [f"tag_{index}" for index in range(64)]
+    valid_manifest_data["entrypoint"]["module"] = "m" * 256
+    valid_manifest_data["entrypoint"]["function"] = "f" * 256
+    valid_manifest_data["parameters"][0]["label"] = "l" * 256
+    valid_manifest_data["inputs"][0]["label"] = "l" * 256
+    valid_manifest_data["outputs"][0]["label"] = "l" * 256
+    valid_manifest_data["environment_variables"]["required"] = [
+        f"ENV_{index}" for index in range(64)
+    ]
+
+    manifest = PluginManifest.model_validate(valid_manifest_data)
+
+    assert len(manifest.plugin.name) == 256
+    assert len(manifest.plugin.description or "") == 4096
+    assert len(manifest.plugin.tags) == 64
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("name", "n" * 257),
+        ("description", "d" * 4097),
+        ("author", "a" * 257),
+        ("category", "c" * 257),
+    ],
+)
+def test_plugin_info_rejects_oversized_text(
+    field: str, value: str, valid_manifest_data: dict[str, Any]
+) -> None:
+    valid_manifest_data["plugin"][field] = value
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
+def test_manifest_rejects_oversized_labels_and_entrypoint_names(
+    valid_manifest_data: dict[str, Any]
+) -> None:
+    for section, field in (
+        ("entrypoint", "module"),
+        ("entrypoint", "function"),
+        ("parameters", "label"),
+        ("inputs", "label"),
+        ("outputs", "label"),
+    ):
+        changed = deepcopy(valid_manifest_data)
+        target = changed[section] if section == "entrypoint" else changed[section][0]
+        target[field] = "x" * 257
+        with pytest.raises(ValidationError):
+            PluginManifest.model_validate(changed)
+
+
+@pytest.mark.parametrize("field", ["tags", "parameters", "inputs", "outputs"])
+def test_manifest_rejects_more_than_64_list_entries(
+    field: str, valid_manifest_data: dict[str, Any]
+) -> None:
+    if field == "tags":
+        valid_manifest_data["plugin"][field] = [f"tag_{index}" for index in range(65)]
+    else:
+        template = valid_manifest_data[field][0]
+        valid_manifest_data[field] = []
+        for index in range(65):
+            item = deepcopy(template)
+            item["name"] = f"item_{index}"
+            valid_manifest_data[field].append(item)
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
+def test_manifest_rejects_oversized_option_and_environment_lists(
+    valid_manifest_data: dict[str, Any]
+) -> None:
+    options_manifest = deepcopy(valid_manifest_data)
+    options_manifest["parameters"][3]["options"] = [
+        f"option_{index}" for index in range(65)
+    ]
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(options_manifest)
+
+    valid_manifest_data["environment_variables"]["required"] = [
+        f"ENV_{index}" for index in range(65)
+    ]
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        {1: "x"},
+        {"value": float("nan")},
+        {"value": tuple(range(2))},
+        {str(index): index for index in range(65)},
+    ],
+)
+def test_parameter_default_rejects_non_json_or_oversized_values(
+    default: object, valid_manifest_data: dict[str, Any]
+) -> None:
+    valid_manifest_data["parameters"][0]["default"] = default
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
+def test_parameter_default_rejects_more_than_8_container_levels(
+    valid_manifest_data: dict[str, Any]
+) -> None:
+    default: object = "leaf"
+    for _ in range(9):
+        default = [default]
+    valid_manifest_data["parameters"][0]["default"] = default
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)

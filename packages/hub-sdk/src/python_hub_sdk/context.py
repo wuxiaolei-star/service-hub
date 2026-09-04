@@ -1,22 +1,64 @@
 """Runtime context and safe filesystem helpers for plugin execution."""
 
-from collections.abc import Callable
-from pathlib import Path, PureWindowsPath
-from typing import Protocol
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from types import TracebackType
+from typing import TYPE_CHECKING, Protocol
 
+from ._paths import validate_relative_protocol_path
 from .errors import PluginCancelledError
+
+_ExcInfo = (
+    bool
+    | tuple[type[BaseException], BaseException, TracebackType | None]
+    | tuple[None, None, None]
+    | BaseException
+    | None
+)
 
 
 class PluginLogger(Protocol):
     """Logger interface made available to plugin implementations."""
 
-    def debug(self, message: str) -> None: ...
+    def debug(
+        self,
+        msg: object,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: Mapping[str, object] | None = None,
+    ) -> None: ...
 
-    def info(self, message: str) -> None: ...
+    def info(
+        self,
+        msg: object,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: Mapping[str, object] | None = None,
+    ) -> None: ...
 
-    def warning(self, message: str) -> None: ...
+    def warning(
+        self,
+        msg: object,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: Mapping[str, object] | None = None,
+    ) -> None: ...
 
-    def error(self, message: str) -> None: ...
+    def error(
+        self,
+        msg: object,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra: Mapping[str, object] | None = None,
+    ) -> None: ...
 
 
 class EventSink(Protocol):
@@ -53,8 +95,10 @@ class PluginContext:
 
     def progress(self, percent: int, message: str | None = None) -> None:
         """Report job progress as an inclusive percentage."""
-        if not 0 <= percent <= 100:
+        if type(percent) is not int or not 0 <= percent <= 100:
             raise ValueError("progress percent must be between 0 and 100")
+        if message is not None and (type(message) is not str or not message):
+            raise ValueError("progress message must be a non-empty string when provided")
         self._event_sink.emit_progress(percent, message)
 
     def is_cancelled(self) -> bool:
@@ -76,9 +120,7 @@ class PluginContext:
 
     @staticmethod
     def _contained_file(root: Path, path: str, *, create_parent: bool) -> Path:
-        requested = Path(path)
-        if requested.is_absolute() or PureWindowsPath(path).drive or ".." in requested.parts:
-            raise ValueError("file path must be a relative path without traversal")
+        requested = Path(validate_relative_protocol_path(path))
 
         resolved_root = root.resolve()
         candidate = (resolved_root / requested).resolve(strict=False)
@@ -97,3 +139,10 @@ class PluginContext:
             candidate.relative_to(root)
         except ValueError as exc:
             raise ValueError("file path must remain inside the job root") from exc
+
+
+if TYPE_CHECKING:
+    from logging import Logger
+
+    def _stdlib_logger_satisfies_protocol(logger: Logger) -> PluginLogger:
+        return logger

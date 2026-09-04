@@ -58,7 +58,9 @@ def test_relative_protocol_path_normalizes_windows_separators() -> None:
     assert PathReference(path=r"input\subdir\file.txt").path == "input/subdir/file.txt"
 
 
-@pytest.mark.parametrize("value", ["", ".", "input/./file", "input//file", "input/\x00file"])
+@pytest.mark.parametrize(
+    "value", ["", ".", "input/./file", "input//file", "input/\x00file", "a" * 1025]
+)
 def test_relative_protocol_path_rejects_invalid_segments(value: str) -> None:
     with pytest.raises(ValidationError):
         PathReference(path=value)

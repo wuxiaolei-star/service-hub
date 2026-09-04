@@ -1,18 +1,51 @@
-"""Source-level plugin manifest contracts."""
+"""Source-level plugin manifest contracts.
+
+V1 limits identifiers to 64 characters, operational text to 256 characters,
+descriptions and JSON-default strings to 4096 characters, manifest lists and
+default containers to 64 items, and default JSON nesting to eight containers.
+"""
 
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import Field, StringConstraints, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from .common import PluginId, RelativeProtocolPath, SemanticVersion, StrictContractModel
+from .json_values import validate_json_value
+
+# V1 parsing limits apply equally to YAML loading and direct model validation.
+MAX_MANIFEST_IDENTIFIER_LENGTH = 64
+MAX_MANIFEST_TEXT_LENGTH = 256
+MAX_MANIFEST_DESCRIPTION_LENGTH = 4096
+MAX_MANIFEST_LIST_ITEMS = 64
+MAX_MANIFEST_DEFAULT_DEPTH = 8
+MAX_MANIFEST_DEFAULT_CONTAINER_ITEMS = 64
+MAX_MANIFEST_DEFAULT_STRING_LENGTH = 4096
 
 ManifestName = Annotated[
     str,
-    StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,63}$"),
+    StringConstraints(
+        max_length=MAX_MANIFEST_IDENTIFIER_LENGTH,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    ),
 ]
 PythonVersion = Annotated[
     str,
-    StringConstraints(pattern=r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$"),
+    StringConstraints(
+        max_length=MAX_MANIFEST_IDENTIFIER_LENGTH,
+        pattern=r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$",
+    ),
+]
+ManifestText = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_MANIFEST_TEXT_LENGTH),
+]
+ManifestDescription = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_MANIFEST_DESCRIPTION_LENGTH),
+]
+ManifestTextList = Annotated[
+    list[ManifestText],
+    Field(max_length=MAX_MANIFEST_LIST_ITEMS),
 ]
 
 
@@ -20,12 +53,12 @@ class PluginInfo(StrictContractModel):
     """Human and machine identity for a plugin."""
 
     id: PluginId
-    name: str = Field(min_length=1)
+    name: ManifestText
     version: SemanticVersion
-    description: str | None = None
-    author: str | None = None
-    category: str | None = None
-    tags: list[str] = Field(default_factory=list)
+    description: ManifestDescription | None = None
+    author: ManifestText | None = None
+    category: ManifestText | None = None
+    tags: ManifestTextList = Field(default_factory=list)
 
 
 class SdkSpec(StrictContractModel):
@@ -58,21 +91,32 @@ class RuntimeSpec(StrictContractModel):
 class EntryPointSpec(StrictContractModel):
     """Importable function that implements the plugin."""
 
-    module: str = Field(min_length=1)
-    function: str = Field(min_length=1)
+    module: ManifestText
+    function: ManifestText
 
 
 class ParameterSpec(StrictContractModel):
     """One scalar plugin parameter."""
 
     name: ManifestName
-    label: str = Field(min_length=1)
+    label: ManifestText
     type: Literal["string", "integer", "number", "boolean", "enum", "datetime"]
     required: bool
     default: Any = None
-    options: list[str] | None = None
+    options: ManifestTextList | None = None
     min: int | float | None = None
     max: int | float | None = None
+
+    @field_validator("default", mode="before")
+    @classmethod
+    def validate_json_default(cls, value: object) -> object:
+        """Bound arbitrary defaults while preserving strict JSON values unchanged."""
+        return validate_json_value(
+            value,
+            max_depth=MAX_MANIFEST_DEFAULT_DEPTH,
+            max_container_items=MAX_MANIFEST_DEFAULT_CONTAINER_ITEMS,
+            max_string_length=MAX_MANIFEST_DEFAULT_STRING_LENGTH,
+        )
 
     @model_validator(mode="after")
     def validate_parameter_constraints(self) -> Self:
@@ -99,10 +143,10 @@ class InputSpec(StrictContractModel):
     """One file or file-set input."""
 
     name: ManifestName
-    label: str = Field(min_length=1)
+    label: ManifestText
     type: Literal["file", "files"]
     required: bool
-    extensions: list[str] = Field(default_factory=list)
+    extensions: ManifestTextList = Field(default_factory=list)
     min_count: int | None = Field(default=None, gt=0)
     max_count: int | None = Field(default=None, gt=0)
     max_size: int | None = Field(default=None, gt=0)
@@ -123,7 +167,7 @@ class OutputSpec(StrictContractModel):
     """One structured or file-based output."""
 
     name: ManifestName
-    label: str = Field(min_length=1)
+    label: ManifestText
     type: Literal["object", "file", "files"]
     required: bool
 
@@ -138,7 +182,7 @@ class ExecutionSpec(StrictContractModel):
 class EnvironmentVariablesSpec(StrictContractModel):
     """Names of variables the platform must inject."""
 
-    required: list[str] = Field(default_factory=list)
+    required: ManifestTextList = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_unique_names(self) -> Self:
@@ -163,9 +207,11 @@ class PluginManifest(StrictContractModel):
     sdk: SdkSpec
     runtime: RuntimeSpec
     entrypoint: EntryPointSpec
-    parameters: list[ParameterSpec] = Field(default_factory=list)
-    inputs: list[InputSpec] = Field(default_factory=list)
-    outputs: list[OutputSpec] = Field(default_factory=list)
+    parameters: list[ParameterSpec] = Field(
+        default_factory=list, max_length=MAX_MANIFEST_LIST_ITEMS
+    )
+    inputs: list[InputSpec] = Field(default_factory=list, max_length=MAX_MANIFEST_LIST_ITEMS)
+    outputs: list[OutputSpec] = Field(default_factory=list, max_length=MAX_MANIFEST_LIST_ITEMS)
     execution: ExecutionSpec
     environment_variables: EnvironmentVariablesSpec
     healthcheck: HealthcheckSpec

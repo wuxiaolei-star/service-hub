@@ -1,9 +1,10 @@
 """Stable, JSON-safe errors exposed by the plugin SDK."""
 
-import json
 import re
 from dataclasses import dataclass
 from typing import Any
+
+from ._json_values import validate_json_value
 
 _CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 
@@ -21,9 +22,9 @@ class PluginError(Exception):
             raise ValueError("error message must be a non-empty string")
         if self.details is not None:
             try:
-                json.dumps(self.details, ensure_ascii=False)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("error details must be JSON serializable") from exc
+                validate_json_value(self.details)
+            except ValueError as exc:
+                raise ValueError("error details must be strict JSON") from exc
         Exception.__init__(self, self.message)
 
     @property

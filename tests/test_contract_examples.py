@@ -58,8 +58,12 @@ def test_public_contracts_form_one_lossless_execution_chain() -> None:
 
     plugin_result = PluginResult(
         message="NC转换完成",
-        data={"time_count": 24, "point_count": 158624},
-        files=[OutputFile(name="水深结果", path="depth.zip")],
+        data={
+            "time_count": 24,
+            "point_count": 158624,
+            "audit": [None, True, 1, 2.5, "complete"],
+        },
+        files=[OutputFile(name="水深结果", path="nested/depth.zip")],
     )
     output = plugin_result.files[0]
     job_result = JobResult.model_validate(
@@ -76,6 +80,7 @@ def test_public_contracts_form_one_lossless_execution_chain() -> None:
             "error": None,
         }
     )
+    restored_job_result = JobResult.model_validate_json(job_result.model_dump_json())
     event = parse_runner_line(
         '@@HUB@@{"protocol_version":"1.0","type":"progress",'
         '"percent":50,"message":"正在生成Shapefile"}'
@@ -91,8 +96,9 @@ def test_public_contracts_form_one_lossless_execution_chain() -> None:
     assert build.runtime.environment_path == "runtime/env.tar.zst"
     assert restored_runtime.inputs["nc_file"].path == "input/model.nc"
     assert job_result.job_id == restored_runtime.job.id == "job_01K123"
-    assert job_result.files[0].path == output.path == "depth.zip"
+    assert job_result.files[0].path == output.path == "nested/depth.zip"
     assert job_result.files[0].format is output.format is None
+    assert restored_job_result.data == plugin_result.data
     assert job_result.status is JobStatus.SUCCESS
     assert isinstance(event, ProgressEvent)
     assert (

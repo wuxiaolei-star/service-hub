@@ -66,6 +66,13 @@ def test_build_schema_version_is_exactly_v1(valid_build_data: dict[str, Any]) ->
         PluginBuildManifest.model_validate(valid_build_data)
 
 
+def test_build_timestamp_requires_timezone(valid_build_data: dict[str, Any]) -> None:
+    valid_build_data["built_at"] = "2026-09-04T12:00:00"
+
+    with pytest.raises(ValidationError):
+        PluginBuildManifest.model_validate(valid_build_data)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

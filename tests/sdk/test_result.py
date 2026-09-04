@@ -45,6 +45,10 @@ def test_input_file_rejects_non_string_sha256() -> None:
         "../result.txt",
         "a/../../result.txt",
         "nested//result.txt",
+        "nested/./result.txt",
+        "nested/\x00result.txt",
+        "nested\\result.txt",
+        "a" * 1025,
         "C:\\tmp\\result.txt",
         "..\\result.txt",
     ],
@@ -81,9 +85,27 @@ def test_plugin_result_does_not_share_mutable_defaults() -> None:
     assert second.files == []
 
 
-def test_plugin_result_requires_json_serializable_data() -> None:
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"bad": object()},
+        {1: "x"},
+        {"value": float("nan")},
+        {"value": float("inf")},
+        {"value": (1, 2)},
+    ],
+)
+def test_plugin_result_requires_strict_json_data(data: dict[object, object]) -> None:
     with pytest.raises(ValueError):
-        PluginResult(data={"bad": object()})
+        PluginResult(data=data)  # type: ignore[arg-type]
+
+
+def test_plugin_result_preserves_nested_json_values() -> None:
+    data: dict[str, object] = {"values": [None, True, 1, 2.5, "x", {"nested": []}]}
+
+    result = PluginResult(data=data)
+
+    assert result.data == data
 
 
 @pytest.mark.parametrize("message", [1, object()])
