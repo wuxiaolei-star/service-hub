@@ -44,6 +44,7 @@ def test_input_file_rejects_non_string_sha256() -> None:
         "/tmp/result.txt",
         "../result.txt",
         "a/../../result.txt",
+        "nested//result.txt",
         "C:\\tmp\\result.txt",
         "..\\result.txt",
     ],

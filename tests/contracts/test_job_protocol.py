@@ -170,7 +170,12 @@ def test_job_result_rejects_nonterminal_statuses(
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("path", "../depth.zip"), ("size", 0), ("sha256", "A" * 64)],
+    [
+        ("path", "../depth.zip"),
+        ("format", ""),
+        ("size", 0),
+        ("sha256", "A" * 64),
+    ],
 )
 def test_result_output_file_metadata_is_validated(
     field: str, value: str | int, successful_result: dict[str, Any]
@@ -179,6 +184,14 @@ def test_result_output_file_metadata_is_validated(
 
     with pytest.raises(ValidationError):
         JobResult.model_validate(successful_result)
+
+
+def test_result_output_file_format_is_optional(successful_result: dict[str, Any]) -> None:
+    successful_result["files"][0]["format"] = None
+
+    result = JobResult.model_validate(successful_result)
+
+    assert result.files[0].format is None
 
 
 def test_success_requires_no_error(successful_result: dict[str, Any]) -> None:

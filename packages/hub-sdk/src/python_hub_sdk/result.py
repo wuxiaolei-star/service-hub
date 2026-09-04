@@ -33,6 +33,7 @@ class InputFile:
 def _validate_relative_path(path: str) -> None:
     if not isinstance(path, str) or not path:
         raise ValueError("OutputFile path must be a non-empty relative path")
+    normalized = path.replace("\\", "/")
     if (
         path.startswith(("/", "\\"))
         or PurePath(path).is_absolute()
@@ -40,7 +41,10 @@ def _validate_relative_path(path: str) -> None:
         or PureWindowsPath(path).drive
     ):
         raise ValueError("OutputFile path must be relative")
-    if ".." in PurePath(path).parts or ".." in PureWindowsPath(path).parts:
+    segments = normalized.split("/")
+    if any(segment in {"", "."} for segment in segments):
+        raise ValueError("OutputFile path must not contain empty or current segments")
+    if ".." in segments:
         raise ValueError("OutputFile path must not traverse parent directories")
 
 

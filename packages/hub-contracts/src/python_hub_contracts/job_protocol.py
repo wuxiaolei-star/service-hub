@@ -98,7 +98,7 @@ class RuntimeOutputFile(StrictContractModel):
 
     name: str = Field(min_length=1)
     path: RelativeProtocolPath
-    format: str = Field(min_length=1)
+    format: Annotated[str, Field(min_length=1)] | None = None
     size: int = Field(gt=0)
     sha256: Sha256
 

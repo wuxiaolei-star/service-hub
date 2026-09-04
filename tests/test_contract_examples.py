@@ -59,7 +59,7 @@ def test_public_contracts_form_one_lossless_execution_chain() -> None:
     plugin_result = PluginResult(
         message="NC转换完成",
         data={"time_count": 24, "point_count": 158624},
-        files=[OutputFile(name="水深结果", path="depth.zip", format="zip")],
+        files=[OutputFile(name="水深结果", path="depth.zip")],
     )
     output = plugin_result.files[0]
     job_result = JobResult.model_validate(
@@ -92,6 +92,7 @@ def test_public_contracts_form_one_lossless_execution_chain() -> None:
     assert restored_runtime.inputs["nc_file"].path == "input/model.nc"
     assert job_result.job_id == restored_runtime.job.id == "job_01K123"
     assert job_result.files[0].path == output.path == "depth.zip"
+    assert job_result.files[0].format is output.format is None
     assert job_result.status is JobStatus.SUCCESS
     assert isinstance(event, ProgressEvent)
     assert (
