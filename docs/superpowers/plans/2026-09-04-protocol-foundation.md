@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12 for development, Pydantic 2.x, PyYAML, pytest, pytest-cov, Ruff, mypy, Hatchling.
 
-**Spec:** `../../../python-service-hub-v1-design.md`
+**Spec:** `../../../../python-service-hub-v1-design.md`
 
 ## Global Constraints
 
