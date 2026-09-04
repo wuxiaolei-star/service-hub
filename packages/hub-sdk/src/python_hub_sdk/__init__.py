@@ -2,6 +2,7 @@
 
 __version__ = "0.1.0"
 
+from .context import EventSink, PluginContext, PluginLogger
 from .errors import (
     PluginCancelledError,
     PluginError,
@@ -11,11 +12,14 @@ from .errors import (
 from .result import InputFile, OutputFile, PluginResult
 
 __all__ = [
+    "EventSink",
     "InputFile",
     "OutputFile",
     "PluginCancelledError",
+    "PluginContext",
     "PluginError",
     "PluginExecutionError",
+    "PluginLogger",
     "PluginResult",
     "PluginValidationError",
 ]
