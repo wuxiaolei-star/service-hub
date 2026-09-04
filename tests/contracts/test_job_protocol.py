@@ -89,11 +89,15 @@ def test_input_file_set_must_not_be_empty(valid_job: dict[str, Any]) -> None:
 
 
 def test_input_file_set_accepts_non_empty_lists(valid_job: dict[str, Any]) -> None:
-    valid_job["inputs"]["nc_files"] = [deepcopy(valid_job["inputs"]["nc_file"])]
+    second_file = deepcopy(valid_job["inputs"]["nc_file"])
+    second_file["id"] = "file_01K456"
+    second_file["name"] = "model-part-2.nc"
+    second_file["path"] = "input/model-part-2.nc"
+    valid_job["inputs"]["nc_files"] = [deepcopy(valid_job["inputs"]["nc_file"]), second_file]
 
     runtime = JobRuntimeSpec.model_validate(valid_job)
 
-    assert len(runtime.inputs["nc_files"]) == 1
+    assert [file.id for file in runtime.inputs["nc_files"]] == ["file_01K123", "file_01K456"]
 
 
 @pytest.mark.parametrize(
