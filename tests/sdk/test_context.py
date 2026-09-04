@@ -111,6 +111,16 @@ def test_output_file_rejects_absolute_and_traversal_paths(tmp_path: Path, path: 
         context.output_file(path)
 
 
+@pytest.mark.parametrize("path", ["C:result.zip", "C:/result.zip"])
+def test_path_helpers_reject_drive_qualified_paths(tmp_path: Path, path: str) -> None:
+    context = _context(tmp_path)
+
+    with pytest.raises(ValueError):
+        context.output_file(path)
+    with pytest.raises(ValueError):
+        context.work_file(path)
+
+
 def test_output_file_rejects_existing_symlink_that_escapes_root(tmp_path: Path) -> None:
     context = _context(tmp_path)
     output_root = tmp_path / "output"
