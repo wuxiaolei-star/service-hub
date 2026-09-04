@@ -116,7 +116,7 @@ class JobResult(StrictContractModel):
 
     protocol_version: Literal["1.0"]
     job_id: str = Field(min_length=1)
-    status: JobStatus
+    status: Literal[JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.CANCELLED]
     started_at: datetime
     finished_at: datetime
     duration_ms: int = Field(ge=0)

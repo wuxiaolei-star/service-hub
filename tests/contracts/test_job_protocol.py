@@ -64,11 +64,36 @@ def test_design_job_runtime_spec_round_trips_losslessly(valid_job: dict[str, Any
     assert runtime.job.created_at.tzinfo is not None
 
 
+@pytest.mark.parametrize("protocol_version", ["1.1", "2.0"])
+def test_job_runtime_spec_rejects_non_v1_protocol_versions(
+    protocol_version: str, valid_job: dict[str, Any]
+) -> None:
+    valid_job["protocol_version"] = protocol_version
+
+    with pytest.raises(ValidationError):
+        JobRuntimeSpec.model_validate(valid_job)
+
+
+def test_job_runtime_spec_rejects_naive_creation_timestamp(valid_job: dict[str, Any]) -> None:
+    valid_job["job"]["created_at"] = "2026-09-04T14:30:00"
+
+    with pytest.raises(ValidationError):
+        JobRuntimeSpec.model_validate(valid_job)
+
+
 def test_input_file_set_must_not_be_empty(valid_job: dict[str, Any]) -> None:
     valid_job["inputs"]["nc_files"] = []
 
     with pytest.raises(ValidationError):
         JobRuntimeSpec.model_validate(valid_job)
+
+
+def test_input_file_set_accepts_non_empty_lists(valid_job: dict[str, Any]) -> None:
+    valid_job["inputs"]["nc_files"] = [deepcopy(valid_job["inputs"]["nc_file"])]
+
+    runtime = JobRuntimeSpec.model_validate(valid_job)
+
+    assert len(runtime.inputs["nc_files"]) == 1
 
 
 @pytest.mark.parametrize(
@@ -107,6 +132,49 @@ def test_successful_result_round_trips_with_uppercase_enum_status(
     assert '"status":"SUCCESS"' in result.model_dump_json()
     assert result.started_at.tzinfo is not None
     assert result.finished_at.tzinfo is not None
+
+
+@pytest.mark.parametrize("protocol_version", ["1.1", "2.0"])
+def test_job_result_rejects_non_v1_protocol_versions(
+    protocol_version: str, successful_result: dict[str, Any]
+) -> None:
+    successful_result["protocol_version"] = protocol_version
+
+    with pytest.raises(ValidationError):
+        JobResult.model_validate(successful_result)
+
+
+@pytest.mark.parametrize("timestamp", ["started_at", "finished_at"])
+def test_job_result_rejects_naive_timestamps(
+    timestamp: str, successful_result: dict[str, Any]
+) -> None:
+    successful_result[timestamp] = "2026-09-04T14:30:05"
+
+    with pytest.raises(ValidationError):
+        JobResult.model_validate(successful_result)
+
+
+@pytest.mark.parametrize("status", ["PENDING", "PREPARING", "RUNNING"])
+def test_job_result_rejects_nonterminal_statuses(
+    status: str, successful_result: dict[str, Any]
+) -> None:
+    successful_result["status"] = status
+
+    with pytest.raises(ValidationError):
+        JobResult.model_validate(successful_result)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("path", "../depth.zip"), ("size", 0), ("sha256", "A" * 64)],
+)
+def test_result_output_file_metadata_is_validated(
+    field: str, value: str | int, successful_result: dict[str, Any]
+) -> None:
+    successful_result["files"][0][field] = value
+
+    with pytest.raises(ValidationError):
+        JobResult.model_validate(successful_result)
 
 
 def test_success_requires_no_error(successful_result: dict[str, Any]) -> None:
@@ -157,3 +225,12 @@ def test_cancelled_result_allows_an_optional_stable_error(
     }
 
     assert JobResult.model_validate(cancelled).error is not None
+
+
+def test_cancelled_result_allows_no_error(successful_result: dict[str, Any]) -> None:
+    cancelled = deepcopy(successful_result)
+    cancelled["status"] = "CANCELLED"
+    cancelled["files"] = []
+    cancelled["error"] = None
+
+    assert JobResult.model_validate(cancelled).error is None
