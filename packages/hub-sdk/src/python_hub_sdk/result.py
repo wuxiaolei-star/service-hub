@@ -57,6 +57,10 @@ class OutputFile:
         if self.format is not None and (not isinstance(self.format, str) or not self.format):
             raise ValueError("OutputFile format must be a non-empty string when provided")
 
+    def to_protocol_dict(self) -> dict[str, str | None]:
+        """Return the plugin-declared fields used to build result protocol metadata."""
+        return {"name": self.name, "path": self.path, "format": self.format}
+
 
 @dataclass(frozen=True, slots=True)
 class PluginResult:
