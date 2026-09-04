@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "build_id": "build_01K00000000000000000000000",
+  "plugin_id": "nc_to_shp",
+  "plugin_version": "1.0.0",
+  "target": {
+    "os": "linux",
+    "arch": "arm64"
+  },
+  "runtime": {
+    "python_version": "3.10",
+    "environment_format": "conda-pack",
+    "environment_path": "runtime/env.tar.zst",
+    "environment_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "sdk_version": "1.0.0",
+  "source_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  "built_at": "2026-09-04T12:00:00Z"
+}

@@ -1,0 +1,76 @@
+spec_version: "1.0"
+
+plugin:
+  id: nc_to_shp
+  name: NC转Shapefile
+  version: "1.0.0"
+  description: 将水动力模型 NetCDF 结果转换为 Shapefile
+  author: Lane
+  category: gis
+  tags: [netcdf, gis, water]
+
+sdk:
+  version: "1.0"
+
+runtime:
+  type: process
+  python:
+    version: "3.10"
+  environment:
+    type: conda
+    file: environment.yml
+
+entrypoint:
+  module: src.main
+  function: run
+
+parameters:
+  - name: start_time
+    label: 开始时刻
+    type: integer
+    required: false
+    default: 1
+    min: 1
+
+  - name: end_time
+    label: 结束时刻
+    type: integer
+    required: false
+
+  - name: target_epsg
+    label: 输出坐标系
+    type: integer
+    required: false
+    default: 3857
+
+  - name: method
+    label: 插值方法
+    type: enum
+    required: false
+    default: nearest
+    options: [nearest, linear, cubic]
+
+inputs:
+  - name: nc_file
+    label: NC结果文件
+    type: file
+    required: true
+    extensions: [.nc, .h5, .hdf5]
+    max_size: 10737418240
+
+outputs:
+  - name: result_files
+    label: 输出文件
+    type: files
+    required: true
+
+execution:
+  timeout: 3600
+  concurrency: 1
+
+environment_variables:
+  required: []
+
+healthcheck:
+  enabled: true
+  type: import
