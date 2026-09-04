@@ -5,6 +5,8 @@ import yaml
 from pydantic import ValidationError
 from python_hub_contracts import load_plugin_manifest
 
+FIXTURES = Path(__file__).parents[1] / "fixtures"
+
 
 def test_yaml_duplicate_mapping_keys_are_rejected(tmp_path: Path) -> None:
     path = tmp_path / "duplicate.yaml"
@@ -47,7 +49,11 @@ def test_yaml_manifest_has_a_one_mib_default_limit(tmp_path: Path) -> None:
 
 def test_yaml_validation_errors_are_propagated(tmp_path: Path) -> None:
     path = tmp_path / "invalid.yaml"
-    path.write_text("spec_version: '2.0'\n", encoding="utf-8")
+    valid_document = (FIXTURES / "valid-plugin.yaml").read_text(encoding="utf-8")
+    path.write_text(
+        valid_document.replace('spec_version: "1.0"', 'spec_version: "2.0"', 1),
+        encoding="utf-8",
+    )
 
     with pytest.raises(ValidationError):
         load_plugin_manifest(path)

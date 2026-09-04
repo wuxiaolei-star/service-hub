@@ -59,6 +59,13 @@ def test_unsupported_build_platform_is_rejected(
         PluginBuildManifest.model_validate(valid_build_data)
 
 
+def test_build_schema_version_is_exactly_v1(valid_build_data: dict[str, Any]) -> None:
+    valid_build_data["schema_version"] = "2.0"
+
+    with pytest.raises(ValidationError):
+        PluginBuildManifest.model_validate(valid_build_data)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

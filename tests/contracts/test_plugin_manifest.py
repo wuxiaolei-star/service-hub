@@ -62,6 +62,20 @@ def test_unsupported_runtime_type_is_rejected(valid_manifest_data: dict[str, Any
         PluginManifest.model_validate(valid_manifest_data)
 
 
+def test_plugin_spec_version_is_exactly_v1(valid_manifest_data: dict[str, Any]) -> None:
+    valid_manifest_data["spec_version"] = "2.0"
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
+def test_sdk_version_is_exactly_v1(valid_manifest_data: dict[str, Any]) -> None:
+    valid_manifest_data["sdk"]["version"] = "2.0"
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
 @pytest.mark.parametrize(
     ("options", "default"),
     [([], "nearest"), (["nearest", "nearest"], "nearest"), (["linear"], "nearest")],
@@ -118,6 +132,26 @@ def test_file_counts_and_sizes_must_be_positive(
     field: str, valid_manifest_data: dict[str, Any]
 ) -> None:
     valid_manifest_data["inputs"][0][field] = 0
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
+def test_input_minimum_count_cannot_exceed_maximum(
+    valid_manifest_data: dict[str, Any]
+) -> None:
+    input_spec = valid_manifest_data["inputs"][0]
+    input_spec["min_count"] = 2
+    input_spec["max_count"] = 1
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
+def test_required_environment_variable_names_must_be_unique(
+    valid_manifest_data: dict[str, Any]
+) -> None:
+    valid_manifest_data["environment_variables"]["required"] = ["API_TOKEN", "API_TOKEN"]
 
     with pytest.raises(ValidationError):
         PluginManifest.model_validate(valid_manifest_data)
