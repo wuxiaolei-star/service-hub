@@ -9,6 +9,21 @@ from .common import (
     normalize_arch,
     normalize_os,
 )
+from .job_protocol import (
+    FileRole,
+    JobError,
+    JobResult,
+    JobRuntimeSpec,
+    JobStatus,
+    RuntimeDirectories,
+    RuntimeExecution,
+    RuntimeInputFile,
+    RuntimeInputFiles,
+    RuntimeInputValue,
+    RuntimeJob,
+    RuntimeOutputFile,
+    RuntimePlugin,
+)
 from .plugin_manifest import (
     EntryPointSpec,
     EnvironmentDeclaration,
@@ -24,17 +39,34 @@ from .plugin_manifest import (
     RuntimeSpec,
     SdkSpec,
 )
+from .runner_events import (
+    RUNNER_EVENT_PREFIX,
+    LogEvent,
+    LogLevel,
+    ProgressEvent,
+    RunnerEvent,
+    RunnerEventParseError,
+    parse_runner_line,
+)
 from .yaml_io import load_plugin_manifest
 
 __version__ = "0.1.0"
 
 __all__ = [
+    "RUNNER_EVENT_PREFIX",
     "EntryPointSpec",
     "EnvironmentDeclaration",
     "EnvironmentVariablesSpec",
     "ExecutionSpec",
+    "FileRole",
     "HealthcheckSpec",
     "InputSpec",
+    "JobError",
+    "JobResult",
+    "JobRuntimeSpec",
+    "JobStatus",
+    "LogEvent",
+    "LogLevel",
     "OutputSpec",
     "PackagedRuntime",
     "ParameterSpec",
@@ -42,8 +74,19 @@ __all__ = [
     "PluginId",
     "PluginInfo",
     "PluginManifest",
+    "ProgressEvent",
     "PythonSpec",
     "RelativeProtocolPath",
+    "RunnerEvent",
+    "RunnerEventParseError",
+    "RuntimeDirectories",
+    "RuntimeExecution",
+    "RuntimeInputFile",
+    "RuntimeInputFiles",
+    "RuntimeInputValue",
+    "RuntimeJob",
+    "RuntimeOutputFile",
+    "RuntimePlugin",
     "RuntimeSpec",
     "SdkSpec",
     "SemanticVersion",
@@ -52,4 +95,5 @@ __all__ = [
     "load_plugin_manifest",
     "normalize_arch",
     "normalize_os",
+    "parse_runner_line",
 ]
