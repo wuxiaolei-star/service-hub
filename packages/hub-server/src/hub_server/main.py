@@ -1,19 +1,54 @@
 """ASGI application factory for Python Service Hub."""
 
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
+from alembic.config import Config
 from fastapi import FastAPI
+from sqlalchemy.engine import make_url
 
+from alembic import command
+from hub_server.db import create_engine_and_session_factory
 from hub_server.routers.system import router as system_router
 from hub_server.settings import HubSettings
+
+
+def _alembic_config(database_url: str) -> Config:
+    """Build an Alembic configuration scoped to this application instance."""
+    project_root = Path(__file__).resolve().parents[4]
+    config = Config(str(project_root / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    return config
+
+
+def _ensure_sqlite_database_directory(database_url: str) -> None:
+    """Create the parent directory needed by a configured file-backed SQLite database."""
+    url = make_url(database_url)
+    database = url.database
+    if url.drivername.startswith("sqlite") and database is not None and database != ":memory:":
+        Path(database).parent.mkdir(parents=True, exist_ok=True)
 
 
 def create_app(settings: HubSettings | None = None) -> FastAPI:
     """Create a configured Hub ASGI application."""
     if settings is None:
         settings = HubSettings.from_yaml(Path(os.environ["HUB_CONFIG_PATH"]))
-    app = FastAPI(title="Python Service Hub", version=settings.hub_version)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        _ensure_sqlite_database_directory(settings.database.url)
+        command.upgrade(_alembic_config(settings.database.url), "head")
+        engine, session_factory = create_engine_and_session_factory(settings.database.url)
+        app.state.engine = engine
+        app.state.session_factory = session_factory
+        try:
+            yield
+        finally:
+            engine.dispose()
+
+    app = FastAPI(title="Python Service Hub", version=settings.hub_version, lifespan=lifespan)
     app.state.settings = settings
     app.include_router(system_router, prefix="/api/v1")
     return app
