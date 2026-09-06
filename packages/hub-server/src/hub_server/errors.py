@@ -1,6 +1,6 @@
 """Shared API error schemas for future Hub routes."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -12,5 +12,5 @@ class ApiError(BaseModel):
 
 
 class ErrorResponse(BaseModel):
-    success: bool = False
+    success: Literal[False] = False
     error: ApiError

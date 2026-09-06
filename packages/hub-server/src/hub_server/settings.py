@@ -44,13 +44,3 @@ class HubSettings(StrictSettingsModel):
         if not isinstance(value, dict):
             raise ValueError("Hub 配置根节点必须是对象")
         return cls.model_validate(value)
-
-
-def default_settings() -> HubSettings:
-    """Return the local defaults used when Uvicorn imports the application."""
-    return HubSettings(
-        deployment=DeploymentSettings(mode="offline"),
-        storage=StorageSettings(root=Path("/data")),
-        database=DatabaseSettings(url="sqlite:////data/db/hub.db"),
-        uploads=UploadSettings(max_size_bytes=10 * 1024 * 1024 * 1024),
-    )

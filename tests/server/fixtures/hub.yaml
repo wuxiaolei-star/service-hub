@@ -1,0 +1,8 @@
+deployment:
+  mode: offline
+storage:
+  root: /var/lib/hub
+database:
+  url: sqlite:////var/lib/hub/db/hub.db
+uploads:
+  max_size_bytes: 1024
