@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from hub_server.errors import HubError
 from hub_server.models import FileRecord
-from hub_server.storage import LocalStorage
+from hub_server.storage import LocalStorage, StoredUpload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,8 +29,18 @@ class FileService:
         self, filename: str, content_type: str | None, stream: BinaryIO
     ) -> FileRecord:
         """Install an upload first, then commit its database metadata."""
-        file_key = f"file_{uuid4().hex}"
+        file_key = self.new_file_key()
         stored = self._storage.store_upload(file_key, stream, max_size_bytes=self._max_size_bytes)
+        return self.store_installed_upload(file_key, filename, content_type, stored)
+
+    def new_file_key(self) -> str:
+        """Create one unguessable external identifier for an in-progress upload."""
+        return f"file_{uuid4().hex}"
+
+    def store_installed_upload(
+        self, file_key: str, filename: str, content_type: str | None, stored: StoredUpload
+    ) -> FileRecord:
+        """Commit metadata after a streaming upload atomically reaches storage."""
         safe_filename = Path(filename).name or "upload.bin"
         extension = Path(safe_filename).suffix.lower() or None
         record = FileRecord(

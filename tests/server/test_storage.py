@@ -25,6 +25,22 @@ def test_store_upload_writes_payload_and_sha256(tmp_path: Path) -> None:
     assert stored.sha256 == hashlib.sha256(b"netcdf").hexdigest()
 
 
+def test_begin_upload_streams_chunks_directly_to_controlled_storage(tmp_path: Path) -> None:
+    """Parser chunks must be atomically installed without a framework spool."""
+    storage = LocalStorage(tmp_path)
+    file_key = "file_123e4567e89b42d3a456426614174000"
+
+    upload = storage.begin_upload(file_key, max_size_bytes=10)
+    upload.write(b"net")
+    upload.write(b"cdf")
+    stored = upload.finish()
+
+    assert stored.relative_path == f"uploads/{file_key}/payload"
+    assert (tmp_path / stored.relative_path).read_bytes() == b"netcdf"
+    assert stored.size_bytes == 6
+    assert stored.sha256 == hashlib.sha256(b"netcdf").hexdigest()
+
+
 def test_store_upload_removes_partial_data_when_limit_exceeded(tmp_path: Path) -> None:
     """Accepting an over-limit stream or retaining its partial directory is a storage leak."""
     storage = LocalStorage(tmp_path)

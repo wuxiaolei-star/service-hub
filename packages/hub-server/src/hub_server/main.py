@@ -7,9 +7,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from alembic.config import Config
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.engine import make_url
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from alembic import command
 from hub_server.db import create_engine_and_session_factory
@@ -66,6 +68,21 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     async def hub_error_handler(_: Request, error: HubError) -> JSONResponse:
         return _error_response(error.code, error.message, error.status_code, error.details)
 
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(
+        _: Request, __: RequestValidationError
+    ) -> JSONResponse:
+        return _error_response("REQUEST_VALIDATION_ERROR", "请求参数无效", 422)
+
+    async def http_error_handler(_: Request, error: Exception) -> JSONResponse:
+        if not isinstance(error, StarletteHTTPException):
+            return _error_response("UNEXPECTED_ERROR", "服务器内部错误", 500)
+        code, message = _http_error_code_and_message(error.status_code)
+        return _error_response(code, message, error.status_code)
+
+    app.add_exception_handler(HTTPException, http_error_handler)
+    app.add_exception_handler(StarletteHTTPException, http_error_handler)
+
     @app.exception_handler(Exception)
     async def unexpected_error_handler(_: Request, error: Exception) -> JSONResponse:
         _LOGGER.exception("Unhandled Hub API error", exc_info=error)
@@ -80,6 +97,15 @@ def _error_response(
     """Serialize one client-safe failure envelope."""
     payload = ErrorResponse(error=ErrorBody(code=code, message=message, details=details))
     return JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
+
+
+def _http_error_code_and_message(status_code: int) -> tuple[str, str]:
+    """Map framework HTTP failures to stable messages without exposing their details."""
+    if status_code == 404:
+        return "HTTP_NOT_FOUND", "请求的资源不存在"
+    if status_code == 405:
+        return "HTTP_METHOD_NOT_ALLOWED", "请求方法不被允许"
+    return "HTTP_ERROR", "请求失败"
 
 
 app = create_app()

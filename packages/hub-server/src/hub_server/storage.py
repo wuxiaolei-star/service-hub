@@ -29,6 +29,78 @@ class StoredUpload:
     sha256: str
 
 
+class StreamingUpload:
+    """A single atomic upload installation accepting controlled byte chunks."""
+
+    def __init__(
+        self,
+        *,
+        file_key: str,
+        temporary_directory: Path,
+        destination_directory: Path,
+        payload: BinaryIO,
+        max_size_bytes: int,
+    ) -> None:
+        self._file_key = file_key
+        self._temporary_directory = temporary_directory
+        self._destination_directory = destination_directory
+        self._payload: BinaryIO | None = payload
+        self._max_size_bytes = max_size_bytes
+        self._size_bytes = 0
+        self._digest = hashlib.sha256()
+        self._finished = False
+
+    def write(self, chunk: bytes) -> None:
+        """Persist one bounded parser chunk and update its digest."""
+        if self._finished or self._payload is None:
+            raise ValueError("upload stream is already closed")
+        if self._size_bytes + len(chunk) > self._max_size_bytes:
+            self.abort()
+            raise UploadTooLargeError(max_size_bytes=self._max_size_bytes)
+        try:
+            written = self._payload.write(chunk)
+            if written != len(chunk):
+                raise OSError("short payload write")
+        except OSError as error:
+            self.abort()
+            _LOGGER.exception("Unable to stream Hub upload")
+            raise LocalStorage._storage_error("保存上传文件失败") from error
+        self._size_bytes += len(chunk)
+        self._digest.update(chunk)
+
+    def finish(self) -> StoredUpload:
+        """Atomically install the completed payload and return its integrity metadata."""
+        if self._finished or self._payload is None:
+            raise ValueError("upload stream is already closed")
+        try:
+            self._close_payload()
+            os.replace(self._temporary_directory, self._destination_directory)
+        except OSError as error:
+            self.abort()
+            _LOGGER.exception("Unable to install streamed Hub upload")
+            raise LocalStorage._storage_error("保存上传文件失败") from error
+        self._finished = True
+        return StoredUpload(
+            relative_path=f"uploads/{self._file_key}/payload",
+            size_bytes=self._size_bytes,
+            sha256=self._digest.hexdigest(),
+        )
+
+    def abort(self) -> None:
+        """Close and discard an incomplete upload without exposing cleanup failures."""
+        try:
+            self._close_payload()
+        except OSError:
+            _LOGGER.exception("Unable to close incomplete Hub upload")
+        LocalStorage._discard_temporary_directory(self._temporary_directory)
+
+    def _close_payload(self) -> None:
+        if self._payload is not None:
+            payload = self._payload
+            self._payload = None
+            payload.close()
+
+
 class LocalStorage:
     """Persist and resolve payloads below one Hub-controlled directory tree."""
 
@@ -44,9 +116,18 @@ class LocalStorage:
         self, file_key: str, stream: BinaryIO, *, max_size_bytes: int
     ) -> StoredUpload:
         """Stream an upload into a temporary directory then atomically install it."""
+        upload = self.begin_upload(file_key, max_size_bytes=max_size_bytes)
+        try:
+            while chunk := stream.read(_CHUNK_SIZE_BYTES):
+                upload.write(chunk)
+            return upload.finish()
+        except Exception:
+            upload.abort()
+            raise
+
+    def begin_upload(self, file_key: str, *, max_size_bytes: int) -> StreamingUpload:
+        """Open a Hub-controlled temporary payload for incremental writes."""
         temporary_directory: Path | None = None
-        size_bytes = 0
-        digest = hashlib.sha256()
         try:
             self._validate_file_key(file_key)
             uploads_directory = self._resolve_relative("uploads")
@@ -55,34 +136,22 @@ class LocalStorage:
             destination_directory = self._resolve_relative(f"uploads/{file_key}")
             if destination_directory.exists():
                 raise ValueError("file key is already stored")
-
             temporary_directory.mkdir()
-            payload_path = temporary_directory / "payload"
-            with payload_path.open("xb") as payload:
-                while chunk := stream.read(_CHUNK_SIZE_BYTES):
-                    size_bytes += len(chunk)
-                    if size_bytes > max_size_bytes:
-                        raise UploadTooLargeError(max_size_bytes=max_size_bytes)
-                    digest.update(chunk)
-                    payload.write(chunk)
-            os.replace(temporary_directory, destination_directory)
-        except UploadTooLargeError:
-            self._discard_temporary_directory(temporary_directory)
-            raise
+            payload = (temporary_directory / "payload").open("xb")
+            return StreamingUpload(
+                file_key=file_key,
+                temporary_directory=temporary_directory,
+                destination_directory=destination_directory,
+                payload=payload,
+                max_size_bytes=max_size_bytes,
+            )
         except HubError:
             self._discard_temporary_directory(temporary_directory)
             raise
         except OSError as error:
             self._discard_temporary_directory(temporary_directory)
-            _LOGGER.exception("Unable to store Hub upload")
+            _LOGGER.exception("Unable to begin Hub upload")
             raise self._storage_error("保存上传文件失败") from error
-
-        relative_path = f"uploads/{file_key}/payload"
-        return StoredUpload(
-            relative_path=relative_path,
-            size_bytes=size_bytes,
-            sha256=digest.hexdigest(),
-        )
 
     def open_relative(self, relative_path: str) -> Path:
         """Resolve a protocol-relative path only when it remains under storage root."""

@@ -1,8 +1,10 @@
 """HTTP contract tests for Hub file uploads and retrieval."""
 
+import json
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from hub_server.main import create_app
 from hub_server.settings import (
@@ -12,6 +14,7 @@ from hub_server.settings import (
     StorageSettings,
     UploadSettings,
 )
+from starlette.requests import Request
 
 
 @pytest.fixture
@@ -64,6 +67,168 @@ def test_rejects_upload_larger_than_limit(client: TestClient) -> None:
 
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "UPLOAD_TOO_LARGE"
+
+
+def test_rejects_declared_oversize_before_consuming_request_stream(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A declared over-limit multipart request must be rejected before body parsing can spool it."""
+
+    async def fail_if_stream_is_consumed(_: Request) -> object:
+        raise AssertionError("request stream must not be consumed")
+
+    monkeypatch.setattr(Request, "stream", fail_if_stream_is_consumed)
+
+    response = client.post("/api/v1/files", files={"file": ("a.nc", b"0" * 1025)})
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "success": False,
+        "error": {
+            "code": "UPLOAD_TOO_LARGE",
+            "message": "上传文件超过大小限制",
+            "details": {"max_size_bytes": 1024},
+        },
+    }
+
+
+def test_rejects_chunked_oversize_at_stream_boundary_without_uploadfile_spool(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An undeclared over-limit body must stop at a raw request chunk, before Starlette spools it.
+
+    Replacing the framework's UploadFile constructor ensures the route never asks Starlette to
+    parse into its temporary file.  A final multipart chunk remains unread, proving the size
+    check runs at the controlled stream boundary rather than after a full-body read.
+    """
+    from starlette.datastructures import UploadFile
+
+    def fail_if_framework_spools(*_: object, **__: object) -> None:
+        raise AssertionError("Starlette UploadFile spool must not be created")
+
+    monkeypatch.setattr(UploadFile, "__init__", fail_if_framework_spools)
+    boundary = b"stream-boundary"
+    chunks = [
+        b"--stream-boundary\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="large.nc"\r\n'
+        b"Content-Type: application/x-netcdf\r\n\r\n",
+        b"a" * 500,
+        b"b" * 600,
+        b"\r\n--stream-boundary--\r\n",
+    ]
+    received_chunks = 0
+    messages: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        nonlocal received_chunks
+        chunk = chunks[received_chunks]
+        received_chunks += 1
+        return {
+            "type": "http.request",
+            "body": chunk,
+            "more_body": received_chunks < len(chunks),
+        }
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    async def send_request() -> None:
+        await client.app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/api/v1/files",
+                "raw_path": b"/api/v1/files",
+                "query_string": b"",
+                "root_path": "",
+                "headers": [
+                    (b"host", b"testserver"),
+                    (b"content-type", b"multipart/form-data; boundary=" + boundary),
+                ],
+                "client": ("testclient", 50000),
+                "server": ("testserver", 80),
+            },
+            receive,
+            send,
+        )
+
+    client.portal.call(send_request)
+
+    response_start = next(
+        message for message in messages if message["type"] == "http.response.start"
+    )
+    response_body = b"".join(
+        message["body"]
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    assert received_chunks == 3
+    assert response_start["status"] == 413
+    assert json.loads(response_body) == {
+        "success": False,
+        "error": {
+            "code": "UPLOAD_TOO_LARGE",
+            "message": "上传文件超过大小限制",
+            "details": {"max_size_bytes": 1024},
+        },
+    }
+
+
+def test_missing_multipart_file_uses_stable_validation_error(client: TestClient) -> None:
+    """A missing multipart file must not expose FastAPI validation output."""
+    response = client.post("/api/v1/files", files={"different": ("a.nc", b"data")})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "success": False,
+        "error": {"code": "REQUEST_VALIDATION_ERROR", "message": "请求参数无效", "details": None},
+    }
+
+
+def test_unknown_route_uses_stable_http_error(client: TestClient) -> None:
+    """Framework-level routing failures must use the same client-safe envelope as Hub errors."""
+    response = client.get("/api/v1/not-a-route")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "success": False,
+        "error": {"code": "HTTP_NOT_FOUND", "message": "请求的资源不存在", "details": None},
+    }
+
+
+def test_request_validation_error_uses_stable_error_shape(client: TestClient) -> None:
+    """Framework coercion failures must not expose FastAPI's default validation payload."""
+
+    @client.app.get("/requires-integer")
+    def requires_integer(value: int) -> dict[str, int]:
+        return {"value": value}
+
+    response = client.get("/requires-integer?value=not-an-integer")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "success": False,
+        "error": {"code": "REQUEST_VALIDATION_ERROR", "message": "请求参数无效", "details": None},
+    }
+
+
+def test_http_exception_uses_stable_error_shape(client: TestClient) -> None:
+    """A route-raised HTTPException must not leak its framework detail body."""
+
+    @client.app.get("/raises-http-error")
+    def raises_http_error() -> None:
+        raise HTTPException(status_code=409, detail="internal conflict detail")
+
+    response = client.get("/raises-http-error")
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "success": False,
+        "error": {"code": "HTTP_ERROR", "message": "请求失败", "details": None},
+    }
 
 
 def test_unexpected_errors_use_stable_error_shape(tmp_path: Path) -> None:
