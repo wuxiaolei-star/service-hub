@@ -50,6 +50,21 @@ def test_startup_creates_file_records_table(settings: HubSettings) -> None:
         assert "file_records" in inspect(app.state.engine).get_table_names()
 
 
+def test_startup_uses_explicit_settings_database_when_environment_conflicts(
+    settings: HubSettings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """App lifespan migrations target its explicit settings instead of a process environment URL."""
+    environment_database = tmp_path / "environment" / "hub.db"
+    environment_database.parent.mkdir()
+    monkeypatch.setenv("HUB_DATABASE_URL", f"sqlite:///{environment_database.as_posix()}")
+    app = create_app(settings)
+
+    with TestClient(app):
+        assert "file_records" in inspect(app.state.engine).get_table_names()
+
+    assert not environment_database.exists()
+
+
 def test_startup_creates_missing_database_parent_directory(
     settings: HubSettings, tmp_path: Path
 ) -> None:

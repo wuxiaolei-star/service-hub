@@ -14,7 +14,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.environ.get("HUB_DATABASE_URL") or config.attributes.get("database_url")
+database_url = config.attributes.get("database_url") or os.environ.get("HUB_DATABASE_URL")
 if not isinstance(database_url, str) or not database_url:
     raise RuntimeError("HUB_DATABASE_URL must be configured before running migrations")
 config.set_main_option("sqlalchemy.url", database_url)
