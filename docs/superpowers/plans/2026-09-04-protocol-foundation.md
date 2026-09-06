@@ -1,89 +1,67 @@
-# Python Service Hub V1 Protocol Foundation Implementation Plan
+# Python Service Hub V1 协议基础实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> 面向自主开发代理：按任务实施时，使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans`，并以复选框记录步骤。
 
-**Goal:** Build the installable monorepo foundation, Pydantic protocol models, and lightweight plugin SDK that all later Python Service Hub V1 components depend on.
+**目标：** 建立可安装的单仓库、Pydantic 协议模型和轻量插件 SDK，作为后续 Python Service Hub V1 组件的稳定基础。
 
-**Architecture:** Use one Python monorepo with three separately installable packages: `python-hub-contracts` owns serialized Pydantic contracts, `python-hub-sdk` owns the plugin-facing programming API, and later `hub-runner`/`hub-server` consume both. This phase contains no HTTP server, database, environment installer, or process executor; it produces a stable, tested protocol boundary first.
+**架构：** 一个 Python 单仓库包含三个可独立安装的包：`python-hub-contracts` 管理序列化的 Pydantic 契约，`python-hub-sdk` 提供插件开发 API，后续的 `hub-runner` 与 `hub-server` 同时消费它们。本阶段不实现 HTTP 服务、数据库、环境安装器或进程执行器，而是先建立经测试的协议边界。
 
-**Tech Stack:** Python 3.12 for development, Pydantic 2.x, PyYAML, pytest, pytest-cov, Ruff, mypy, Hatchling.
+**技术栈：** Python 3.12、Pydantic 2.x、PyYAML、pytest、pytest-cov、Ruff、mypy、Hatchling。
 
-**Spec:** `../../design/python-service-hub-v1-design.md`
+**设计基线：** `../../design/python-service-hub-v1-design.md`
 
-## Global Constraints
+## 全局约束
 
-- Runtime protocol version is exactly `1.0`; incompatible major versions are rejected.
-- Plugin ID matches `^[a-z][a-z0-9_]{2,63}$`; plugin business versions use SemVer `major.minor.patch`.
-- `plugin.yaml` is platform-independent; OS and architecture exist only in `build.json`/`PluginBuildManifest`.
-- V1 runtime type is only `process`; supported target values are `linux/amd64` and `linux/arm64`.
-- Serialized paths are relative POSIX-style paths; absolute paths and `..` traversal are rejected.
-- Pydantic models and future SQLAlchemy entities remain separate.
-- Plugin SDK has no FastAPI, SQLAlchemy, Redis, filesystem storage, or Hub-internal dependency.
-- Mutable model defaults use `Field(default_factory=...)`.
-- Production dependencies are exactly pinned before offline release; this plan initially constrains compatible versions in `pyproject.toml` and generates a lock file during release work.
-- Every production behavior is introduced through a failing test first.
+- 运行时协议版本固定为 `1.0`；拒绝不兼容主版本。
+- 插件 ID 使用 `^[a-z][a-z0-9_]{2,63}$`；业务版本使用 SemVer `major.minor.patch`。
+- `plugin.yaml` 必须平台无关；OS 和 CPU 架构只能出现在 `build.json`/`PluginBuildManifest`。
+- V1 仅支持 `process` 运行时和 `linux/amd64`、`linux/arm64` 目标。
+- 协议路径必须是 POSIX 相对路径；拒绝绝对路径、NUL、盘符和 `..` 路径穿越。
+- Pydantic 协议模型与未来 SQLAlchemy 数据实体严格分离。
+- SDK 不依赖 FastAPI、SQLAlchemy、Redis、Hub 内部文件存储或任何服务端框架。
+- 可变默认值必须用 `Field(default_factory=...)`；离线发布前精确锁定生产依赖。
+- 每一项生产行为必须先有失败测试。
 
 ---
 
-## File Map
+## 文件映射
 
 ```text
 python-service-hub/
-├── .gitignore                             # excludes environments, caches and build output
-├── pyproject.toml                         # workspace tooling and test configuration
-├── README.md                              # development commands and package map
+├── .gitignore                             # 忽略环境、缓存和构建产物
+├── pyproject.toml                         # 工作区工具和测试配置
+├── README.md                              # 包职责和开发命令
 ├── packages/
 │   ├── hub-contracts/
-│   │   ├── pyproject.toml                 # contracts package metadata
+│   │   ├── pyproject.toml
 │   │   └── src/python_hub_contracts/
-│   │       ├── __init__.py                # stable public exports
-│   │       ├── common.py                  # shared IDs, versions, paths, strict base model
-│   │       ├── plugin_manifest.py         # plugin.yaml models
-│   │       ├── build_manifest.py          # build.json models
-│   │       ├── job_protocol.py            # job.json/result.json models
-│   │       ├── runner_events.py           # stdout event models/parser
-│   │       └── yaml_io.py                 # safe YAML-to-model loader
+│   │       ├── __init__.py                # 稳定公共导出
+│   │       ├── common.py                  # ID、版本、路径、严格模型
+│   │       ├── plugin_manifest.py         # plugin.yaml 模型
+│   │       ├── build_manifest.py          # build.json 模型
+│   │       ├── job_protocol.py            # job.json/result.json 模型
+│   │       ├── runner_events.py           # stdout 事件模型和解析器
+│   │       └── yaml_io.py                 # 安全 YAML 加载器
 │   └── hub-sdk/
-│       ├── pyproject.toml                 # SDK package metadata
+│       ├── pyproject.toml
 │       └── src/python_hub_sdk/
-│           ├── __init__.py                # plugin-author public API
-│           ├── context.py                 # PluginContext and path helpers
-│           ├── errors.py                  # stable exception hierarchy
-│           └── result.py                  # InputFile, OutputFile, PluginResult
+│           ├── __init__.py                # 插件作者公共 API
+│           ├── context.py                 # PluginContext 与路径辅助函数
+│           ├── errors.py                  # 稳定异常层次
+│           └── result.py                  # InputFile、OutputFile、PluginResult
 └── tests/
-    ├── contracts/
-    │   ├── test_common.py
-    │   ├── test_plugin_manifest.py
-    │   ├── test_build_manifest.py
-    │   ├── test_job_protocol.py
-    │   ├── test_runner_events.py
-    │   └── test_yaml_io.py
-    ├── sdk/
-    │   ├── test_context.py
-    │   ├── test_errors.py
-    │   └── test_result.py
-    └── fixtures/
-        ├── valid-plugin.yaml
-        └── valid-build.json
+    ├── contracts/                         # 契约测试
+    ├── sdk/                               # SDK 测试
+    └── fixtures/                          # 有效的 YAML/JSON 夹具
 ```
 
-## Task 1: Monorepo and Quality Gate
+## 任务 1：单仓库与质量门禁
 
-**Files:**
-- Create: `.gitignore`
-- Create: `pyproject.toml`
-- Create: `README.md`
-- Create: `packages/hub-contracts/pyproject.toml`
-- Create: `packages/hub-contracts/src/python_hub_contracts/__init__.py`
-- Create: `packages/hub-sdk/pyproject.toml`
-- Create: `packages/hub-sdk/src/python_hub_sdk/__init__.py`
-- Test: `tests/test_package_imports.py`
+**文件：** 新建 `.gitignore`、根 `pyproject.toml`、`README.md`、两个包的 `pyproject.toml` 和 `__init__.py`，以及 `tests/test_package_imports.py`。
 
-**Interfaces:**
-- Consumes: Python 3.12 and the design baseline.
-- Produces: importable `python_hub_contracts` and `python_hub_sdk` packages; commands `pytest`, `ruff check .`, and `mypy packages`.
+**输入/输出：** 依赖 Python 3.12 与设计基线；输出可导入的 `python_hub_contracts`、`python_hub_sdk`，并使 `pytest`、`ruff check .`、`mypy packages` 可运行。
 
-- [ ] **Step 1: Write the package import test**
+- [ ] **步骤 1：编写导入失败测试**
 
 ```python
 def test_public_packages_import() -> None:
@@ -94,460 +72,177 @@ def test_public_packages_import() -> None:
     assert python_hub_sdk.__name__ == "python_hub_sdk"
 ```
 
-- [ ] **Step 2: Run the test and confirm the packages do not exist**
+- [ ] **步骤 2：确认包尚不存在**
 
-Run: `python -m pytest tests/test_package_imports.py -v`
+运行 `python -m pytest tests/test_package_imports.py -v`，预期因 `ModuleNotFoundError` 失败。
 
-Expected: collection fails with `ModuleNotFoundError` for `python_hub_contracts`.
+- [ ] **步骤 3：建立工作区与包配置**
 
-- [ ] **Step 3: Add workspace configuration and minimal packages**
+根 `pyproject.toml` 声明 Python `>=3.12,<3.13`、Pydantic、PyYAML 和开发依赖 Hatchling、pytest、pytest-cov、Ruff、mypy；pytest 的 `pythonpath` 包含两个 `src` 目录；Ruff 使用 Python 3.12 和 100 列；mypy 为严格模式。两个包均采用 Hatchling 的 `src/` 布局，初始 `__init__.py` 仅含文档字符串和 `__version__ = "0.1.0"`。
 
-Root `pyproject.toml` must contain:
+`.gitignore` 至少忽略 `.venv/`、缓存目录、`.coverage`、`htmlcov/`、`dist/`、`build/` 和 `*.egg-info/`。
 
-```toml
-[project]
-name = "python-service-hub-workspace"
-version = "0.1.0"
-requires-python = ">=3.12,<3.13"
-dependencies = [
-  "pydantic>=2.9,<3",
-  "PyYAML>=6.0,<7",
-]
-
-[project.optional-dependencies]
-dev = [
-  "hatchling>=1.25,<2",
-  "mypy>=1.11,<2",
-  "pytest>=8.3,<9",
-  "pytest-cov>=5,<6",
-  "ruff>=0.6,<1",
-]
-
-[tool.pytest.ini_options]
-addopts = "--strict-markers --strict-config"
-testpaths = ["tests"]
-pythonpath = [
-  "packages/hub-contracts/src",
-  "packages/hub-sdk/src",
-]
-
-[tool.ruff]
-line-length = 100
-target-version = "py312"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
-
-[tool.mypy]
-python_version = "3.12"
-strict = true
-packages = ["python_hub_contracts", "python_hub_sdk"]
-mypy_path = ["packages/hub-contracts/src", "packages/hub-sdk/src"]
-```
-
-Each package uses Hatchling with a `src/` layout. Its `__init__.py` initially contains only a module docstring and `__version__ = "0.1.0"`.
-
-Create `.gitignore` with `.venv/`, `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.coverage`, `htmlcov/`, `dist/`, `build/`, and `*.egg-info/`. Run `git init` in the `python-service-hub` directory before the first commit.
-
-- [ ] **Step 4: Install the workspace and run the package test**
-
-Run: `python -m pip install -e ".[dev]" -e packages/hub-contracts -e packages/hub-sdk`
-
-Run: `python -m pytest tests/test_package_imports.py -v`
-
-Expected: `1 passed`.
-
-- [ ] **Step 5: Run initial static checks**
-
-Run: `python -m ruff check .`
-
-Run: `python -m mypy packages`
-
-Expected: both commands exit 0.
-
-- [ ] **Step 6: Commit the scaffold**
-
-```bash
-git add pyproject.toml README.md packages tests/test_package_imports.py
-git commit -m "build: scaffold hub protocol workspace"
-```
-
-## Task 2: Common Contract Types and Safe Relative Paths
-
-**Files:**
-- Create: `packages/hub-contracts/src/python_hub_contracts/common.py`
-- Modify: `packages/hub-contracts/src/python_hub_contracts/__init__.py`
-- Test: `tests/contracts/test_common.py`
-
-**Interfaces:**
-- Consumes: Pydantic `BaseModel`, `ConfigDict`, `StringConstraints`.
-- Produces: `StrictContractModel`, `PluginId`, `SemanticVersion`, `RelativeProtocolPath`, `normalize_os()`, `normalize_arch()`.
-
-- [ ] **Step 1: Write failing validation tests**
-
-Tests must prove:
-
-```python
-@pytest.mark.parametrize("value", ["nc_to_shp", "model_2d_export"])
-def test_plugin_id_accepts_stable_ids(value: str) -> None: ...
-
-@pytest.mark.parametrize("value", ["NC_TO_SHP", "nc-to-shp", "中文", "ab"])
-def test_plugin_id_rejects_invalid_ids(value: str) -> None: ...
-
-@pytest.mark.parametrize("value", ["/tmp/a", "C:/temp/a", "../a", "input/../secret"])
-def test_relative_protocol_path_rejects_escape(value: str) -> None: ...
-
-def test_strict_model_rejects_unknown_fields() -> None: ...
-
-def test_platform_aliases_are_normalized() -> None:
-    assert normalize_os("Linux") == "linux"
-    assert normalize_arch("x86_64") == "amd64"
-    assert normalize_arch("aarch64") == "arm64"
-```
-
-- [ ] **Step 2: Run tests and confirm imports fail**
-
-Run: `python -m pytest tests/contracts/test_common.py -v`
-
-Expected: FAIL because `python_hub_contracts.common` does not exist.
-
-- [ ] **Step 3: Implement strict primitives**
-
-`StrictContractModel` uses `ConfigDict(extra="forbid", frozen=True)`. Implement constrained string aliases and a Pydantic `BeforeValidator` for path normalization. A valid protocol path uses `/`, is not empty, is not absolute, contains no `.` or `..` segment, and has no NUL byte or Windows drive prefix.
-
-Platform helpers accept case-insensitive aliases but return only:
-
-```python
-Literal["linux"]
-Literal["amd64", "arm64"]
-```
-
-Unknown OS/architecture raises `ValueError`.
-
-- [ ] **Step 4: Run focused tests**
-
-Run: `python -m pytest tests/contracts/test_common.py -v`
-
-Expected: all common-contract tests pass.
-
-- [ ] **Step 5: Export the public primitives and run quality checks**
-
-Run: `python -m ruff check packages/hub-contracts tests/contracts/test_common.py`
-
-Run: `python -m mypy packages/hub-contracts/src`
-
-Expected: both commands exit 0.
-
-- [ ] **Step 6: Commit common types**
-
-```bash
-git add packages/hub-contracts tests/contracts/test_common.py
-git commit -m "feat(contracts): add strict protocol primitives"
-```
-
-## Task 3: Plugin and Build Manifests
-
-**Files:**
-- Create: `packages/hub-contracts/src/python_hub_contracts/plugin_manifest.py`
-- Create: `packages/hub-contracts/src/python_hub_contracts/build_manifest.py`
-- Create: `packages/hub-contracts/src/python_hub_contracts/yaml_io.py`
-- Modify: `packages/hub-contracts/src/python_hub_contracts/__init__.py`
-- Test: `tests/contracts/test_plugin_manifest.py`
-- Test: `tests/contracts/test_build_manifest.py`
-- Test: `tests/contracts/test_yaml_io.py`
-- Create: `tests/fixtures/valid-plugin.yaml`
-- Create: `tests/fixtures/valid-build.json`
-
-**Interfaces:**
-- Consumes: Task 2 strict types.
-- Produces: `PluginManifest`, `PluginBuildManifest`, `load_plugin_manifest(path: Path) -> PluginManifest`.
-
-- [ ] **Step 1: Write failing manifest tests**
-
-Cover all of these behaviors with explicit fixtures and assertions:
-
-- The design document's `nc_to_shp` YAML validates.
-- Duplicate parameter/input/output names are rejected.
-- Unsupported parameter types and runtime types are rejected.
-- `enum` requires non-empty unique `options`, and its default must be one of them.
-- Required fields cannot define contradictory defaults.
-- Numeric `min` cannot exceed `max`; file counts and sizes are positive.
-- `build.json` accepts only `linux/amd64` and `linux/arm64` after normalization.
-- `plugin_id` and `plugin_version` are validated but cross-file equality is checked by a method named `assert_matches_plugin()`.
-- `runtime.environment_path` is a safe relative path and SHA256 is 64 lowercase hexadecimal characters.
-- YAML aliases are capped by rejecting documents containing anchors/aliases; duplicate mapping keys are rejected by the custom safe loader.
-
-- [ ] **Step 2: Run manifest tests and confirm they fail**
-
-Run: `python -m pytest tests/contracts/test_plugin_manifest.py tests/contracts/test_build_manifest.py tests/contracts/test_yaml_io.py -v`
-
-Expected: FAIL because manifest types and loader are missing.
-
-- [ ] **Step 3: Implement `PluginManifest`**
-
-Create frozen, extra-forbidden models for:
+- [ ] **步骤 4：安装并验证**
 
 ```text
-PluginInfo, SdkSpec, PythonSpec, EnvironmentDeclaration, RuntimeSpec,
-EntryPointSpec, ParameterSpec, InputSpec, OutputSpec, ExecutionSpec,
-EnvironmentVariablesSpec, HealthcheckSpec, PluginManifest
+python -m pip install -e ".[dev]" -e packages/hub-contracts -e packages/hub-sdk
+python -m pytest tests/test_package_imports.py -v
+python -m ruff check .
+python -m mypy packages
 ```
 
-Use discriminated or validated literals for V1 type sets. `PluginManifest` validates uniqueness across each named list and exposes `parameter_by_name`, `input_by_name`, and `output_by_name` methods that raise `KeyError` when absent.
+预期测试通过、静态检查退出码为 0；提交信息：`build: scaffold hub protocol workspace`。
 
-- [ ] **Step 4: Implement `PluginBuildManifest`**
+## 任务 2：公共契约与安全相对路径
 
-Create `TargetPlatform`, `PackagedRuntime`, and `PluginBuildManifest`. `assert_matches_plugin(plugin: PluginManifest) -> None` raises `ValueError` when ID/version, Python version, or SDK major version differs.
+**文件：** 新建 `packages/hub-contracts/src/python_hub_contracts/common.py`，修改包导出，新增 `tests/contracts/test_common.py`。
 
-- [ ] **Step 5: Implement safe YAML loading**
+**输出：** `StrictContractModel`、`PluginId`、`SemanticVersion`、`RelativeProtocolPath`、`normalize_os()`、`normalize_arch()`。
 
-`load_plugin_manifest()` reads UTF-8 with a 1 MiB default limit, uses `yaml.SafeLoader` subclassing only to reject duplicate mapping keys, rejects anchors/aliases before construction, requires a mapping root, and passes it to `PluginManifest.model_validate()`.
+- [ ] **步骤 1：先编写失败测试**
 
-- [ ] **Step 6: Run focused tests and static checks**
+验证 `nc_to_shp` 和 `model_2d_export` 是有效 ID；`NC_TO_SHP`、`nc-to-shp`、中文和过短 ID 被拒绝；`/tmp/a`、`C:/temp/a`、`../a`、`input/../secret` 被路径校验拒绝；额外字段被拒绝；`Linux`、`x86_64`、`aarch64` 分别规范化为 `linux`、`amd64`、`arm64`。
 
-Run: `python -m pytest tests/contracts/test_plugin_manifest.py tests/contracts/test_build_manifest.py tests/contracts/test_yaml_io.py -v`
+- [ ] **步骤 2：实现严格类型**
 
-Run: `python -m ruff check packages/hub-contracts tests/contracts`
+`StrictContractModel` 使用 `ConfigDict(extra="forbid", frozen=True)`。路径通过 Pydantic `BeforeValidator` 标准化：必须非空、非绝对、不含 `.`/`..` 段、NUL 或 Windows 盘符。平台函数接受大小写无关别名，但只返回 `Literal["linux"]` 与 `Literal["amd64", "arm64"]`；未知值抛出 `ValueError`。
 
-Run: `python -m mypy packages/hub-contracts/src`
+- [ ] **步骤 3：验证并提交**
 
-Expected: all commands exit 0.
-
-- [ ] **Step 7: Commit manifest contracts**
-
-```bash
-git add packages/hub-contracts tests/contracts tests/fixtures
-git commit -m "feat(contracts): define plugin and build manifests"
+```text
+python -m pytest tests/contracts/test_common.py -v
+python -m ruff check packages/hub-contracts tests/contracts/test_common.py
+python -m mypy packages/hub-contracts/src
 ```
 
-## Task 4: Job Runtime and Runner Event Contracts
+提交：`feat(contracts): add strict protocol primitives`。
 
-**Files:**
-- Create: `packages/hub-contracts/src/python_hub_contracts/job_protocol.py`
-- Create: `packages/hub-contracts/src/python_hub_contracts/runner_events.py`
-- Modify: `packages/hub-contracts/src/python_hub_contracts/__init__.py`
-- Test: `tests/contracts/test_job_protocol.py`
-- Test: `tests/contracts/test_runner_events.py`
+## 任务 3：插件与平台构建清单
 
-**Interfaces:**
-- Consumes: Task 2 relative paths, IDs and strict model base.
-- Produces: `JobRuntimeSpec`, `JobResult`, `ProgressEvent`, `LogEvent`, `parse_runner_line(line: str) -> RunnerEvent | None`.
+**文件：** 新建 `plugin_manifest.py`、`build_manifest.py`、`yaml_io.py`；修改公共导出；新增三个清单测试及 `valid-plugin.yaml`、`valid-build.json` 夹具。
 
-- [ ] **Step 1: Write failing `job.json` and `result.json` tests**
+**输出：** `PluginManifest`、`PluginBuildManifest`、`load_plugin_manifest(path: Path) -> PluginManifest`。
 
-Tests construct the exact success and failure examples from the design and verify:
+- [ ] **步骤 1：编写清单负向测试**
 
-- protocol version is `1.0`;
-- timestamps are timezone-aware;
-- input SHA256, positive sizes, relative paths and timeout are validated;
-- `SUCCESS` requires `error is None`;
-- `FAILED` requires an error and permits no unregistered output outside the modeled list;
-- `CANCELLED` permits an optional stable cancellation error;
-- progress/state values use enums serialized as uppercase strings;
-- JSON round-trip with `model_dump_json()`/`model_validate_json()` is lossless.
+覆盖设计中的 `nc_to_shp` 清单；拒绝重复参数/输入/输出名称、未知参数或运行时类型、空或重复 enum 选项、错误 enum 默认值、必填字段的矛盾默认值、错误数值范围、非正文件大小/计数、非 Linux AMD64/ARM64 目标、不安全环境路径和不合法 SHA256。验证 YAML 拒绝锚点/别名和重复映射键。
 
-- [ ] **Step 2: Write failing Runner Event tests**
+- [ ] **步骤 2：实现 `PluginManifest`**
 
-```python
-def test_parse_progress_event() -> None:
-    event = parse_runner_line(
-        '@@HUB@@{"protocol_version":"1.0","type":"progress",'
-        '"percent":50,"message":"处理中"}'
-    )
-    assert isinstance(event, ProgressEvent)
-    assert event.percent == 50
+实现冻结、禁止额外字段的 `PluginInfo`、`SdkSpec`、`PythonSpec`、`EnvironmentDeclaration`、`RuntimeSpec`、`EntryPointSpec`、`ParameterSpec`、`InputSpec`、`OutputSpec`、`ExecutionSpec`、`EnvironmentVariablesSpec`、`HealthcheckSpec` 和 `PluginManifest`。提供 `parameter_by_name`、`input_by_name`、`output_by_name`；找不到对象时抛出 `KeyError`。
 
-def test_plain_stdout_is_not_an_event() -> None:
-    assert parse_runner_line("ordinary plugin output") is None
+- [ ] **步骤 3：实现 `PluginBuildManifest` 与安全 YAML 加载**
+
+实现 `TargetPlatform`、`PackagedRuntime`、`PluginBuildManifest`。`assert_matches_plugin()` 在插件 ID/版本、Python 版本、SDK 主版本不一致时抛出 `ValueError`。YAML 以 UTF-8 读取，默认 1 MiB，使用安全加载器、拒绝锚点/别名和重复键，只接受映射根对象，并调用 `PluginManifest.model_validate()`。
+
+- [ ] **步骤 4：验证并提交**
+
+```text
+python -m pytest tests/contracts/test_plugin_manifest.py tests/contracts/test_build_manifest.py tests/contracts/test_yaml_io.py -v
+python -m ruff check packages/hub-contracts tests/contracts
+python -m mypy packages/hub-contracts/src
 ```
 
-Also verify percent bounds, supported log levels, malformed protocol JSON raising `RunnerEventParseError`, and unknown event types raising the same stable exception.
+提交：`feat(contracts): define plugin and build manifests`。
 
-- [ ] **Step 3: Run focused tests and confirm failure**
+## 任务 4：Job 运行时和 Runner 事件协议
 
-Run: `python -m pytest tests/contracts/test_job_protocol.py tests/contracts/test_runner_events.py -v`
+**文件：** 新建 `job_protocol.py`、`runner_events.py`；修改公共导出；新增 `test_job_protocol.py`、`test_runner_events.py`。
 
-Expected: FAIL because job and event modules are absent.
+**输出：** `JobRuntimeSpec`、`JobResult`、`ProgressEvent`、`LogEvent` 和 `parse_runner_line(line: str) -> RunnerEvent | None`。
 
-- [ ] **Step 4: Implement job protocol models**
+- [ ] **步骤 1：编写 `job.json`/`result.json` 失败测试**
 
-Define enums `JobStatus`, `FileRole`, and the exact nested types used by the design. Enforce cross-field result invariants with `model_validator(mode="after")`. Model input values as `RuntimeInputFile | list[RuntimeInputFile]` and require non-empty lists.
+验证协议版本 `1.0`、带时区时间、输入 SHA256、正文件大小、安全路径、超时；`SUCCESS` 必须无错误，`FAILED` 必须有错误且不能含未登记输出，`CANCELLED` 可带稳定取消错误；状态和进度使用大写枚举字符串；`model_dump_json()`/`model_validate_json()` 往返无损。运行时输入类型为 `RuntimeInputFile | list[RuntimeInputFile]`，列表不可为空。
 
-- [ ] **Step 5: Implement event parser**
+- [ ] **步骤 2：实现模型和事件解析器**
 
-Use `RUNNER_EVENT_PREFIX = "@@HUB@@"` and a Pydantic discriminated union on `type`. Return `None` for ordinary stdout; raise `RunnerEventParseError(code="RUNNER_EVENT_INVALID", message=...)` only for prefixed but invalid data.
+定义 `JobStatus`、`FileRole` 及必要嵌套模型，并使用 `model_validator(mode="after")` 实现跨字段不变式。事件前缀为 `RUNNER_EVENT_PREFIX = "@@HUB@@"`，用 `type` 判别联合；普通 stdout 返回 `None`，有前缀但非法的数据只抛出 `RunnerEventParseError(code="RUNNER_EVENT_INVALID", message=...)`。
 
-- [ ] **Step 6: Run protocol tests and static checks**
+- [ ] **步骤 3：验证并提交**
 
-Run: `python -m pytest tests/contracts/test_job_protocol.py tests/contracts/test_runner_events.py -v`
-
-Run: `python -m ruff check packages/hub-contracts tests/contracts`
-
-Run: `python -m mypy packages/hub-contracts/src`
-
-Expected: all commands exit 0.
-
-- [ ] **Step 7: Commit runtime contracts**
-
-```bash
-git add packages/hub-contracts tests/contracts
-git commit -m "feat(contracts): add job and runner event protocols"
+```text
+python -m pytest tests/contracts/test_job_protocol.py tests/contracts/test_runner_events.py -v
+python -m ruff check packages/hub-contracts tests/contracts
+python -m mypy packages/hub-contracts/src
 ```
 
-## Task 5: Plugin SDK Result and Error Types
+提交：`feat(contracts): add job and runner event protocols`。
 
-**Files:**
-- Create: `packages/hub-sdk/src/python_hub_sdk/result.py`
-- Create: `packages/hub-sdk/src/python_hub_sdk/errors.py`
-- Modify: `packages/hub-sdk/src/python_hub_sdk/__init__.py`
-- Test: `tests/sdk/test_result.py`
-- Test: `tests/sdk/test_errors.py`
+## 任务 5：插件 SDK 结果与异常
 
-**Interfaces:**
-- Consumes: standard library dataclasses/path types only.
-- Produces: `InputFile`, `OutputFile`, `PluginResult`, `PluginError`, `PluginValidationError`, `PluginExecutionError`, `PluginCancelledError`.
+**文件：** 新建 `result.py`、`errors.py`；修改 SDK 公共导出；新增 `test_result.py`、`test_errors.py`。
 
-- [ ] **Step 1: Write failing SDK value-object tests**
+**输出：** `InputFile`、`OutputFile`、`PluginResult`、`PluginError`、`PluginValidationError`、`PluginExecutionError`、`PluginCancelledError`。
 
-Tests prove that `InputFile` is immutable, `OutputFile.path` rejects absolute/traversal paths, `PluginResult` does not share mutable defaults, and result data must be JSON-serializable.
+- [ ] **步骤 1：编写失败测试**
 
-- [ ] **Step 2: Write failing exception tests**
+验证 `InputFile` 不可变，`OutputFile.path` 拒绝绝对路径和路径穿越，`PluginResult` 不共享可变默认值，结果数据必须为严格 JSON 值。错误码匹配 `^[A-Z][A-Z0-9_]{2,63}$`；`PluginCancelledError()` 默认错误码/消息为 `PLUGIN_CANCELLED` / `任务已取消`。
 
-```python
-def test_plugin_validation_error_has_stable_fields() -> None:
-    error = PluginValidationError(code="INVALID_TIME_RANGE", message="范围非法")
-    assert str(error) == "范围非法"
-    assert error.code == "INVALID_TIME_RANGE"
-    assert error.error_type == "PluginValidationError"
+- [ ] **步骤 2：实现不可变 SDK 值对象和异常层次**
+
+使用冻结、带 slots 的 dataclass，并在 `__post_init__` 校验。仅使用标准库；不得引用 Hub 内部代码。`PluginError` 保存 `code`、`message` 和可选 JSON 安全 `details`；派生类型只改变语义与默认值，绝不保存数据库对象或 HTTP 状态。
+
+- [ ] **步骤 3：验证并提交**
+
+```text
+python -m pytest tests/sdk/test_result.py tests/sdk/test_errors.py -v
+python -m ruff check packages/hub-sdk tests/sdk
+python -m mypy packages/hub-sdk/src
 ```
 
-Verify codes match `^[A-Z][A-Z0-9_]{2,63}$` and `PluginCancelledError()` defaults to `PLUGIN_CANCELLED` / `任务已取消`.
+提交：`feat(sdk): add plugin result and error contracts`。
 
-- [ ] **Step 3: Run SDK tests and confirm failure**
+## 任务 6：插件上下文、事件与路径安全
 
-Run: `python -m pytest tests/sdk/test_result.py tests/sdk/test_errors.py -v`
+**文件：** 新建 `context.py`；修改 SDK 导出；新增 `tests/sdk/test_context.py`。
 
-Expected: FAIL because SDK modules are missing.
+**输出：** `PluginContext`、`PluginLogger` 协议、`EventSink` 协议、安全的 `output_file()`/`work_file()`。
 
-- [ ] **Step 4: Implement immutable SDK types**
+- [ ] **步骤 1：编写失败测试**
 
-Use frozen dataclasses with slots. Validate in `__post_init__`; reuse no Hub-internal code. Check JSON serializability via `json.dumps(data, ensure_ascii=False)`. Expose only public SDK names from `python_hub_sdk.__init__`.
+验证 `progress(0)` 与 `progress(100, "done")` 事件、0–100 边界、注入的取消探针、`check_cancelled()`、位于 output 根下的 `output_file("result.zip")`、绝对路径/`..`/符号链接逃逸拒绝，以及仅在 `create_parent=True` 时创建父目录。
 
-- [ ] **Step 5: Implement exception hierarchy**
-
-`PluginError` stores `code`, `message`, and optional JSON-safe `details`. Derived exceptions change only semantic type/defaults. No exception stores Hub database objects or HTTP status codes.
-
-- [ ] **Step 6: Run SDK tests and quality checks**
-
-Run: `python -m pytest tests/sdk/test_result.py tests/sdk/test_errors.py -v`
-
-Run: `python -m ruff check packages/hub-sdk tests/sdk`
-
-Run: `python -m mypy packages/hub-sdk/src`
-
-Expected: all commands exit 0.
-
-- [ ] **Step 7: Commit SDK value types**
-
-```bash
-git add packages/hub-sdk tests/sdk
-git commit -m "feat(sdk): add plugin result and error contracts"
-```
-
-## Task 6: Plugin Context, Events, and Path Safety
-
-**Files:**
-- Create: `packages/hub-sdk/src/python_hub_sdk/context.py`
-- Modify: `packages/hub-sdk/src/python_hub_sdk/__init__.py`
-- Test: `tests/sdk/test_context.py`
-
-**Interfaces:**
-- Consumes: `PluginCancelledError` and callable event/cancellation adapters.
-- Produces: `PluginContext`, `PluginLogger` protocol, `EventSink` protocol, and safe `output_file()`/`work_file()` helpers.
-
-- [ ] **Step 1: Write failing Context tests**
-
-Tests cover:
-
-- `progress(0)` and `progress(100, "done")` emit exact dictionaries.
-- percent below 0 or above 100 raises `ValueError`.
-- `is_cancelled()` delegates to an injected zero-argument callable.
-- `check_cancelled()` raises `PluginCancelledError` only when requested.
-- `output_file("result.zip")` resolves under output root.
-- absolute paths, `..`, and a symlink that resolves outside the root are rejected.
-- returned parent directories are created only when `create_parent=True`.
-
-- [ ] **Step 2: Run Context tests and confirm failure**
-
-Run: `python -m pytest tests/sdk/test_context.py -v`
-
-Expected: FAIL because `PluginContext` is missing.
-
-- [ ] **Step 3: Implement adapter-based Context**
-
-Constructor signature:
+- [ ] **步骤 2：实现 `PluginContext`**
 
 ```python
 PluginContext(
-    *,
-    job_id: str,
-    plugin_id: str,
-    plugin_version: str,
-    input_dir: Path,
-    work_dir: Path,
-    output_dir: Path,
-    logger: PluginLogger,
-    event_sink: EventSink,
+    *, job_id: str, plugin_id: str, plugin_version: str,
+    input_dir: Path, work_dir: Path, output_dir: Path,
+    logger: PluginLogger, event_sink: EventSink,
     cancellation_probe: Callable[[], bool],
 ) -> None
 ```
 
-`progress()` calls `event_sink.emit_progress(percent, message)`. Path helpers resolve the root and candidate, use `Path.relative_to()` to prove containment, reject existing symlink escape, and never accept absolute input.
+`progress()` 委托给 `event_sink.emit_progress(percent, message)`。路径辅助函数通过解析根目录和候选路径、`Path.relative_to()` 与真实路径边界证明包含关系，并拒绝绝对输入和符号链接逃逸。
 
-- [ ] **Step 4: Run Context tests and quality checks**
+- [ ] **步骤 3：验证并提交**
 
-Run: `python -m pytest tests/sdk/test_context.py -v`
-
-Run: `python -m ruff check packages/hub-sdk tests/sdk`
-
-Run: `python -m mypy packages/hub-sdk/src`
-
-Expected: all commands exit 0.
-
-- [ ] **Step 5: Commit Context**
-
-```bash
-git add packages/hub-sdk tests/sdk
-git commit -m "feat(sdk): add plugin execution context"
+```text
+python -m pytest tests/sdk/test_context.py -v
+python -m ruff check packages/hub-sdk tests/sdk
+python -m mypy packages/hub-sdk/src
 ```
 
-## Task 7: Cross-Package Contract Verification and Phase Acceptance
+提交：`feat(sdk): add plugin execution context`。
 
-**Files:**
-- Modify: `README.md`
-- Create: `tests/test_contract_examples.py`
+## 任务 7：跨包契约验证与阶段验收
 
-**Interfaces:**
-- Consumes: all public contracts and SDK types from Tasks 1–6.
-- Produces: a documented, tested protocol-foundation release candidate for later Runner and Server phases.
+**文件：** 修改 `README.md`，新建 `tests/test_contract_examples.py`。
 
-- [ ] **Step 1: Write an end-to-end contract test**
+**输入/输出：** 消费任务 1–6 的全部公共契约和 SDK 类型；产出供 Runner 和 Server 后续阶段使用的协议基础候选版本。
 
-The test loads `valid-plugin.yaml`, validates `valid-build.json`, calls `assert_matches_plugin()`, constructs a `JobRuntimeSpec`, round-trips it through JSON, constructs a `PluginResult`, maps it into a successful `JobResult`, and parses one progress event. Assert IDs, versions, paths and status remain unchanged across the chain.
+- [ ] **步骤 1：端到端契约测试**
 
-- [ ] **Step 2: Run the end-to-end test and confirm the first missing integration behavior**
+加载 `valid-plugin.yaml`，校验 `valid-build.json`，调用 `assert_matches_plugin()`，构造 `JobRuntimeSpec` 并 JSON 往返，构造 `PluginResult` 和成功 `JobResult`，解析一个进度事件。断言 ID、版本、路径与状态贯穿链路不变。
 
-Run: `python -m pytest tests/test_contract_examples.py -v`
+- [ ] **步骤 2：仅补充缺失公共转换**
 
-Expected: FAIL until all needed public exports and conversion helpers are present.
+只有测试确实需要时才添加 `OutputFile.to_protocol_dict()` 等显式转换。不得在此阶段引入 Runner、数据库、HTTP、归档安装或子进程执行代码。
 
-- [ ] **Step 3: Add only the missing public exports/conversion helpers**
+- [ ] **步骤 3：更新 README 并执行完整验证**
 
-Keep conversion explicit: add `OutputFile.to_protocol_dict()` only if the test requires it. Do not introduce Runner, database, HTTP, archive installation, or subprocess code in this phase.
-
-- [ ] **Step 4: Document package boundaries and commands**
-
-README must show:
+README 必须包含最小 `plugin.yaml`、SDK `run()` 签名、验证命令，以及“平台信息属于 `build.json`”的明确说明。
 
 ```text
 python -m pytest --cov=python_hub_contracts --cov=python_hub_sdk --cov-report=term-missing
@@ -555,57 +250,30 @@ python -m ruff check .
 python -m mypy packages
 ```
 
-It must include a minimal `plugin.yaml`, SDK `run()` signature, and an explicit statement that platform data belongs in `build.json`.
+合并覆盖率至少 90%，其余命令均须零错误。
 
-- [ ] **Step 5: Run the complete verification suite**
+- [ ] **步骤 4：搜索设计边界并提交**
 
-Run: `python -m pytest --cov=python_hub_contracts --cov=python_hub_sdk --cov-report=term-missing`
-
-Expected: all tests pass and combined package coverage is at least 90%.
-
-Run: `python -m ruff check .`
-
-Expected: exit 0 with no findings.
-
-Run: `python -m mypy packages`
-
-Expected: exit 0 with no type errors.
-
-- [ ] **Step 6: Verify design invariants by search**
-
-Run: `rg -n "fastapi|sqlalchemy|redis|subprocess" packages/hub-sdk/src`
-
-Expected: no matches.
-
-Run: `rg -n "(^|[^a-z])targets:" tests/fixtures/valid-plugin.yaml packages/hub-contracts/src`
-
-Expected: no matches; platform target is absent from the source manifest.
-
-- [ ] **Step 7: Commit phase acceptance**
-
-```bash
-git add README.md tests/test_contract_examples.py packages
-git commit -m "test: verify protocol foundation end to end"
+```text
+rg -n "fastapi|sqlalchemy|redis|subprocess" packages/hub-sdk/src
+rg -n "(^|[^a-z])targets:" tests/fixtures/valid-plugin.yaml packages/hub-contracts/src
 ```
 
-## Phase Completion Gate
+预期均无匹配；提交：`test: verify protocol foundation end to end`。
 
-The phase is complete only when:
+## 阶段完成门禁
 
-- all tests pass with at least 90% combined coverage;
-- Ruff and strict mypy pass;
-- both packages build as wheels;
-- the design examples validate without modification;
-- invalid IDs, versions, paths, manifests, result invariants and events have negative tests;
-- `plugin.yaml` contains no target architecture;
-- SDK contains no server/framework dependency;
-- no HTTP, ORM, subprocess executor or environment installer behavior has leaked into this phase.
+- 所有测试通过，合并覆盖率至少 90%；Ruff 和严格 mypy 通过。
+- 两个包均能构建为 wheel，设计示例无需修改即可校验。
+- 非法 ID、版本、路径、清单、结果不变式和事件均有负向测试。
+- `plugin.yaml` 不含目标架构；SDK 不含服务端/框架依赖。
+- 本阶段未泄漏 HTTP、ORM、子进程执行器或环境安装器行为。
 
-After this gate, create separate implementation plans in this order:
+通过本门禁后，按顺序实施：
 
-1. persistence and filesystem foundation;
-2. Runner and ProcessExecutor;
-3. Plugin/Environment secure installation;
-4. REST API V1;
-5. `nc_to_shp` reference plugin;
-6. multi-architecture Docker and offline release.
+1. 持久化和文件系统基础；
+2. Runner 与 ProcessExecutor；
+3. Plugin/Environment 安全安装；
+4. REST API V1；
+5. `nc_to_shp` 参考插件；
+6. 多架构 Docker 与离线发布。
