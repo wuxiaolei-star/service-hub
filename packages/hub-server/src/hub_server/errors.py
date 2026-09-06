@@ -1,19 +1,10 @@
-"""Shared API error schemas for future Hub routes."""
+"""Client-safe exceptions raised by Hub service code."""
 
-from typing import Any, Literal
+from hub_server.schemas import ErrorBody
+from hub_server.schemas import ErrorResponse as _ErrorResponse
 
-from pydantic import BaseModel
-
-
-class ApiError(BaseModel):
-    code: str
-    message: str
-    details: dict[str, Any] | None = None
-
-
-class ErrorResponse(BaseModel):
-    success: Literal[False] = False
-    error: ApiError
+ApiError = ErrorBody
+ErrorResponse = _ErrorResponse
 
 
 class HubError(Exception):

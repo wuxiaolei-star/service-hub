@@ -1,4 +1,4 @@
-"""Response schemas exposed by Hub system endpoints."""
+"""Request and response schemas exposed by Hub HTTP endpoints."""
 
 from typing import Literal
 
@@ -19,3 +19,30 @@ class SystemInfoResponse(BaseModel):
     platform: PlatformResponse
     python_version: str
     deployment_mode: Literal["offline"]
+
+
+class FileResponse(BaseModel):
+    """Public metadata for an available Hub file."""
+
+    file_id: str
+    name: str
+    size: int
+    sha256: str
+    extension: str | None
+    mime_type: str | None
+    status: Literal["AVAILABLE"]
+
+
+class ErrorBody(BaseModel):
+    """A stable, client-safe API error description."""
+
+    code: str
+    message: str
+    details: dict[str, object] | None = None
+
+
+class ErrorResponse(BaseModel):
+    """The uniform envelope used for Hub API failures."""
+
+    success: Literal[False] = False
+    error: ErrorBody
