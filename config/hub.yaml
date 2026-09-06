@@ -1,0 +1,8 @@
+deployment:
+  mode: offline
+storage:
+  root: /data
+database:
+  url: sqlite:////data/db/hub.db
+uploads:
+  max_size_bytes: 10737418240

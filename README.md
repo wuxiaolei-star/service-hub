@@ -1,6 +1,6 @@
 # Python Service Hub
 
-本仓库包含 Python Service Hub V1 的协议基础设施。
+本仓库包含 Python Service Hub V1 的协议基础设施及可部署的服务基础。
 
 ## 包职责边界
 
@@ -67,3 +67,34 @@ python -m pytest --cov=python_hub_contracts --cov=python_hub_sdk --cov-report=te
 python -m ruff check .
 python -m mypy packages
 ```
+
+## Linux AMD64 部署
+
+当前镜像只提供系统和文件 API；插件安装、运行环境管理、Job 和 Runner 执行仍属于
+后续阶段。Hub 本身没有应用层认证，必须只部署在 Nginx、主机防火墙和内网边界之后。
+
+在目标主机准备持久化目录、Compose 文件和配置：
+
+```bash
+sudo install -d -m 0750 /srv/python-service-hub/{config,data}
+sudo cp compose.yaml /srv/python-service-hub/compose.yaml
+sudo cp config/hub.yaml.example /srv/python-service-hub/config/hub.yaml
+cd /srv/python-service-hub
+sudo docker compose up -d --build
+curl http://127.0.0.1:8000/api/v1/system/health
+```
+
+`data/` 保存 SQLite 数据库和上传文件；备份或恢复时应整体处理该目录。Compose 只将
+Hub 发布到 `127.0.0.1:8000`，不对公网开放。将
+`deploy/nginx/python-service-hub.conf.example` 安装到宿主机 Nginx 后，替换其中的域名、
+证书路径以及 `allow` 网段，再由 Nginx 通过 HTTPS 代理内网请求。
+
+可在 Linux AMD64 Docker 主机的独立测试目录执行以下部署 smoke 测试；它会创建测试用
+Compose 数据目录：
+
+```text
+python -m pytest -m integration tests/server/test_container_smoke.py -v
+docker compose down --volumes
+```
+
+不要在生产目录执行 `docker compose down --volumes`，以免删除正在使用的 Docker 卷。

@@ -26,7 +26,10 @@ dev = [
 bypass-selection = true
 
 [tool.pytest.ini_options]
-addopts = "--strict-markers --strict-config"
+addopts = "--strict-markers --strict-config -m 'not integration'"
+markers = [
+  "integration: runs against a Linux AMD64 Docker Compose deployment",
+]
 testpaths = ["tests"]
 pythonpath = [
   "packages/hub-contracts/src",

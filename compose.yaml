@@ -1,0 +1,13 @@
+services:
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: python-service-hub:0.1.0-linux-amd64
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./config/hub.yaml:/app/config/hub.yaml:ro
+      - ./data:/data
