@@ -4,14 +4,14 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from .plugin_manifest import PluginManifest
 
 DEFAULT_MAX_MANIFEST_SIZE_BYTES = 1024 * 1024
 
 
-class _UniqueKeySafeLoader(yaml.SafeLoader):  # type: ignore[misc]
+class _UniqueKeySafeLoader(yaml.SafeLoader):
     """SafeLoader variant that rejects duplicate mapping keys."""
 
     def construct_mapping(

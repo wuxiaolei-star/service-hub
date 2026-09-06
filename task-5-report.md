@@ -41,3 +41,26 @@ because this Windows host has no available Docker Linux daemon. Run it on a
 Linux AMD64 Docker host in a disposable checkout or directory as the release
 gate; the Compose data bind mount is not removed by `docker compose down
 --volumes`.
+
+## Review follow-up
+
+- The source-build instructions now begin with a complete repository checkout
+  in `/srv/python-service-hub` and name every file/directory required by the
+  Compose build context. They no longer copy only Compose and configuration
+  files before invoking `--build`.
+- Production Compose retains its exact loopback port, `./data` and
+  `./config/hub.yaml` declarations. The smoke test instead adds a temporary
+  Compose override file with its disposable port and data bind mount.
+- The smoke test now supplies a UUID-scoped Compose project, a temporary
+  data directory and an ephemeral loopback port. Its `finally` block runs
+  `down --volumes --remove-orphans` only for that project before
+  `TemporaryDirectory` removes the exact directory it created.
+- Removed the two stale PyYAML `type: ignore` comments. Strict mypy now passes
+  for all 28 source files.
+
+Fresh follow-up verification: the default test suite passed with 257 passed,
+1 skipped and 1 integration test deselected; Ruff passed; `mypy packages`
+passed; and `docker compose config` passed. The real Docker smoke remains an
+external validation gap: this host has no Docker Desktop Linux daemon, so the
+test cannot reach the image build/startup stage and was not represented as a
+passing result.

@@ -73,13 +73,15 @@ python -m mypy packages
 当前镜像只提供系统和文件 API；插件安装、运行环境管理、Job 和 Runner 执行仍属于
 后续阶段。Hub 本身没有应用层认证，必须只部署在 Nginx、主机防火墙和内网边界之后。
 
-在目标主机准备持久化目录、Compose 文件和配置：
+在目标 Linux AMD64 主机将**完整仓库检出**放在 `/srv/python-service-hub`。该检出必须包含
+`Dockerfile`、`alembic/`、`alembic.ini`、`packages/hub-server/`、`compose.yaml` 和 `config/`；
+Compose 的 `build: .` 需要这些文件作为构建上下文。然后准备持久化目录和配置：
 
 ```bash
-sudo install -d -m 0750 /srv/python-service-hub/{config,data}
-sudo cp compose.yaml /srv/python-service-hub/compose.yaml
-sudo cp config/hub.yaml.example /srv/python-service-hub/config/hub.yaml
+sudo git clone <approved-repository-url> /srv/python-service-hub
 cd /srv/python-service-hub
+sudo install -d -m 0750 /srv/python-service-hub/{config,data}
+sudo cp config/hub.yaml.example /srv/python-service-hub/config/hub.yaml
 sudo docker compose up -d --build
 curl http://127.0.0.1:8000/api/v1/system/health
 ```
@@ -89,12 +91,11 @@ Hub 发布到 `127.0.0.1:8000`，不对公网开放。将
 `deploy/nginx/python-service-hub.conf.example` 安装到宿主机 Nginx 后，替换其中的域名、
 证书路径以及 `allow` 网段，再由 Nginx 通过 HTTPS 代理内网请求。
 
-可在 Linux AMD64 Docker 主机的独立测试目录执行以下部署 smoke 测试；它会创建测试用
-Compose 数据目录：
+可在 Linux AMD64 Docker 主机执行以下部署 smoke 测试。它使用随机 Compose 项目名、临时
+数据目录和临时 loopback 端口，并在 `finally` 中只停止该随机项目：
 
 ```text
 python -m pytest -m integration tests/server/test_container_smoke.py -v
-docker compose down --volumes
 ```
 
-不要在生产目录执行 `docker compose down --volumes`，以免删除正在使用的 Docker 卷。
+不要在生产目录执行手工 `docker compose down --volumes`，以免停止正在使用的服务。
