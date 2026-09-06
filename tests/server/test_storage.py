@@ -38,6 +38,71 @@ def test_store_upload_removes_partial_data_when_limit_exceeded(tmp_path: Path) -
     assert not list((tmp_path / "uploads").glob(f"{file_key}.tmp-*"))
 
 
+def test_store_upload_hides_payload_open_io_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filesystem write error must not expose the storage root to upload callers."""
+    storage = LocalStorage(tmp_path)
+    file_key = "file_123e4567e89b42d3a456426614174000"
+
+    def fail_open(*_: object, **__: object) -> None:
+        raise OSError(f"cannot write under {tmp_path}")
+
+    monkeypatch.setattr(Path, "open", fail_open)
+
+    with pytest.raises(HubError) as error:
+        storage.store_upload(file_key, io.BytesIO(b"netcdf"), max_size_bytes=10)
+
+    assert error.value.code == "UNEXPECTED_ERROR"
+    assert str(tmp_path) not in error.value.message
+    assert isinstance(error.value.__cause__, OSError)
+
+
+def test_store_upload_hides_atomic_move_and_cleanup_io_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed atomic move stays client-safe even when temporary cleanup also fails."""
+    storage = LocalStorage(tmp_path)
+    file_key = "file_123e4567e89b42d3a456426614174000"
+
+    def fail_replace(*_: object, **__: object) -> None:
+        raise OSError(f"cannot move under {tmp_path}")
+
+    def fail_cleanup(*_: object, **__: object) -> None:
+        raise OSError(f"cannot clean under {tmp_path}")
+
+    monkeypatch.setattr("hub_server.storage.os.replace", fail_replace)
+    monkeypatch.setattr("hub_server.storage.shutil.rmtree", fail_cleanup)
+
+    with pytest.raises(HubError) as error:
+        storage.store_upload(file_key, io.BytesIO(b"netcdf"), max_size_bytes=10)
+
+    assert error.value.code == "UNEXPECTED_ERROR"
+    assert str(tmp_path) not in error.value.message
+    assert isinstance(error.value.__cause__, OSError)
+
+
+def test_remove_upload_hides_delete_io_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Direct storage cleanup failures must expose only a stable Hub error."""
+    storage = LocalStorage(tmp_path)
+    file_key = "file_123e4567e89b42d3a456426614174000"
+    storage.store_upload(file_key, io.BytesIO(b"netcdf"), max_size_bytes=10)
+
+    def fail_cleanup(*_: object, **__: object) -> None:
+        raise OSError(f"cannot clean under {tmp_path}")
+
+    monkeypatch.setattr("hub_server.storage.shutil.rmtree", fail_cleanup)
+
+    with pytest.raises(HubError) as error:
+        storage.remove_upload(file_key)
+
+    assert error.value.code == "UNEXPECTED_ERROR"
+    assert str(tmp_path) not in error.value.message
+    assert isinstance(error.value.__cause__, OSError)
+
+
 def test_store_upload_rejects_file_keys_that_are_not_uuid4_hex(tmp_path: Path) -> None:
     """Permitting predictable or malformed file keys would defeat controlled storage names."""
     with pytest.raises(ValueError):
@@ -151,9 +216,50 @@ def test_file_service_removes_installed_file_when_metadata_commit_fails(
 
             monkeypatch.setattr(session, "commit", fail_commit)
 
-            with pytest.raises(RuntimeError, match="db down"):
+            with pytest.raises(HubError) as error:
                 service.store_upload("model.nc", None, io.BytesIO(b"netcdf"))
 
+            assert error.value.code == "UNEXPECTED_ERROR"
+            assert isinstance(error.value.__cause__, RuntimeError)
             assert not list((tmp_path / "data" / "uploads").iterdir())
+    finally:
+        engine.dispose()
+
+
+def test_file_service_hides_database_error_when_rollback_and_cleanup_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rollback or deletion failures cannot mask the original metadata transaction error."""
+    storage = LocalStorage(tmp_path / "data")
+    engine, session_factory = create_engine_and_session_factory("sqlite://")
+    Base.metadata.create_all(engine)
+    commit_error = RuntimeError(f"database failed under {tmp_path}")
+    rollback_called = False
+    try:
+        with session_factory() as session:
+            service = FileService(session, storage, max_size_bytes=10)
+
+            def fail_commit() -> None:
+                raise commit_error
+
+            def fail_rollback() -> None:
+                nonlocal rollback_called
+                rollback_called = True
+                raise OSError(f"rollback failed under {tmp_path}")
+
+            def fail_cleanup(*_: object, **__: object) -> None:
+                raise OSError(f"cleanup failed under {tmp_path}")
+
+            monkeypatch.setattr(session, "commit", fail_commit)
+            monkeypatch.setattr(session, "rollback", fail_rollback)
+            monkeypatch.setattr("hub_server.storage.shutil.rmtree", fail_cleanup)
+
+            with pytest.raises(HubError) as error:
+                service.store_upload("model.nc", None, io.BytesIO(b"netcdf"))
+
+            assert rollback_called
+            assert error.value.code == "UNEXPECTED_ERROR"
+            assert str(tmp_path) not in error.value.message
+            assert error.value.__cause__ is commit_error
     finally:
         engine.dispose()
