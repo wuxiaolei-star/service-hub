@@ -1,6 +1,13 @@
 """Public contracts for Python Service Hub."""
 
-from .build_manifest import PackagedRuntime, PluginBuildManifest, TargetPlatform
+from .build_manifest import (
+    CondaPackRuntime,
+    DockerRuntime,
+    PluginBuildManifest,
+    RuntimeBuild,
+    RuntimeType,
+    TargetPlatform,
+)
 from .common import (
     PluginId,
     RelativeProtocolPath,
@@ -26,7 +33,6 @@ from .job_protocol import (
 )
 from .plugin_manifest import (
     EntryPointSpec,
-    EnvironmentDeclaration,
     EnvironmentVariablesSpec,
     ExecutionSpec,
     HealthcheckSpec,
@@ -54,8 +60,9 @@ __version__ = "0.1.0"
 
 __all__ = [
     "RUNNER_EVENT_PREFIX",
+    "CondaPackRuntime",
+    "DockerRuntime",
     "EntryPointSpec",
-    "EnvironmentDeclaration",
     "EnvironmentVariablesSpec",
     "ExecutionSpec",
     "FileRole",
@@ -68,7 +75,6 @@ __all__ = [
     "LogEvent",
     "LogLevel",
     "OutputSpec",
-    "PackagedRuntime",
     "ParameterSpec",
     "PluginBuildManifest",
     "PluginId",
@@ -79,6 +85,7 @@ __all__ = [
     "RelativeProtocolPath",
     "RunnerEvent",
     "RunnerEventParseError",
+    "RuntimeBuild",
     "RuntimeDirectories",
     "RuntimeExecution",
     "RuntimeInputFile",
@@ -88,6 +95,7 @@ __all__ = [
     "RuntimeOutputFile",
     "RuntimePlugin",
     "RuntimeSpec",
+    "RuntimeType",
     "SdkSpec",
     "SemanticVersion",
     "StrictContractModel",

@@ -40,13 +40,27 @@ class TargetPlatform(StrictContractModel):
     arch: Annotated[Literal["amd64", "arm64"], BeforeValidator(_normalize_target_arch)]
 
 
-class PackagedRuntime(StrictContractModel):
-    """Immutable packaged Python environment metadata."""
+RuntimeType = Literal["conda-pack", "docker"]
 
-    python_version: PythonVersion
-    environment_format: Literal["conda-pack"]
-    environment_path: RelativeProtocolPath
-    environment_sha256: Sha256
+
+class CondaPackRuntime(StrictContractModel):
+    """Immutable conda-pack environment metadata."""
+
+    type: Literal["conda-pack"]
+    archive: RelativeProtocolPath
+    fingerprint: Sha256
+
+
+class DockerRuntime(StrictContractModel):
+    """Immutable Docker image metadata."""
+
+    type: Literal["docker"]
+    archive: RelativeProtocolPath
+    image: str = Field(min_length=1, max_length=255)
+    digest: Sha256
+
+
+RuntimeBuild = Annotated[CondaPackRuntime | DockerRuntime, Field(discriminator="type")]
 
 
 class PluginBuildManifest(StrictContractModel):
@@ -57,7 +71,8 @@ class PluginBuildManifest(StrictContractModel):
     plugin_id: PluginId
     plugin_version: SemanticVersion
     target: TargetPlatform
-    runtime: PackagedRuntime
+    python_version: PythonVersion
+    runtime: RuntimeBuild
     sdk_version: SemanticVersion
     source_sha256: Sha256
     built_at: datetime
@@ -77,7 +92,7 @@ class PluginBuildManifest(StrictContractModel):
             mismatches.append("plugin ID")
         if self.plugin_version != plugin.plugin.version:
             mismatches.append("plugin version")
-        if self.runtime.python_version != plugin.runtime.python.version:
+        if self.python_version != plugin.runtime.python.version:
             mismatches.append("Python version")
         if self.sdk_version.partition(".")[0] != plugin.sdk.version.partition(".")[0]:
             mismatches.append("SDK major version")

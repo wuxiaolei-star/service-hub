@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from .common import PluginId, RelativeProtocolPath, SemanticVersion, StrictContractModel
+from .common import PluginId, SemanticVersion, StrictContractModel
 from .json_values import validate_json_value
 
 # V1 parsing limits apply equally to YAML loading and direct model validation.
@@ -73,19 +73,11 @@ class PythonSpec(StrictContractModel):
     version: PythonVersion
 
 
-class EnvironmentDeclaration(StrictContractModel):
-    """Source environment declaration used by the build process."""
-
-    type: Literal["conda"]
-    file: RelativeProtocolPath
-
-
 class RuntimeSpec(StrictContractModel):
     """V1 process runtime configuration."""
 
     type: Literal["process"]
     python: PythonSpec
-    environment: EnvironmentDeclaration
 
 
 class EntryPointSpec(StrictContractModel):

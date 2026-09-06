@@ -93,7 +93,7 @@ def test_public_contracts_form_one_lossless_execution_chain() -> None:
         == restored_runtime.plugin.version
         == "1.0.0"
     )
-    assert build.runtime.environment_path == "runtime/env.tar.zst"
+    assert build.runtime.archive == "runtime/env.tar.zst"
     assert restored_runtime.inputs["nc_file"].path == "input/model.nc"
     assert job_result.job_id == restored_runtime.job.id == "job_01K123"
     assert job_result.files[0].path == output.path == "nested/depth.zip"

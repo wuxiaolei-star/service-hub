@@ -7,11 +7,11 @@
     "os": "linux",
     "arch": "arm64"
   },
+  "python_version": "3.10",
   "runtime": {
-    "python_version": "3.10",
-    "environment_format": "conda-pack",
-    "environment_path": "runtime/env.tar.zst",
-    "environment_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    "type": "conda-pack",
+    "archive": "runtime/env.tar.zst",
+    "fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   },
   "sdk_version": "1.0.0",
   "source_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",

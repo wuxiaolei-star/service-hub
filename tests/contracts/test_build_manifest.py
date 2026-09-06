@@ -28,7 +28,32 @@ def test_valid_build_manifest_matches_plugin(
 
     assert build.target.os == "linux"
     assert build.target.arch == "arm64"
-    assert build.runtime.environment_path == "runtime/env.tar.zst"
+    assert build.runtime.archive == "runtime/env.tar.zst"
+    build.assert_matches_plugin(plugin)
+
+
+def test_valid_docker_build_manifest_matches_plugin(plugin: PluginManifest) -> None:
+    data = {
+        "schema_version": "1.0",
+        "build_id": "build_docker_1",
+        "plugin_id": "nc_to_shp",
+        "plugin_version": "1.0.0",
+        "target": {"os": "linux", "arch": "amd64"},
+        "python_version": "3.10",
+        "sdk_version": "1.0.0",
+        "source_sha256": "a" * 64,
+        "built_at": "2026-09-06T08:00:00+00:00",
+        "runtime": {
+            "type": "docker",
+            "archive": "image.tar.zst",
+            "image": "nc_to_shp:1.0.0-linux-amd64",
+            "digest": "b" * 64,
+        },
+    }
+
+    build = PluginBuildManifest.model_validate(data)
+
+    assert build.runtime.type == "docker"
     build.assert_matches_plugin(plugin)
 
 
@@ -76,13 +101,13 @@ def test_build_timestamp_requires_timezone(valid_build_data: dict[str, Any]) -> 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("environment_path", "/tmp/env.tar.zst"),
-        ("environment_path", "runtime/../env.tar.zst"),
-        ("environment_sha256", "A" * 64),
-        ("environment_sha256", "a" * 63),
+        ("archive", "/tmp/env.tar.zst"),
+        ("archive", "runtime/../env.tar.zst"),
+        ("fingerprint", "A" * 64),
+        ("fingerprint", "a" * 63),
     ],
 )
-def test_packaged_runtime_rejects_unsafe_paths_and_invalid_hashes(
+def test_conda_pack_runtime_rejects_unsafe_paths_and_invalid_hashes(
     field: str, value: str, valid_build_data: dict[str, Any]
 ) -> None:
     valid_build_data["runtime"][field] = value
@@ -115,7 +140,7 @@ def test_build_identity_mismatch_is_checked_cross_file(
 def test_build_python_version_mismatch_is_rejected_cross_file(
     valid_build_data: dict[str, Any], plugin: PluginManifest
 ) -> None:
-    valid_build_data["runtime"]["python_version"] = "3.12"
+    valid_build_data["python_version"] = "3.12"
     build = PluginBuildManifest.model_validate(valid_build_data)
 
     with pytest.raises(ValueError):

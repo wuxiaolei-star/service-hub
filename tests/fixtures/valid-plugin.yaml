@@ -16,9 +16,6 @@ runtime:
   type: process
   python:
     version: "3.10"
-  environment:
-    type: conda
-    file: environment.yml
 
 entrypoint:
   module: src.main
