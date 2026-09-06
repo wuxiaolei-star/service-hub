@@ -3,13 +3,13 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
-from python_multipart.exceptions import MultipartParseError
+from python_multipart.exceptions import FormParserError, MultipartParseError
 from python_multipart.multipart import MultipartParser, parse_options_header
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse as StreamingFileResponse
 
 from hub_server.dependencies import get_session, get_settings, get_storage
-from hub_server.errors import HubError, UploadTooLargeError
+from hub_server.errors import HubError
 from hub_server.models import FileRecord
 from hub_server.schemas import FileResponse
 from hub_server.services.files import FileService
@@ -17,6 +17,9 @@ from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage, StreamingUpload
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+_MAX_MULTIPART_HEADER_COUNT = 8
+_MAX_MULTIPART_HEADER_SIZE_BYTES = 4224
 
 
 def _file_response(record: FileRecord) -> FileResponse:
@@ -60,8 +63,6 @@ async def _stream_multipart_file(
     boundary = options.get(b"boundary")
     if content_type != b"multipart/form-data" or boundary is None:
         raise _validation_error()
-    _reject_oversized_content_length(request, max_size_bytes)
-
     file_key = service.new_file_key()
     headers: dict[bytes, bytes] = {}
     header_name: list[bytes] = []
@@ -115,51 +116,37 @@ async def _stream_multipart_file(
         nonlocal complete
         complete = True
 
-    parser = MultipartParser(
-        boundary,
-        callbacks={
-            "on_part_begin": on_part_begin,
-            "on_part_data": on_part_data,
-            "on_header_field": on_header_field,
-            "on_header_value": on_header_value,
-            "on_header_end": on_header_end,
-            "on_headers_finished": on_headers_finished,
-            "on_end": on_end,
-        },
-    )
-    body_size_bytes = 0
+    try:
+        parser = MultipartParser(
+            boundary,
+            callbacks={
+                "on_part_begin": on_part_begin,
+                "on_part_data": on_part_data,
+                "on_header_field": on_header_field,
+                "on_header_value": on_header_value,
+                "on_header_end": on_header_end,
+                "on_headers_finished": on_headers_finished,
+                "on_end": on_end,
+            },
+            max_header_count=_MAX_MULTIPART_HEADER_COUNT,
+            max_header_size=_MAX_MULTIPART_HEADER_SIZE_BYTES,
+        )
+    except FormParserError as error:
+        raise _validation_error() from error
     try:
         async for chunk in request.stream():
-            body_size_bytes += len(chunk)
-            if body_size_bytes > max_size_bytes:
-                raise UploadTooLargeError(max_size_bytes=max_size_bytes)
             parser.write(chunk)
         parser.finalize()
         if not complete or upload is None or filename is None:
             raise _validation_error()
         stored = upload.finish()
         return service.store_installed_upload(file_key, filename, mime_type, stored)
-    except (MultipartParseError, UnicodeDecodeError) as error:
-        raise _validation_error() from error
-    except Exception:
+    except Exception as error:
         if upload is not None:
             upload.abort()
+        if isinstance(error, (MultipartParseError, UnicodeDecodeError)):
+            raise _validation_error() from error
         raise
-
-
-def _reject_oversized_content_length(request: Request, max_size_bytes: int) -> None:
-    """Reject a declared oversized body before opening the ASGI request stream."""
-    content_length = request.headers.get("content-length")
-    if content_length is None:
-        return
-    try:
-        declared_size_bytes = int(content_length)
-    except ValueError as error:
-        raise _validation_error() from error
-    if declared_size_bytes < 0:
-        raise _validation_error()
-    if declared_size_bytes > max_size_bytes:
-        raise UploadTooLargeError(max_size_bytes=max_size_bytes)
 
 
 def _validation_error() -> HubError:

@@ -14,7 +14,6 @@ from hub_server.settings import (
     StorageSettings,
     UploadSettings,
 )
-from starlette.requests import Request
 
 
 @pytest.fixture
@@ -69,26 +68,59 @@ def test_rejects_upload_larger_than_limit(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "UPLOAD_TOO_LARGE"
 
 
-def test_rejects_declared_oversize_before_consuming_request_stream(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+def test_upload_accepts_file_exactly_at_size_limit_despite_multipart_overhead(
+    client: TestClient,
 ) -> None:
-    """A declared over-limit multipart request must be rejected before body parsing can spool it."""
+    """Multipart headers and boundaries must not reduce the configured file-content limit."""
+    payload = b"0" * 1024
 
-    async def fail_if_stream_is_consumed(_: Request) -> object:
-        raise AssertionError("request stream must not be consumed")
+    response = client.post("/api/v1/files", files={"file": ("limit.nc", payload)})
 
-    monkeypatch.setattr(Request, "stream", fail_if_stream_is_consumed)
+    assert response.status_code == 201
+    assert response.json()["size"] == 1024
 
-    response = client.post("/api/v1/files", files={"file": ("a.nc", b"0" * 1025)})
 
-    assert response.status_code == 413
+def test_malformed_multipart_after_file_part_removes_partial_upload(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A parser error after file bytes arrive must leave no controlled temporary directory."""
+    boundary = b"malformed-boundary"
+    body = (
+        b"--malformed-boundary\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="partial.nc"\r\n'
+        b"Content-Type: application/x-netcdf\r\n\r\n"
+        b"partial-file-bytes\r\n--malformed-boundary\r\n"
+        b"Invalid Header: parser-must-reject\r\n\r\n"
+    )
+
+    response = client.post(
+        "/api/v1/files",
+        content=body,
+        headers={"content-type": "multipart/form-data; boundary=" + boundary.decode()},
+    )
+
+    assert response.status_code == 422
     assert response.json() == {
         "success": False,
-        "error": {
-            "code": "UPLOAD_TOO_LARGE",
-            "message": "上传文件超过大小限制",
-            "details": {"max_size_bytes": 1024},
-        },
+        "error": {"code": "REQUEST_VALIDATION_ERROR", "message": "请求参数无效", "details": None},
+    }
+    assert not list((tmp_path / "data" / "uploads").glob("file_*.tmp-*"))
+
+
+def test_rejects_oversized_multipart_boundary_with_validation_error(client: TestClient) -> None:
+    """A parser-construction error must use the public malformed-input response."""
+    boundary = "a" * 257
+
+    response = client.post(
+        "/api/v1/files",
+        content=b"",
+        headers={"content-type": "multipart/form-data; boundary=" + boundary},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "success": False,
+        "error": {"code": "REQUEST_VALIDATION_ERROR", "message": "请求参数无效", "details": None},
     }
 
 
