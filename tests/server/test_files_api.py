@@ -14,6 +14,8 @@ from hub_server.settings import (
     StorageSettings,
     UploadSettings,
 )
+from python_multipart.exceptions import FormParserError
+from python_multipart.multipart import MultipartParser
 
 
 @pytest.fixture
@@ -98,6 +100,35 @@ def test_malformed_multipart_after_file_part_removes_partial_upload(
         content=body,
         headers={"content-type": "multipart/form-data; boundary=" + boundary.decode()},
     )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "success": False,
+        "error": {"code": "REQUEST_VALIDATION_ERROR", "message": "请求参数无效", "details": None},
+    }
+    assert not list((tmp_path / "data" / "uploads").glob("file_*.tmp-*"))
+
+
+def test_form_parser_error_after_file_write_uses_validation_error_and_cleans_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-Multipart parser failure after a write must be client-safe and leave no temp data."""
+    settings = HubSettings(
+        deployment=DeploymentSettings(mode="offline"),
+        storage=StorageSettings(root=tmp_path / "data"),
+        database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
+        uploads=UploadSettings(max_size_bytes=1024),
+    )
+    original_write = MultipartParser.write
+
+    def write_then_raise(parser: MultipartParser, data: bytes) -> int:
+        original_write(parser, data)
+        raise FormParserError("simulated parser failure after file write")
+
+    monkeypatch.setattr(MultipartParser, "write", write_then_raise)
+
+    with TestClient(create_app(settings), raise_server_exceptions=False) as test_client:
+        response = test_client.post("/api/v1/files", files={"file": ("partial.nc", b"data")})
 
     assert response.status_code == 422
     assert response.json() == {

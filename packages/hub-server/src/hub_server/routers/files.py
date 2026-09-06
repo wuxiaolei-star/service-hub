@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
-from python_multipart.exceptions import FormParserError, MultipartParseError
+from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import MultipartParser, parse_options_header
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse as StreamingFileResponse
@@ -144,7 +144,7 @@ async def _stream_multipart_file(
     except Exception as error:
         if upload is not None:
             upload.abort()
-        if isinstance(error, (MultipartParseError, UnicodeDecodeError)):
+        if isinstance(error, (FormParserError, UnicodeDecodeError)):
             raise _validation_error() from error
         raise
 
