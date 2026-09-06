@@ -1,8 +1,16 @@
 """Request and response schemas exposed by Hub HTTP endpoints."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+from python_hub_contracts import (
+    JobResult,
+    JobRuntimeSpec,
+    RelativeProtocolPath,
+    RunnerEvent,
+    RuntimeBuild,
+    RuntimeType,
+)
 
 
 class HealthResponse(BaseModel):
@@ -46,3 +54,78 @@ class ErrorResponse(BaseModel):
 
     success: Literal[False] = False
     error: ErrorBody
+
+
+class InternalSchema(BaseModel):
+    """Strict payload base for the private runner protocol."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RunnerClaimRequest(InternalSchema):
+    runtime_type: RuntimeType
+
+
+class RunnerBuildClaim(InternalSchema):
+    build_id: str
+    runtime_type: RuntimeType
+    runtime: RuntimeBuild
+    runtime_archive: RelativeProtocolPath
+    manifest: RelativeProtocolPath
+    source: RelativeProtocolPath
+    environment_path: RelativeProtocolPath | None = None
+    image_digest: str | None = None
+
+
+class RunnerOperationClaimResponse(InternalSchema):
+    operation_id: str
+    runtime_type: RuntimeType
+    kind: Literal["INSTALL"]
+    timeout_seconds: int | None
+    build: RunnerBuildClaim
+
+
+class RunnerOperationCompleteRequest(InternalSchema):
+    runtime_type: RuntimeType
+    status: Literal["SUCCESS", "FAILED"]
+    environment_path: RelativeProtocolPath | None = None
+    image_digest: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+    error_summary: Annotated[str, Field(max_length=2000)] | None = None
+    exit_code: int | None = None
+
+
+class RunnerCompletionResponse(InternalSchema):
+    id: str
+    status: Literal["SUCCESS", "FAILED", "CANCELLED", "TIMED_OUT"]
+
+
+class RunnerJobPaths(InternalSchema):
+    job: Literal["job.json"] = "job.json"
+    result: Literal["result.json"] = "result.json"
+
+
+class RunnerJobClaimResponse(InternalSchema):
+    job_id: str
+    runtime_type: RuntimeType
+    cancel_requested: bool
+    workspace: RelativeProtocolPath
+    paths: RunnerJobPaths
+    job: JobRuntimeSpec
+    build: RunnerBuildClaim
+
+
+class RunnerJobEventRequest(InternalSchema):
+    runtime_type: RuntimeType
+    event: RunnerEvent
+
+
+class RunnerJobCompleteRequest(InternalSchema):
+    runtime_type: RuntimeType
+    result: JobResult
+    exit_code: int | None = None
+
+
+class RunnerEventAcceptedResponse(InternalSchema):
+    id: str
+    status: Literal["RUNNING"]

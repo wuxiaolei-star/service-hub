@@ -14,6 +14,7 @@ from hub_server.settings import (
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
+    RunnerSettings,
     StorageSettings,
     UploadSettings,
 )
@@ -28,6 +29,7 @@ def session(tmp_path: Path) -> Iterator[Session]:
         storage=StorageSettings(root=tmp_path / "data"),
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
+        runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
     )
     app = create_app(settings)
     with TestClient(app), app.state.session_factory() as database_session:

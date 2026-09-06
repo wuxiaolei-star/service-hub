@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class StrictSettingsModel(BaseModel):
@@ -29,11 +29,19 @@ class UploadSettings(StrictSettingsModel):
     max_size_bytes: int = Field(gt=0)
 
 
+class RunnerSettings(StrictSettingsModel):
+    """Private coordination settings shared only with runtime runners."""
+
+    shared_token: SecretStr
+    poll_interval_seconds: int = Field(default=2, gt=0)
+
+
 class HubSettings(StrictSettingsModel):
     deployment: DeploymentSettings
     storage: StorageSettings
     database: DatabaseSettings
     uploads: UploadSettings
+    runner: RunnerSettings
     hub_version: str = "0.1.0"
     platform_os: Literal["linux"] = "linux"
     platform_arch: Literal["amd64", "arm64"] = "amd64"

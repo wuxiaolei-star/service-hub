@@ -11,6 +11,7 @@ from hub_server.settings import (
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
+    RunnerSettings,
     StorageSettings,
     UploadSettings,
 )
@@ -26,6 +27,7 @@ def client(tmp_path: Path) -> TestClient:
         storage=StorageSettings(root=tmp_path / "data"),
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
+        runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
     )
     with TestClient(create_app(settings)) as test_client:
         yield test_client
@@ -118,6 +120,7 @@ def test_form_parser_error_after_file_write_uses_validation_error_and_cleans_upl
         storage=StorageSettings(root=tmp_path / "data"),
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
+        runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
     )
     original_write = MultipartParser.write
 
@@ -301,6 +304,7 @@ def test_unexpected_errors_use_stable_error_shape(tmp_path: Path) -> None:
         storage=StorageSettings(root=tmp_path / "data"),
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=10),
+        runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
     )
     app = create_app(settings)
 

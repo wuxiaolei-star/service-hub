@@ -12,7 +12,8 @@ def test_loads_settings_from_yaml(tmp_path: Path) -> None:
         "deployment:\n  mode: offline\n"
         "storage:\n  root: /var/lib/hub\n"
         "database:\n  url: sqlite:////var/lib/hub/db/hub.db\n"
-        "uploads:\n  max_size_bytes: 1024\n",
+        "uploads:\n  max_size_bytes: 1024\n"
+        "runner:\n  shared_token: runner-test-secret\n  poll_interval_seconds: 1\n",
         encoding="utf-8",
     )
 
@@ -30,6 +31,7 @@ def test_rejects_unknown_yaml_settings(tmp_path: Path) -> None:
         "storage:\n  root: /var/lib/hub\n"
         "database:\n  url: sqlite:////var/lib/hub/db/hub.db\n"
         "uploads:\n  max_size_bytes: 1024\n"
+        "runner:\n  shared_token: runner-test-secret\n  poll_interval_seconds: 1\n"
         "unknown: true\n",
         encoding="utf-8",
     )

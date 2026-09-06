@@ -6,3 +6,6 @@ database:
   url: sqlite:////var/lib/hub/db/hub.db
 uploads:
   max_size_bytes: 1024
+runner:
+  shared_token: runner-test-secret
+  poll_interval_seconds: 1

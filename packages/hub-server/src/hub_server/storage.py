@@ -15,6 +15,8 @@ from uuid import UUID, uuid4
 from hub_server.errors import HubError, UploadTooLargeError
 
 _FILE_KEY_PATTERN = re.compile(r"^file_([0-9a-f]{32})$")
+_PLUGIN_BUILD_KEY_PATTERN = re.compile(r"^plugin_build_[0-9a-f]{32}$")
+_STAGED_PLUGIN_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _CHUNK_SIZE_BYTES = 1024 * 1024
 _MAX_PROTOCOL_PATH_LENGTH = 1024
 _LOGGER = logging.getLogger(__name__)
@@ -205,6 +207,57 @@ class LocalStorage:
         except OSError as error:
             _LOGGER.exception("Unable to install Hub directory")
             raise self._storage_error("无法安装存储目录") from error
+
+    def install_staged_plugin(self, staging_directory: Path, build_key: str) -> Path:
+        """Atomically promote one verified UUID staging directory to its Build directory."""
+        if _PLUGIN_BUILD_KEY_PATTERN.fullmatch(build_key) is None:
+            raise ValueError("plugin build key is invalid")
+        staging = staging_directory.resolve()
+        staging_root = self._resolve_relative("plugins/.staging")
+        try:
+            staging.relative_to(staging_root)
+        except ValueError as error:
+            raise ValueError("source must be a verified plugin staging directory") from error
+        if (
+            staging.parent != staging_root
+            or _STAGED_PLUGIN_PATTERN.fullmatch(staging.name) is None
+        ):
+            raise ValueError("source must be a verified plugin staging directory")
+        destination = self._resolve_relative(f"plugins/{build_key}")
+        try:
+            if destination.exists():
+                raise ValueError("plugin build storage already exists")
+            os.replace(staging, destination)
+            return destination
+        except ValueError:
+            raise
+        except OSError as error:
+            _LOGGER.exception("Unable to install verified plugin Build")
+            raise self._storage_error("无法安装插件 Build") from error
+
+    def discard_staged_plugin(self, staging_directory: Path) -> None:
+        """Remove one UUID-scoped verified package that was not installed."""
+        staging = staging_directory.resolve()
+        staging_root = self._resolve_relative("plugins/.staging")
+        if (
+            staging.parent != staging_root
+            or _STAGED_PLUGIN_PATTERN.fullmatch(staging.name) is None
+        ):
+            _LOGGER.warning("Refusing to discard a non-staging plugin directory")
+            return
+        self._discard_temporary_directory(staging)
+
+    def remove_plugin_build(self, build_key: str) -> None:
+        """Remove one exact Build directory after its metadata update failed."""
+        if _PLUGIN_BUILD_KEY_PATTERN.fullmatch(build_key) is None:
+            raise ValueError("plugin build key is invalid")
+        directory = self._resolve_relative(f"plugins/{build_key}")
+        try:
+            if directory.exists():
+                shutil.rmtree(directory)
+        except OSError as error:
+            _LOGGER.exception("Unable to remove failed plugin Build storage")
+            raise self._storage_error("无法清理插件 Build") from error
 
     def discard_temporary_directory(self, temporary_directory: Path | None) -> None:
         """Discard one temporary directory created by this storage instance."""
