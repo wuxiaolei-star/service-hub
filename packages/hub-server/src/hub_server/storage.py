@@ -161,6 +161,66 @@ class LocalStorage:
             _LOGGER.exception("Unable to resolve Hub storage path")
             raise self._storage_error("读取文件存储失败") from error
 
+    def relative_path(self, path: Path) -> str:
+        """Return a POSIX path only for an existing or prospective child of storage."""
+        try:
+            relative = path.resolve().relative_to(self._root)
+        except (OSError, ValueError) as error:
+            raise ValueError("path must stay within Hub storage") from error
+        if not relative.parts:
+            raise ValueError("path must identify a child of Hub storage")
+        return relative.as_posix()
+
+    def create_temporary_directory(self, parent_relative_path: str) -> Path:
+        """Create one private UUID-scoped directory below a controlled parent."""
+        temporary_directory: Path | None = None
+        try:
+            parent = self._resolve_relative(parent_relative_path)
+            parent.mkdir(parents=True, exist_ok=True)
+            temporary_directory = parent / f".tmp-{uuid4().hex}"
+            temporary_directory.mkdir()
+            return temporary_directory
+        except OSError as error:
+            self._discard_temporary_directory(temporary_directory)
+            _LOGGER.exception("Unable to create Hub temporary directory")
+            raise self._storage_error("无法创建临时存储目录") from error
+
+    def install_directory(
+        self, temporary_directory: Path, destination_relative_path: str
+    ) -> Path:
+        """Atomically rename one controlled temporary directory to a safe destination."""
+        destination = self._resolve_relative(destination_relative_path)
+        try:
+            temporary = temporary_directory.resolve()
+            temporary.relative_to(self._root)
+            if not temporary.name.startswith(".tmp-"):
+                raise ValueError("source must be a Hub temporary directory")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                raise ValueError("storage destination already exists")
+            os.replace(temporary, destination)
+            return destination
+        except ValueError:
+            raise
+        except OSError as error:
+            _LOGGER.exception("Unable to install Hub directory")
+            raise self._storage_error("无法安装存储目录") from error
+
+    def discard_temporary_directory(self, temporary_directory: Path | None) -> None:
+        """Discard one temporary directory created by this storage instance."""
+        if temporary_directory is None:
+            return
+        try:
+            temporary = temporary_directory.resolve()
+            temporary.relative_to(self._root)
+        except (OSError, ValueError):
+            _LOGGER.warning("Refusing to discard a directory outside Hub storage")
+            return
+        if not temporary.name.startswith(".tmp-"):
+            _LOGGER.warning("Refusing to discard a non-temporary Hub directory")
+            return
+        self._discard_temporary_directory(temporary)
+
     def remove_upload(self, file_key: str) -> None:
         """Remove one known upload directory after a failed metadata transaction."""
         self._validate_file_key(file_key)
