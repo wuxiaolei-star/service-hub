@@ -92,7 +92,7 @@ Hub 发布到 `127.0.0.1:8000`，不对公网开放。将
 证书路径以及 `allow` 网段，再由 Nginx 通过 HTTPS 代理内网请求。
 
 可在 Linux AMD64 Docker 主机执行以下部署 smoke 测试。它使用随机 Compose 项目名、临时
-数据目录和临时 loopback 端口，并在 `finally` 中只停止该随机项目：
+数据目录、临时 loopback 端口和独立 Compose 文件，并在 `finally` 中只停止该随机项目：
 
 ```text
 python -m pytest -m integration tests/server/test_container_smoke.py -v

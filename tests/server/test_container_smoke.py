@@ -16,9 +16,10 @@ def _compose_command(
     repository_root: Path,
     project_name: str,
     *arguments: str,
-    override_file: Path | None = None,
+    compose_file: Path | None = None,
 ) -> list[str]:
     """Build a Compose command tied to this repository and an isolated project."""
+    selected_compose_file = compose_file or repository_root / "compose.yaml"
     command = [
         "docker",
         "compose",
@@ -27,10 +28,8 @@ def _compose_command(
         "--project-directory",
         str(repository_root),
         "--file",
-        str(repository_root / "compose.yaml"),
+        str(selected_compose_file),
     ]
-    if override_file is not None:
-        command.extend(["--file", str(override_file)])
     return [*command, *arguments]
 
 
@@ -56,14 +55,23 @@ def _wait_for_health(url: str) -> httpx.Response:
     raise AssertionError("Compose service did not become healthy within 30 seconds")
 
 
-def _write_smoke_override(path: Path, data_directory: Path, port: int) -> None:
-    """Write the disposable Compose values without inheriting host environment variables."""
+def _write_smoke_compose(
+    path: Path, repository_root: Path, data_directory: Path, port: int
+) -> None:
+    """Write a standalone deployment that never merges with production port mappings."""
+    config_file = repository_root / "config" / "hub.yaml"
     path.write_text(
         "services:\n"
         "  hub:\n"
+        "    build:\n"
+        f"      context: {json.dumps(str(repository_root))}\n"
+        "      dockerfile: Dockerfile\n"
+        "    image: python-service-hub:0.1.0-linux-amd64\n"
+        "    platform: linux/amd64\n"
         "    ports:\n"
         f"      - {json.dumps(f'127.0.0.1:{port}:8000')}\n"
         "    volumes:\n"
+        f"      - {json.dumps(f'{config_file}:/app/config/hub.yaml:ro')}\n"
         f"      - {json.dumps(f'{data_directory}:/data')}\n",
         encoding="utf-8",
     )
@@ -86,6 +94,29 @@ def test_compose_command_uses_an_explicit_project_and_file() -> None:
     ]
 
 
+def test_compose_command_can_use_a_standalone_smoke_file() -> None:
+    """The disposable deployment must not merge its mappings with production Compose."""
+    repository_root = Path("/workspace/python-service-hub")
+    smoke_compose = Path("/tmp/compose.smoke.yaml")
+
+    assert _compose_command(
+        repository_root,
+        "hub-smoke-123",
+        "ps",
+        compose_file=smoke_compose,
+    ) == [
+        "docker",
+        "compose",
+        "--project-name",
+        "hub-smoke-123",
+        "--project-directory",
+        str(repository_root),
+        "--file",
+        str(smoke_compose),
+        "ps",
+    ]
+
+
 @pytest.mark.integration
 def test_compose_health_and_upload() -> None:
     """A disposable AMD64 Compose project exposes health and accepts uploads."""
@@ -98,15 +129,15 @@ def test_compose_health_and_upload() -> None:
         data_directory = temporary_root / "data"
         assert data_directory.parent == temporary_root
         data_directory.mkdir()
-        override_file = temporary_root / "compose.smoke.yaml"
-        _write_smoke_override(override_file, data_directory, port)
+        smoke_compose_file = temporary_root / "compose.smoke.yaml"
+        _write_smoke_compose(smoke_compose_file, repository_root, data_directory, port)
         command = _compose_command(
             repository_root,
             project_name,
             "up",
             "-d",
             "--build",
-            override_file=override_file,
+            compose_file=smoke_compose_file,
         )
         try:
             subprocess.run(command, check=True, cwd=repository_root)
@@ -128,7 +159,7 @@ def test_compose_health_and_upload() -> None:
                     "down",
                     "--volumes",
                     "--remove-orphans",
-                    override_file=override_file,
+                    compose_file=smoke_compose_file,
                 ),
                 check=False,
                 cwd=repository_root,

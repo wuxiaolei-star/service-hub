@@ -49,8 +49,9 @@ gate; the Compose data bind mount is not removed by `docker compose down
   Compose build context. They no longer copy only Compose and configuration
   files before invoking `--build`.
 - Production Compose retains its exact loopback port, `./data` and
-  `./config/hub.yaml` declarations. The smoke test instead adds a temporary
-  Compose override file with its disposable port and data bind mount.
+  `./config/hub.yaml` declarations. The smoke test creates a complete temporary
+  Compose file with its disposable port and data bind mount, so it never merges
+  production port mappings into the test project.
 - The smoke test now supplies a UUID-scoped Compose project, a temporary
   data directory and an ephemeral loopback port. Its `finally` block runs
   `down --volumes --remove-orphans` only for that project before
@@ -64,3 +65,22 @@ passed; and `docker compose config` passed. The real Docker smoke remains an
 external validation gap: this host has no Docker Desktop Linux daemon, so the
 test cannot reach the image build/startup stage and was not represented as a
 passing result.
+
+## Second review follow-up: standalone smoke port mapping
+
+The smoke test no longer passes production `compose.yaml` together with an
+override. It writes a complete, temporary Compose definition containing the
+same Docker build context and read-only Hub configuration, plus exactly one
+random loopback port mapping and one temporary data bind mount. Therefore the
+test cannot also bind `127.0.0.1:8000` or merge with a live deployment's
+production port mapping. The UUID project name and guarded `finally` cleanup
+are retained.
+
+The real container smoke remains pending a Linux AMD64 Docker daemon; this
+host's Docker Desktop Linux endpoint is unavailable before image build starts.
+
+Fresh verification after this correction: 258 tests passed, 1 was skipped and
+the 1 Docker integration test was deselected in the default suite; Ruff and
+strict mypy passed; and production `docker compose config` passed. Running the
+selected integration test again reached the isolated standalone Compose command
+and stopped only because the Docker Desktop Linux daemon is unavailable.
