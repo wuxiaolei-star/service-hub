@@ -117,6 +117,26 @@ def test_compose_command_can_use_a_standalone_smoke_file() -> None:
     ]
 
 
+def test_production_compose_keeps_docker_socket_on_docker_runner_only() -> None:
+    """Only the Docker runner should be able to start plugin containers."""
+    compose = Path("compose.yaml").read_text("utf-8")
+
+    assert "  hub:\n" in compose
+    assert "  hub-conda-runner:\n" in compose
+    assert "  hub-docker-runner:\n" in compose
+    hub_section = compose.split("  hub:\n", maxsplit=1)[1].split(
+        "  hub-conda-runner:\n", maxsplit=1
+    )[0]
+    conda_section = compose.split("  hub-conda-runner:\n", maxsplit=1)[1].split(
+        "  hub-docker-runner:\n", maxsplit=1
+    )[0]
+    docker_section = compose.split("  hub-docker-runner:\n", maxsplit=1)[1]
+    assert "/var/run/docker.sock" not in hub_section
+    assert "/var/run/docker.sock" not in conda_section
+    assert "/var/run/docker.sock:/var/run/docker.sock" in docker_section
+    assert "ports:" not in docker_section
+
+
 @pytest.mark.integration
 def test_compose_health_and_upload() -> None:
     """A disposable AMD64 Compose project exposes health and accepts uploads."""
