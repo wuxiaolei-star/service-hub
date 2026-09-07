@@ -100,6 +100,11 @@ class RunnerCompletionResponse(InternalSchema):
     status: Literal["SUCCESS", "FAILED", "CANCELLED", "TIMED_OUT"]
 
 
+class RunnerReconcileResponse(InternalSchema):
+    runtime_type: RuntimeType
+    failed_jobs: int
+
+
 class RunnerJobPaths(InternalSchema):
     job: Literal["job.json"] = "job.json"
     result: Literal["result.json"] = "result.json"

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
-from python_hub_contracts import RuntimeType
-from sqlalchemy import select
+from python_hub_contracts import JobStatus, RuntimeType
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from hub_server.errors import HubError
-from hub_server.models import RunnerOperation
+from hub_server.models import Job, RunnerOperation
 
 
 class RunnerOperationService:
@@ -17,6 +19,28 @@ class RunnerOperationService:
 
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def fail_interrupted_jobs(self, runtime_type: RuntimeType) -> int:
+        """Mark jobs abandoned by a restarted runtime runner as failed."""
+        now = datetime.now(UTC)
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(Job)
+                .where(
+                    Job.runtime_type == runtime_type,
+                    Job.status.in_([JobStatus.PREPARING.value, JobStatus.RUNNING.value]),
+                )
+                .values(
+                    status=JobStatus.FAILED.value,
+                    error_summary="HUB_RESTARTED",
+                    finished_at=now,
+                    updated_at=now,
+                )
+            ),
+        )
+        self._session.commit()
+        return int(result.rowcount or 0)
 
     def complete(
         self,

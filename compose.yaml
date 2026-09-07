@@ -11,3 +11,18 @@ services:
     volumes:
       - ./config/hub.yaml:/app/config/hub.yaml:ro
       - ./data:/data
+  hub-conda-runner:
+    build:
+      context: .
+      dockerfile: deploy/runner/Dockerfile.conda-runner
+    image: python-service-hub-conda-runner:0.1.0-linux-amd64
+    platform: linux/amd64
+    restart: unless-stopped
+    depends_on:
+      - hub
+    environment:
+      HUB_INTERNAL_BASE_URL: http://hub:8000/internal/v1
+      HUB_RUNNER_TOKEN: replace-with-a-random-high-entropy-token
+      HUB_RUNNER_POLL_INTERVAL_SECONDS: "2"
+    volumes:
+      - ./data:/data

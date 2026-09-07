@@ -382,6 +382,35 @@ def test_job_event_starts_job_and_completion_records_terminal_state(
         assert persisted.exit_code == 0
 
 
+def test_runtime_reconcile_fails_only_matching_interrupted_jobs(
+    client: TestClient,
+) -> None:
+    """Runner restart recovery must not fail pending or other-runtime jobs."""
+    with client.app.state.session_factory() as session:
+        conda_interrupted = _seed_pending_job(session, "conda-pack")
+        docker_interrupted = _seed_pending_job(session, "docker")
+        conda_interrupted.status = "RUNNING"
+        docker_interrupted.status = "PREPARING"
+        session.commit()
+        conda_interrupted_key = conda_interrupted.job_key
+        docker_interrupted_key = docker_interrupted.job_key
+
+    response = _runner_post(
+        client,
+        "/internal/v1/jobs/reconcile",
+        {"runtime_type": "conda-pack"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"runtime_type": "conda-pack", "failed_jobs": 1}
+    with client.app.state.session_factory() as session:
+        conda_job = session.scalar(select(Job).where(Job.job_key == conda_interrupted_key))
+        docker_job = session.scalar(select(Job).where(Job.job_key == docker_interrupted_key))
+        assert conda_job.status == "FAILED"
+        assert conda_job.error_summary == "HUB_RESTARTED"
+        assert docker_job.status == "PREPARING"
+
+
 def _all_strings(value: object) -> list[str]:
     if isinstance(value, str):
         return [value]

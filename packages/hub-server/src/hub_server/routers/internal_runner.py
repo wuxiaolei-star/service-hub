@@ -27,6 +27,7 @@ from hub_server.schemas import (
     RunnerJobPaths,
     RunnerOperationClaimResponse,
     RunnerOperationCompleteRequest,
+    RunnerReconcileResponse,
 )
 from hub_server.services.runner_operations import RunnerOperationService
 from hub_server.settings import HubSettings
@@ -118,6 +119,21 @@ def claim_job(
         paths=RunnerJobPaths(),
         job=JobRuntimeSpec.model_validate(job.job_json),
         build=_build_claim(job.plugin_build),
+    )
+
+
+@router.post("/jobs/reconcile", response_model=RunnerReconcileResponse)
+def reconcile_jobs(
+    request: RunnerClaimRequest,
+    _: RunnerAuthorization,
+    session: Annotated[Session, Depends(get_session)],
+) -> RunnerReconcileResponse:
+    failed_jobs = RunnerOperationService(session).fail_interrupted_jobs(
+        request.runtime_type
+    )
+    return RunnerReconcileResponse(
+        runtime_type=request.runtime_type,
+        failed_jobs=failed_jobs,
     )
 
 
