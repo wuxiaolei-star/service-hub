@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from python_hub_contracts import (
     JobResult,
     JobRuntimeSpec,
+    JobStatus,
     RelativeProtocolPath,
     RunnerEvent,
     RuntimeBuild,
@@ -39,6 +40,69 @@ class FileResponse(BaseModel):
     extension: str | None
     mime_type: str | None
     status: Literal["AVAILABLE"]
+
+
+class PluginBuildResponse(BaseModel):
+    build_id: str
+    plugin_id: str
+    version: str
+    runtime_type: RuntimeType
+    target_os: str
+    target_arch: str
+    status: str
+    package_sha256: str
+    runtime_fingerprint: str
+    error_summary: str | None = None
+
+
+class PluginSummary(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    category: str | None = None
+    latest_version: str | None = None
+
+
+class PluginListResponse(BaseModel):
+    items: list[PluginSummary]
+
+
+class JobCreateRequest(BaseModel):
+    plugin_id: str
+    version: str
+    runtime_type: RuntimeType | None = None
+    inputs: dict[str, object]
+    params: dict[str, object] = Field(default_factory=dict)
+
+
+class JobResponse(BaseModel):
+    job_id: str
+    plugin_id: str
+    version: str
+    build_id: str
+    runtime_type: RuntimeType
+    status: JobStatus
+    cancel_requested: bool = False
+    error_summary: str | None = None
+
+
+class JobListResponse(BaseModel):
+    items: list[JobResponse]
+
+
+class JobCancelResponse(BaseModel):
+    job_id: str
+    status: JobStatus
+    cancel_requested: bool
+
+
+class JobLogResponse(BaseModel):
+    items: list[dict[str, object]]
+    next_cursor: int | None = None
+
+
+class JobOutputsResponse(BaseModel):
+    items: list[FileResponse]
 
 
 class ErrorBody(BaseModel):

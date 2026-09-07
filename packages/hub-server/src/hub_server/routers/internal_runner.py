@@ -30,6 +30,7 @@ from hub_server.schemas import (
     RunnerReconcileResponse,
 )
 from hub_server.services.runner_operations import RunnerOperationService
+from hub_server.services.workspaces import JobWorkspaceService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
 
@@ -162,6 +163,7 @@ def complete_job(
     request: RunnerJobCompleteRequest,
     _: RunnerAuthorization,
     session: Annotated[Session, Depends(get_session)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
 ) -> RunnerCompletionResponse:
     job = _matching_job(session, job_key, request.runtime_type)
     if request.result.job_id != job_key:
@@ -170,6 +172,18 @@ def complete_job(
             message="Job 结果标识不匹配",
             status_code=422,
         )
+    if job.status == JobStatus.PREPARING:
+        job = HubRepository(session).transition_job(
+            job, JobStatus.RUNNING, expected_status=JobStatus.PREPARING
+        )
+    if request.result.status == JobStatus.SUCCESS:
+        for output in request.result.files:
+            JobWorkspaceService(storage).register_output(
+                job,
+                logical_name=output.name,
+                relative_path=output.path,
+                mime_type="application/octet-stream",
+            )
     try:
         completed = HubRepository(session).transition_job(
             job,
