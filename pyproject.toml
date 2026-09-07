@@ -34,6 +34,7 @@ testpaths = ["tests"]
 pythonpath = [
   "packages/hub-contracts/src",
   "packages/hub-sdk/src",
+  "packages/hub-runner/src",
   "packages/hub-server/src",
 ]
 
@@ -47,5 +48,5 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-packages = ["python_hub_contracts", "python_hub_sdk", "hub_server"]
-mypy_path = ["packages/hub-contracts/src", "packages/hub-sdk/src", "packages/hub-server/src"]
+packages = ["python_hub_contracts", "python_hub_sdk", "hub_runner", "hub_server"]
+mypy_path = ["packages/hub-contracts/src", "packages/hub-sdk/src", "packages/hub-runner/src", "packages/hub-server/src"]
