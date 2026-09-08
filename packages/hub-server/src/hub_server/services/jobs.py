@@ -160,6 +160,18 @@ class JobService:
                 raise _validation_error("插件参数类型无效")
             if spec.type == "enum" and value not in (spec.options or []):
                 raise _validation_error("插件参数枚举值无效")
+            if spec.type == "string_list":
+                values = cast(list[str], value)
+                if len(values) != len(set(values)):
+                    raise _validation_error("插件字符串列表参数不能包含重复值")
+                if spec.options is not None and any(
+                    item not in spec.options for item in values
+                ):
+                    raise _validation_error("插件字符串列表参数包含未声明值")
+                if spec.min is not None and len(values) < spec.min:
+                    raise _validation_error("插件字符串列表参数数量不足")
+                if spec.max is not None and len(values) > spec.max:
+                    raise _validation_error("插件字符串列表参数数量过多")
             if isinstance(value, int | float):
                 if spec.min is not None and value < spec.min:
                     raise _validation_error("插件参数小于最小值")
@@ -241,6 +253,12 @@ def _matches_type(value: object, parameter_type: str) -> bool:
         return isinstance(value, bool)
     if parameter_type in {"enum", "datetime"}:
         return isinstance(value, str)
+    if parameter_type == "string_list":
+        return (
+            isinstance(value, list)
+            and bool(value)
+            and all(isinstance(item, str) and bool(item) for item in value)
+        )
     return False
 
 

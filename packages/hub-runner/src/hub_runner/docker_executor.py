@@ -130,8 +130,12 @@ class DockerExecutor:
             raise ValueError("docker jobs require image_digest")
 
         workspace_root = self._safe_data_path(job.workspace)
+        input_root = workspace_root / "input"
+        work_root = workspace_root / "work"
         output_root = workspace_root / "output"
-        output_root.mkdir(parents=True, exist_ok=True)
+        logs_root = workspace_root / "logs"
+        for writable_root in (work_root, output_root, logs_root):
+            writable_root.mkdir(parents=True, exist_ok=True)
         image = f"sha256:{job.image_digest}"
         container: ContainerProtocol | None = None
         try:
@@ -154,19 +158,21 @@ class DockerExecutor:
                 cap_drop=["ALL"],
                 working_dir="/",
                 environment={
-                    "HUB_INPUT_DIR": "/input",
-                    "HUB_WORK_DIR": "/work",
-                    "HUB_OUTPUT_DIR": "/output",
-                    "HUB_LOG_DIR": "/output/logs",
+                    "HUB_INPUT_DIR": "/job/input",
+                    "HUB_WORK_DIR": "/job/work",
+                    "HUB_OUTPUT_DIR": "/job/output",
+                    "HUB_LOG_DIR": "/job/logs",
                     "PYTHONUNBUFFERED": "1",
                 },
                 volumes={
-                    str(workspace_root / "input"): {"bind": "/input", "mode": "ro"},
+                    str(input_root): {"bind": "/job/input", "mode": "ro"},
                     str(self._safe_data_path(job.job_path)): {
                         "bind": "/job/job.json",
                         "mode": "ro",
                     },
-                    str(output_root): {"bind": "/output", "mode": "rw"},
+                    str(work_root): {"bind": "/job/work", "mode": "rw"},
+                    str(output_root): {"bind": "/job/output", "mode": "rw"},
+                    str(logs_root): {"bind": "/job/logs", "mode": "rw"},
                 },
                 stdout=True,
                 stderr=True,

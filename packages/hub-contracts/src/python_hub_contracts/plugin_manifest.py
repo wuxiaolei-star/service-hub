@@ -92,7 +92,9 @@ class ParameterSpec(StrictContractModel):
 
     name: ManifestName
     label: ManifestText
-    type: Literal["string", "integer", "number", "boolean", "enum", "datetime"]
+    type: Literal[
+        "string", "integer", "number", "boolean", "enum", "datetime", "string_list"
+    ]
     required: bool
     default: Any = None
     options: ManifestTextList | None = None
@@ -123,6 +125,31 @@ class ParameterSpec(StrictContractModel):
                 raise ValueError("enum parameter options must be unique")
             if self.default is not None and self.default not in self.options:
                 raise ValueError("enum parameter default must be one of its options")
+        elif self.type == "string_list":
+            if self.default is not None:
+                if (
+                    not isinstance(self.default, list)
+                    or not self.default
+                    or any(not isinstance(item, str) or not item for item in self.default)
+                    or len(self.default) != len(set(self.default))
+                ):
+                    raise ValueError(
+                        "string_list parameter defaults must be non-empty unique strings"
+                    )
+                if self.options is not None and any(
+                    item not in self.options for item in self.default
+                ):
+                    raise ValueError("string_list default items must be declared options")
+                if self.min is not None and len(self.default) < self.min:
+                    raise ValueError("string_list default has fewer than min items")
+                if self.max is not None and len(self.default) > self.max:
+                    raise ValueError("string_list default has more than max items")
+            if any(
+                bound is not None
+                and (not isinstance(bound, int) or isinstance(bound, bool) or bound < 1)
+                for bound in (self.min, self.max)
+            ):
+                raise ValueError("string_list min and max must be positive integers")
         elif self.options is not None:
             raise ValueError("only enum parameters may define options")
 

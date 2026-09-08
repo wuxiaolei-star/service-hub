@@ -98,6 +98,53 @@ def test_non_enum_parameter_rejects_options(valid_manifest_data: dict[str, Any])
         PluginManifest.model_validate(valid_manifest_data)
 
 
+def test_string_list_parameter_accepts_bounded_allowed_default(
+    valid_manifest_data: dict[str, Any],
+) -> None:
+    """Rejecting JSON arrays would make the documented metrics parameter impossible."""
+    valid_manifest_data["parameters"].append(
+        {
+            "name": "metrics",
+            "label": "Metrics",
+            "type": "string_list",
+            "required": False,
+            "default": ["depth", "stage"],
+            "options": ["depth", "stage"],
+            "min": 1,
+            "max": 2,
+        }
+    )
+
+    manifest = PluginManifest.model_validate(valid_manifest_data)
+
+    assert manifest.parameter_by_name("metrics").default == ["depth", "stage"]
+
+
+@pytest.mark.parametrize(
+    "default",
+    [[], ["depth", 1], ["unknown"], ["depth", "depth"]],
+)
+def test_string_list_parameter_rejects_invalid_default(
+    valid_manifest_data: dict[str, Any], default: object
+) -> None:
+    """An invalid manifest default would bypass request-time parameter validation."""
+    valid_manifest_data["parameters"].append(
+        {
+            "name": "metrics",
+            "label": "Metrics",
+            "type": "string_list",
+            "required": False,
+            "default": default,
+            "options": ["depth", "stage"],
+            "min": 1,
+            "max": 2,
+        }
+    )
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
 def test_required_parameter_cannot_define_a_default(valid_manifest_data: dict[str, Any]) -> None:
     valid_manifest_data["parameters"][0]["required"] = True
 

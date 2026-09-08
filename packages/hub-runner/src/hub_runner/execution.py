@@ -37,7 +37,7 @@ from python_hub_sdk import (
 from .result_writer import write_result_atomic
 
 PluginEntrypoint = Callable[
-    [PluginContext, Mapping[str, InputFile | list[InputFile]], Mapping[str, Any]],
+    [Mapping[str, Any], Mapping[str, InputFile | list[InputFile]], PluginContext],
     PluginResult | None,
 ]
 
@@ -79,7 +79,7 @@ def run_job(
         sdk_inputs = {
             name: _to_sdk_input(value) for name, value in job.inputs.items()
         }
-        plugin_result = entrypoint(context, sdk_inputs, job.params) or PluginResult()
+        plugin_result = entrypoint(job.params, sdk_inputs, context) or PluginResult()
         result = _success_result(
             job=job,
             plugin_result=plugin_result,

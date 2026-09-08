@@ -18,7 +18,7 @@ def test_runner_loads_entrypoint_and_writes_success_result(tmp_path: Path) -> No
             [
                 "from python_hub_sdk import OutputFile, PluginResult",
                 "",
-                "def run(context, inputs, params):",
+                "def run(params, inputs, context):",
                 "    context.progress(50, 'halfway')",
                 "    source = inputs['source_nc']",
                 "    assert source.path == 'input/source.nc'",
@@ -69,7 +69,7 @@ def test_runner_turns_plugin_validation_error_into_failed_result(tmp_path: Path)
             [
                 "from python_hub_sdk import PluginValidationError",
                 "",
-                "def run(context, inputs, params):",
+                "def run(params, inputs, context):",
                 "    raise PluginValidationError(",
                 "        code='NC_GROUP_NOT_FOUND',",
                 "        message='Group not found',",
@@ -104,7 +104,7 @@ def test_runner_writes_unexpected_tracebacks_to_runner_log_only(tmp_path: Path) 
     plugin_file.write_text(
         "\n".join(
             [
-                "def run(context, inputs, params):",
+                "def run(params, inputs, context):",
                 "    raise RuntimeError('database password: secret')",
             ]
         ),

@@ -141,9 +141,11 @@ def test_docker_executor_runs_digest_pinned_container_with_only_job_mounts(
     assert client.containers.run_kwargs["cap_drop"] == ["ALL"]
     volumes = client.containers.run_kwargs["volumes"]
     assert sorted((value["bind"], value["mode"]) for value in volumes.values()) == [
-        ("/input", "ro"),
+        ("/job/input", "ro"),
         ("/job/job.json", "ro"),
-        ("/output", "rw"),
+        ("/job/logs", "rw"),
+        ("/job/output", "rw"),
+        ("/job/work", "rw"),
     ]
     assert all("/var/run/docker.sock" not in path for path in volumes)
     assert container.removed is True

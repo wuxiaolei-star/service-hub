@@ -68,6 +68,52 @@ def test_job_without_runtime_type_defaults_to_docker(client: TestClient) -> None
     assert response.json()["runtime_type"] == "docker"
 
 
+def test_create_job_accepts_declared_metrics_string_list(client: TestClient) -> None:
+    """Treating metrics as a scalar would reject the authoritative nc_to_shp request."""
+    _seed_build(client, runtime_type="docker", include_metrics=True)
+    file_id = _upload_nc(client)
+
+    response = client.post(
+        "/api/v1/jobs",
+        json={
+            "plugin_id": "nc_to_shp",
+            "version": "1.0.0",
+            "inputs": {"source_nc": file_id},
+            "params": {"metrics": ["depth", "stage"]},
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    with client.app.state.session_factory() as session:
+        job = session.query(Job).filter_by(job_key=response.json()["job_id"]).one()
+        assert job.params_json == {"metrics": ["depth", "stage"]}
+
+
+@pytest.mark.parametrize(
+    "metrics",
+    [[], ["depth", 1], ["unknown"], ["depth", "depth"]],
+)
+def test_create_job_rejects_invalid_metrics_string_list(
+    client: TestClient, metrics: object
+) -> None:
+    """Malformed, disallowed, empty, or duplicate metrics must not reach the plugin."""
+    _seed_build(client, runtime_type="docker", include_metrics=True)
+    file_id = _upload_nc(client)
+
+    response = client.post(
+        "/api/v1/jobs",
+        json={
+            "plugin_id": "nc_to_shp",
+            "version": "1.0.0",
+            "inputs": {"source_nc": file_id},
+            "params": {"metrics": metrics},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "JOB_REQUEST_INVALID"
+
+
 def test_cancel_marks_request_without_completing_job(client: TestClient) -> None:
     _seed_build(client, runtime_type="docker")
     file_id = _upload_nc(client)
@@ -161,7 +207,9 @@ def _runner_post(client: TestClient, path: str, payload: dict[str, object]) -> o
     )
 
 
-def _seed_build(client: TestClient, *, runtime_type: str) -> None:
+def _seed_build(
+    client: TestClient, *, runtime_type: str, include_metrics: bool = False
+) -> None:
     with client.app.state.session_factory() as session:
         plugin = Plugin(plugin_key="nc_to_shp", name="NC to Shapefile")
         version = PluginVersion(
@@ -170,7 +218,7 @@ def _seed_build(client: TestClient, *, runtime_type: str) -> None:
             spec_version="1.0",
             sdk_version="1.0",
             source_sha256="a" * 64,
-            manifest_json=_manifest(),
+            manifest_json=_manifest(include_metrics=include_metrics),
             status="INSTALLED",
         )
         runtime_metadata = (
@@ -224,14 +272,28 @@ def _seed_build(client: TestClient, *, runtime_type: str) -> None:
         session.commit()
 
 
-def _manifest() -> dict[str, object]:
+def _manifest(*, include_metrics: bool = False) -> dict[str, object]:
+    parameters: list[dict[str, object]] = []
+    if include_metrics:
+        parameters.append(
+            {
+                "name": "metrics",
+                "label": "Metrics",
+                "type": "string_list",
+                "required": False,
+                "default": ["depth", "stage"],
+                "options": ["depth", "stage"],
+                "min": 1,
+                "max": 2,
+            }
+        )
     return {
         "spec_version": "1.0",
         "plugin": {"id": "nc_to_shp", "name": "NC to Shapefile", "version": "1.0.0"},
         "sdk": {"version": "1.0"},
         "runtime": {"type": "process", "python": {"version": "3.12"}},
         "entrypoint": {"module": "nc_to_shp_plugin.main", "function": "run"},
-        "parameters": [],
+        "parameters": parameters,
         "inputs": [
             {
                 "name": "source_nc",
