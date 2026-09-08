@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from collections.abc import Iterable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,6 +21,7 @@ from hub_runner.docker_executor import (
 )
 from python_hub_contracts import JobStatus, ProgressEvent
 
+from deploy.runner import docker_runner_service
 from deploy.runner.docker_runner_service import (
     _cancellation_checker,
     _job_from_payload,
@@ -65,6 +70,9 @@ class FakeContainer:
         status_code: int = 0,
         logs: list[bytes] | None = None,
         wait_results: list[dict[str, int] | BaseException] | None = None,
+        stop_error: Exception | None = None,
+        kill_error: Exception | None = None,
+        remove_error: Exception | None = None,
     ) -> None:
         self.status_code = status_code
         self._logs = logs or []
@@ -73,6 +81,9 @@ class FakeContainer:
         self.removed = False
         self.stopped = False
         self.killed = False
+        self.stop_error = stop_error
+        self.kill_error = kill_error
+        self.remove_error = remove_error
 
     def logs(self, **kwargs: Any) -> bytes | Iterable[bytes]:
         return iter(self._logs) if kwargs.get("stream") else b"".join(self._logs)
@@ -88,11 +99,17 @@ class FakeContainer:
 
     def stop(self, **_: Any) -> None:
         self.stopped = True
+        if self.stop_error:
+            raise self.stop_error
 
     def kill(self) -> None:
         self.killed = True
+        if self.kill_error:
+            raise self.kill_error
 
     def remove(self, **_: Any) -> None:
+        if self.remove_error:
+            raise self.remove_error
         self.removed = True
 
 
@@ -265,6 +282,136 @@ def test_cleanup_stops_and_removes_only_containers_owned_by_this_hub() -> None:
     assert removed == 2
     assert all(container.stopped for container in (first, second))
     assert all(container.removed for container in (first, second))
+
+
+@pytest.mark.parametrize(
+    "host_root",
+    [
+        "/srv/python-service-hub/data",
+        "/srv/python-service-hub/data/",
+        "/srv//python-service-hub/./data///",
+    ],
+)
+def test_owner_label_command_matches_runner_for_equivalent_paths(
+    tmp_path: Path, host_root: str
+) -> None:
+    # Exercise the exact Python command used by the backup runbook in the image.
+    environment = dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path))
+    command = subprocess.run(
+        [sys.executable, "-m", "hub_runner.docker_executor", host_root],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    client = FakeDockerClient(digest="1" * 64)
+    DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root=host_root,
+    ).execute(_docker_job())
+
+    label = client.containers.run_kwargs["labels"][SERVICE_HUB_OWNER_LABEL]
+    assert command.stdout.strip() == label
+    assert label == service_hub_owner_value("/srv/python-service-hub/data")
+    assert label != service_hub_owner_value("/srv/another-hub/data")
+
+
+def test_cleanup_continues_after_individual_stop_kill_and_remove_failures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    first = FakeContainer(
+        stop_error=RuntimeError("stop unavailable"),
+        kill_error=RuntimeError("kill unavailable"),
+        remove_error=RuntimeError("remove unavailable"),
+    )
+    second = FakeContainer()
+    client = FakeDockerClient(digest="1" * 64, listed=[first, second])
+
+    removed = cleanup_owned_plugin_containers(
+        client, docker_host_data_root="/srv/python-service-hub/data"
+    )
+
+    assert removed == 1
+    assert first.stopped and not first.removed
+    assert second.stopped and second.removed
+    assert "remove unavailable" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_status", "expected_error"),
+    [
+        ({"StatusCode": 0}, JobStatus.SUCCESS, None),
+        ({"StatusCode": 7}, JobStatus.FAILED, "Docker container exited with status 7"),
+        (RuntimeError("primary wait failure"), JobStatus.FAILED, "primary wait failure"),
+        ("cancel", JobStatus.CANCELLED, None),
+        ("timeout", JobStatus.TIMED_OUT, "JOB_TIMED_OUT"),
+    ],
+)
+def test_job_result_survives_container_cleanup_failures(
+    tmp_path: Path,
+    outcome: Any,
+    expected_status: JobStatus,
+    expected_error: str | None,
+) -> None:
+    container = FakeContainer(
+        wait_results=[outcome] if not isinstance(outcome, str) else [],
+        stop_error=RuntimeError("stop unavailable"),
+        kill_error=RuntimeError("kill unavailable"),
+        remove_error=RuntimeError("remove unavailable"),
+    )
+    clock = iter([0.0, 30.0] if outcome == "timeout" else [0.0, 0.0])
+    result = DockerExecutor(
+        client=FakeDockerClient(digest="1" * 64, container=container),
+        data_root=tmp_path,
+        docker_host_data_root="/srv/python-service-hub/data",
+        cancellation_requested=lambda: outcome == "cancel",
+        monotonic=lambda: next(clock),
+    ).execute(_docker_job())
+
+    assert result.status == expected_status
+    assert result.error_summary == expected_error
+
+
+def test_runner_posts_job_completion_despite_container_remove_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    container = FakeContainer(remove_error=RuntimeError("remove unavailable"))
+    client = FakeDockerClient(digest="1" * 64, container=container)
+    monkeypatch.setitem(sys.modules, "docker", SimpleNamespace(from_env=lambda: client))
+    monkeypatch.setenv("HUB_INTERNAL_BASE_URL", "http://hub/internal/v1")
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", "test-token")
+    monkeypatch.setenv("HUB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("HUB_DOCKER_HOST_DATA_ROOT", "/srv/python-service-hub/data")
+    monkeypatch.setattr(docker_runner_service.signal, "signal", lambda *_: None)
+    monkeypatch.setattr(docker_runner_service, "_reconcile_interrupted_jobs", lambda *_, **__: None)
+    completions: list[dict[str, Any]] = []
+
+    def post(_: str, __: str, path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        if path == "/operations/claim":
+            return None
+        if path == "/jobs/claim":
+            return {
+                "job_id": "job_123",
+                "workspace": "jobs/job_123",
+                "paths": {"job": "job.json", "result": "result.json"},
+                "build": {"image_digest": "1" * 64},
+                "job": {"job": {"id": "job_123"}, "execution": {"timeout": 30}},
+                "cancel_requested": False,
+            }
+        if path == "/jobs/job_123/complete":
+            completions.append(payload)
+            raise SystemExit(0)
+        raise AssertionError(f"Unexpected request: {path}")
+
+    monkeypatch.setattr(docker_runner_service, "_post", post)
+    monkeypatch.setattr(docker_runner_service, "_cancellation_checker", lambda *_: lambda: False)
+    with pytest.raises(SystemExit):
+        docker_runner_service.main()
+
+    assert len(completions) == 1
+    assert completions[0]["result"]["status"] == "SUCCESS"
+    assert completions[0]["exit_code"] == 0
 
 
 def test_docker_executor_rejects_cancelled_job_before_start(tmp_path: Path) -> None:

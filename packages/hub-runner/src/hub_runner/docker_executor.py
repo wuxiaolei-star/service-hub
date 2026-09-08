@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterable, Mapping
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
@@ -88,6 +89,7 @@ MonotonicClock = Callable[[], float]
 _WAIT_POLL_SECONDS = 1.0
 SERVICE_HUB_OWNER_LABEL = "io.python-service-hub.owner"
 SERVICE_HUB_JOB_LABEL = "io.python-service-hub.job-id"
+_LOGGER = logging.getLogger(__name__)
 
 
 class _CancellationRequested(Exception):
@@ -238,7 +240,7 @@ class DockerExecutor:
             if container is not None:
                 if container_needs_stop:
                     _stop_container(container)
-                container.remove(force=True)
+                _remove_container(container)
 
         exit_code = int(result.get("StatusCode", 1))
         if exit_code == 0:
@@ -332,11 +334,11 @@ def cleanup_owned_plugin_containers(
         all=True,
         filters={"label": [f"{SERVICE_HUB_OWNER_LABEL}={owner}"]},
     )
+    removed = 0
     for container in containers:
-        with suppress(Exception):
-            container.stop(timeout=10)
-        container.remove(force=True)
-    return len(containers)
+        _stop_container(container)
+        removed += _remove_container(container)
+    return removed
 
 
 def _is_docker_wait_timeout(error: Exception) -> bool:
@@ -367,7 +369,20 @@ def _stop_container(container: ContainerProtocol | None) -> None:
     try:
         container.stop(timeout=10)
     except Exception:
-        container.kill()
+        _LOGGER.warning("Could not stop plugin container; attempting kill", exc_info=True)
+        try:
+            container.kill()
+        except Exception:
+            _LOGGER.warning("Could not kill plugin container", exc_info=True)
+
+
+def _remove_container(container: ContainerProtocol) -> bool:
+    try:
+        container.remove(force=True)
+    except Exception:
+        _LOGGER.warning("Could not remove plugin container", exc_info=True)
+        return False
+    return True
 
 
 def load_result_payload(data_root: Path, result_path: str) -> dict[str, Any] | None:
@@ -379,3 +394,9 @@ def load_result_payload(data_root: Path, result_path: str) -> dict[str, Any] | N
     if not path.exists():
         return None
     return cast(dict[str, Any], json.loads(path.read_text("utf-8")))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        raise SystemExit("Usage: python -m hub_runner.docker_executor HOST_DATA_ROOT")
+    print(service_hub_owner_value(sys.argv[1]))
