@@ -48,6 +48,9 @@ def main() -> int:
             executor = CondaExecutor(
                 data_root=data_root,
                 event_callback=_event_forwarder(base_url, token, runner_job.id),
+                cancellation_requested=_cancellation_checker(
+                    base_url, token, runner_job.id
+                ),
             )
             completion = executor.execute(runner_job)
             status = completion.status
@@ -150,6 +153,25 @@ def _event_forwarder(
         )
 
     return forward
+
+
+def _cancellation_checker(
+    base_url: str,
+    token: str,
+    job_id: str,
+    *,
+    post: PostFunc = _post,
+) -> Callable[[], bool]:
+    def check() -> bool:
+        response = post(
+            base_url,
+            token,
+            f"/jobs/{job_id}/cancellation",
+            {"runtime_type": "conda-pack"},
+        )
+        return bool(response and response["cancel_requested"])
+
+    return check
 
 
 def _fallback_result(job_id: str, status: JobStatus) -> dict[str, Any]:

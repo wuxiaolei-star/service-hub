@@ -164,6 +164,10 @@ def test_internal_claim_rejects_missing_or_wrong_token_without_leaking_secret(
         ),
         ("/internal/v1/jobs/claim", {"runtime_type": "docker"}),
         (
+            "/internal/v1/jobs/job_missing/cancellation",
+            {"runtime_type": "docker"},
+        ),
+        (
             "/internal/v1/jobs/job_missing/events",
             {
                 "runtime_type": "docker",
@@ -409,6 +413,32 @@ def test_runtime_reconcile_fails_only_matching_interrupted_jobs(
         assert conda_job.status == "FAILED"
         assert conda_job.error_summary == "HUB_RESTARTED"
         assert docker_job.status == "PREPARING"
+
+
+def test_runner_can_observe_cancellation_requested_after_job_claim(
+    client: TestClient,
+) -> None:
+    """A claimed worker needs a private read path for cancellation requested later."""
+    with client.app.state.session_factory() as session:
+        job = _seed_pending_job(session, "conda-pack")
+        job_key = job.job_key
+    claim = _runner_post(
+        client, "/internal/v1/jobs/claim", {"runtime_type": "conda-pack"}
+    )
+    assert claim.status_code == 200
+    with client.app.state.session_factory() as session:
+        persisted = session.scalar(select(Job).where(Job.job_key == job_key))
+        persisted.cancel_requested = True
+        session.commit()
+
+    response = _runner_post(
+        client,
+        f"/internal/v1/jobs/{job_key}/cancellation",
+        {"runtime_type": "conda-pack"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"job_id": job_key, "cancel_requested": True}
 
 
 def _all_strings(value: object) -> list[str]:

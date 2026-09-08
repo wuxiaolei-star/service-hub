@@ -18,6 +18,7 @@ from hub_server.models import Job, PluginBuild
 from hub_server.repositories import HubRepository
 from hub_server.schemas import (
     RunnerBuildClaim,
+    RunnerCancellationResponse,
     RunnerClaimRequest,
     RunnerCompletionResponse,
     RunnerEventAcceptedResponse,
@@ -135,6 +136,22 @@ def reconcile_jobs(
     return RunnerReconcileResponse(
         runtime_type=request.runtime_type,
         failed_jobs=failed_jobs,
+    )
+
+
+@router.post(
+    "/jobs/{job_key}/cancellation", response_model=RunnerCancellationResponse
+)
+def get_job_cancellation(
+    job_key: str,
+    request: RunnerClaimRequest,
+    _: RunnerAuthorization,
+    session: Annotated[Session, Depends(get_session)],
+) -> RunnerCancellationResponse:
+    job = _matching_job(session, job_key, request.runtime_type)
+    return RunnerCancellationResponse(
+        job_id=job.job_key,
+        cancel_requested=job.cancel_requested,
     )
 
 

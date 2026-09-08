@@ -169,6 +169,11 @@ class RunnerReconcileResponse(InternalSchema):
     failed_jobs: int
 
 
+class RunnerCancellationResponse(InternalSchema):
+    job_id: str
+    cancel_requested: bool
+
+
 class RunnerJobPaths(InternalSchema):
     job: Literal["job.json"] = "job.json"
     result: Literal["result.json"] = "result.json"
