@@ -66,8 +66,8 @@ class FakeContainer:
         self.stopped = False
         self.killed = False
 
-    def logs(self, **_: Any) -> Iterable[bytes]:
-        return iter(self._logs)
+    def logs(self, **kwargs: Any) -> bytes | Iterable[bytes]:
+        return iter(self._logs) if kwargs.get("stream") else b"".join(self._logs)
 
     def wait(self, **kwargs: Any) -> dict[str, int]:
         self.wait_timeouts.append(float(kwargs["timeout"]))

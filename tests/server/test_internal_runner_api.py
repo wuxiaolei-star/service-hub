@@ -83,6 +83,22 @@ def _seed_build(session: Session, runtime_type: RuntimeType) -> PluginBuild:
     return record
 
 
+@pytest.mark.parametrize("runtime_type", ["docker", "conda-pack"])
+def test_reconcile_terminates_interrupted_installations(client: TestClient, runtime_type) -> None:
+    with client.app.state.session_factory() as session:
+        build = _seed_build(session, runtime_type)
+        operation = HubRepository(session).claim_operation(runtime_type)
+        key = build.build_key
+        assert operation is not None
+    response = _runner_post(client, "/internal/v1/jobs/reconcile", {"runtime_type": runtime_type})
+    assert response.status_code == 200
+    with client.app.state.session_factory() as session:
+        build = session.scalar(select(PluginBuild).where(PluginBuild.build_key == key))
+        assert build.status == "FAILED"
+        assert build.environment.status == "FAILED"
+        assert session.scalar(select(RunnerOperation)).status == "FAILED"
+
+
 def _seed_pending_job(session: Session, runtime_type: RuntimeType) -> Job:
     build = _seed_build(session, runtime_type)
     build.status = "ENABLED"
@@ -223,9 +239,7 @@ def test_matching_runner_claims_only_its_runtime_with_relative_paths(
         conda_key = conda.job_key
         docker_key = docker.job_key
 
-    response = _runner_post(
-        client, "/internal/v1/jobs/claim", {"runtime_type": "docker"}
-    )
+    response = _runner_post(client, "/internal/v1/jobs/claim", {"runtime_type": "docker"})
 
     assert response.status_code == 200
     payload = response.json()
@@ -255,9 +269,7 @@ def test_matching_runner_claims_and_completes_installation_atomically(
         operation_id = operation.operation_key
         build_id = build.build_key
 
-    claim = _runner_post(
-        client, "/internal/v1/operations/claim", {"runtime_type": "conda-pack"}
-    )
+    claim = _runner_post(client, "/internal/v1/operations/claim", {"runtime_type": "conda-pack"})
     assert claim.status_code == 200
     assert claim.json()["operation_id"] == operation_id
     assert claim.json()["build"]["runtime_archive"].startswith("plugins/")
@@ -422,9 +434,7 @@ def test_runner_can_observe_cancellation_requested_after_job_claim(
     with client.app.state.session_factory() as session:
         job = _seed_pending_job(session, "conda-pack")
         job_key = job.job_key
-    claim = _runner_post(
-        client, "/internal/v1/jobs/claim", {"runtime_type": "conda-pack"}
-    )
+    claim = _runner_post(client, "/internal/v1/jobs/claim", {"runtime_type": "conda-pack"})
     assert claim.status_code == 200
     with client.app.state.session_factory() as session:
         persisted = session.scalar(select(Job).where(Job.job_key == job_key))

@@ -23,6 +23,23 @@ class RunnerOperationService:
     def fail_interrupted_jobs(self, runtime_type: RuntimeType) -> int:
         """Mark jobs abandoned by a restarted runtime runner as failed."""
         now = datetime.now(UTC)
+        operations = self._session.scalars(
+            select(RunnerOperation).where(
+                RunnerOperation.runtime_type == runtime_type,
+                RunnerOperation.kind == "INSTALL",
+                RunnerOperation.status == "PREPARING",
+            )
+        )
+        for operation in operations:
+            operation.status = "FAILED"
+            operation.error_summary = "HUB_RESTARTED"
+            operation.completed_at = now
+            build = operation.plugin_build
+            build.status = "FAILED"
+            build.error_summary = "HUB_RESTARTED"
+            if build.environment is not None:
+                build.environment.status = "FAILED"
+                build.environment.error_summary = "HUB_RESTARTED"
         result = cast(
             CursorResult[Any],
             self._session.execute(

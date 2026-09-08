@@ -15,6 +15,7 @@ from hub_server.settings import (
     StorageSettings,
     UploadSettings,
 )
+from python_hub_contracts import load_plugin_manifest
 
 
 @pytest.fixture
@@ -28,6 +29,41 @@ def client(tmp_path: Path) -> TestClient:
     )
     with TestClient(create_app(settings)) as test_client:
         yield test_client
+
+
+@pytest.mark.parametrize("runtime_type", ["docker", "conda-pack"])
+@pytest.mark.parametrize("required", [False, True])
+def test_real_nc_request_optional_null(
+    client: TestClient, runtime_type: str, required: bool
+) -> None:
+    _seed_build(client, runtime_type=runtime_type)
+    manifest = load_plugin_manifest(
+        Path(__file__).parents[2] / "packages/nc-to-shp-plugin/plugin.yaml"
+    ).model_dump(mode="json")
+    for parameter in manifest["parameters"]:
+        if parameter["name"] == "target_crs":
+            parameter["required"] = required
+    with client.app.state.session_factory() as session:
+        version = session.query(PluginVersion).one()
+        version.manifest_json = manifest
+        session.commit()
+    response = client.post(
+        "/api/v1/jobs",
+        json={
+            "plugin_id": "nc_to_shp",
+            "version": "1.0.0",
+            "runtime_type": runtime_type,
+            "inputs": {"source_nc": _upload_nc(client)},
+            "params": {
+                "group_name": "1",
+                "metrics": ["depth", "stage"],
+                "start_time": 1,
+                "end_time": 20,
+                "target_crs": None,
+            },
+        },
+    )
+    assert response.status_code == (422 if required else 201), response.text
 
 
 def test_create_job_uses_explicit_enabled_conda_build(client: TestClient) -> None:
@@ -207,9 +243,7 @@ def _runner_post(client: TestClient, path: str, payload: dict[str, object]) -> o
     )
 
 
-def _seed_build(
-    client: TestClient, *, runtime_type: str, include_metrics: bool = False
-) -> None:
+def _seed_build(client: TestClient, *, runtime_type: str, include_metrics: bool = False) -> None:
     with client.app.state.session_factory() as session:
         plugin = Plugin(plugin_key="nc_to_shp", name="NC to Shapefile")
         version = PluginVersion(

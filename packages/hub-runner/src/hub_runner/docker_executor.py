@@ -21,7 +21,7 @@ class ImagesProtocol(Protocol):
 
 
 class ContainerProtocol(Protocol):
-    def logs(self, **kwargs: Any) -> Iterable[bytes | str]: ...
+    def logs(self, **kwargs: Any) -> bytes | str | Iterable[bytes | str]: ...
 
     def wait(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
@@ -259,7 +259,9 @@ class DockerExecutor:
         relative = container_path.resolve(strict=False).relative_to(self._data_root)
         return str(self._docker_host_data_root.joinpath(*relative.parts))
 
-    def _forward_logs(self, lines: Iterable[bytes | str]) -> None:
+    def _forward_logs(self, lines: bytes | str | Iterable[bytes | str]) -> None:
+        if isinstance(lines, bytes | str):
+            lines = [lines]
         for raw_line in lines:
             text = (
                 raw_line.decode("utf-8", errors="replace")

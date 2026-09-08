@@ -1,5 +1,6 @@
 """Strict configuration models for the Hub server."""
 
+import os
 from pathlib import Path
 from typing import Literal, Self
 
@@ -51,4 +52,6 @@ class HubSettings(StrictSettingsModel):
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
             raise ValueError("Hub 配置根节点必须是对象")
+        if token := os.environ.get("HUB_RUNNER_TOKEN"):
+            value["runner"] = {**value.get("runner", {}), "shared_token": token}
         return cls.model_validate(value)

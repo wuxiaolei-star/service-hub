@@ -5,6 +5,12 @@ from hub_server.settings import HubSettings
 from pydantic import ValidationError
 
 
+def test_shared_deployment_token_overrides_transferred_stale_config(monkeypatch) -> None:
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", "fresh-target-token")
+    settings = HubSettings.from_yaml(Path("config/hub.yaml.example"))
+    assert settings.runner.shared_token.get_secret_value() == "fresh-target-token"
+
+
 def test_loads_settings_from_yaml(tmp_path: Path) -> None:
     """A valid YAML document produces typed nested settings."""
     config = tmp_path / "hub.yaml"

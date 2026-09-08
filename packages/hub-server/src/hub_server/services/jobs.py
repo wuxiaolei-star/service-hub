@@ -156,6 +156,9 @@ class JobService:
                     raise _validation_error("缺少必填插件参数")
                 continue
             value = params[name]
+            if value is None and not spec.required:
+                resolved[name] = None
+                continue
             if not _matches_type(value, spec.type):
                 raise _validation_error("插件参数类型无效")
             if spec.type == "enum" and value not in (spec.options or []):
