@@ -69,7 +69,9 @@ nc_to_shp-1.0.0-linux-amd64-conda.pypkg
 nc_to_shp-1.0.0-linux-amd64-docker.pypkg
 ```
 
-完整的构建、离线搬运、API 命令、验收、备份和 ARM64 重建流程见
+首次接手、需要理解项目全貌时，先读
+[项目总览与实施部署](docs/guides/项目总览与实施部署.md)。完整的构建、离线搬运、API
+命令、验收、备份和 ARM64 重建流程见
 [双运行时插件构建与部署指南](docs/guides/双运行时插件构建与部署.md)。
 
 ## 本地质量检查
