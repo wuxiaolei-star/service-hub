@@ -1,0 +1,78 @@
+spec_version: "1.0"
+
+plugin:
+  id: nc_to_shp
+  name: NC 转 Shapefile
+  version: "1.0.0"
+  description: 将水动力模型 HDF5/NetCDF 面指标转换为 PointZ Shapefile
+  author: Lane
+  category: gis
+  tags: [netcdf, hdf5, shapefile, gis]
+
+sdk:
+  version: "1.0"
+
+runtime:
+  type: process
+  python:
+    version: "3.12"
+
+entrypoint:
+  module: nc_to_shp_plugin.main
+  function: run
+
+parameters:
+  - name: group_name
+    label: HDF5 Group
+    type: string
+    required: false
+    default: "1"
+  - name: metrics
+    label: 输出指标
+    type: string_list
+    required: false
+    default: [depth, stage]
+    options: [depth, stage]
+    min: 1
+    max: 2
+  - name: start_time
+    label: 开始时刻
+    type: integer
+    required: false
+    default: 1
+    min: 1
+  - name: end_time
+    label: 结束时刻
+    type: integer
+    required: false
+    default: 20
+    min: 1
+  - name: target_crs
+    label: 输出坐标系
+    type: string
+    required: false
+
+inputs:
+  - name: source_nc
+    label: NC/HDF5 结果文件
+    type: file
+    required: true
+    extensions: [.nc, .h5, .hdf5]
+    max_size: 10737418240
+
+outputs:
+  - name: result_archive
+    label: Shapefile ZIP
+    type: file
+    required: true
+
+execution:
+  timeout: 3600
+  concurrency: 1
+
+environment_variables:
+  required: []
+
+healthcheck:
+  enabled: true
+  type: import
