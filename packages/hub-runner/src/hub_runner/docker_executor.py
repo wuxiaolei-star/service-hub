@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -78,6 +79,17 @@ class RunnerCompletion:
 
 
 EventCallback = Callable[[RunnerEvent], None]
+CancellationCheck = Callable[[], bool]
+MonotonicClock = Callable[[], float]
+_WAIT_POLL_SECONDS = 1.0
+
+
+class _CancellationRequested(Exception):
+    pass
+
+
+class _JobTimedOut(Exception):
+    pass
 
 
 class DockerExecutor:
@@ -90,11 +102,15 @@ class DockerExecutor:
         data_root: Path,
         docker_host_data_root: str,
         event_callback: EventCallback | None = None,
+        cancellation_requested: CancellationCheck | None = None,
+        monotonic: MonotonicClock | None = None,
     ) -> None:
         self._client = client
         self._data_root = data_root.resolve()
         self._docker_host_data_root = _trusted_host_data_root(docker_host_data_root)
         self._event_callback = event_callback or (lambda event: None)
+        self._cancellation_requested = cancellation_requested or (lambda: False)
+        self._monotonic = monotonic or time.monotonic
 
     def install(self, build: RunnerBuild) -> InstallResult:
         if build.runtime_type != "docker":
@@ -140,6 +156,7 @@ class DockerExecutor:
             writable_root.mkdir(parents=True, exist_ok=True)
         image = f"sha256:{job.image_digest}"
         container: ContainerProtocol | None = None
+        deadline = self._monotonic() + job.timeout_seconds
         try:
             container = self._client.containers.run(
                 image=image,
@@ -182,16 +199,12 @@ class DockerExecutor:
                 stdout=True,
                 stderr=True,
             )
-            result = container.wait(timeout=job.timeout_seconds)
+            result = self._wait_for_container(container, deadline)
             self._forward_logs(container.logs(stdout=True, stderr=True))
-        except TimeoutError:
+        except _CancellationRequested:
             _stop_container(container)
-            return RunnerCompletion(
-                status=JobStatus.TIMED_OUT,
-                exit_code=None,
-                error_summary="JOB_TIMED_OUT",
-            )
-        except subprocess.TimeoutExpired:
+            return RunnerCompletion(status=JobStatus.CANCELLED, exit_code=None)
+        except _JobTimedOut:
             _stop_container(container)
             return RunnerCompletion(
                 status=JobStatus.TIMED_OUT,
@@ -216,6 +229,22 @@ class DockerExecutor:
             exit_code=exit_code,
             error_summary=f"Docker container exited with status {exit_code}",
         )
+
+    def _wait_for_container(
+        self, container: ContainerProtocol, deadline: float
+    ) -> Mapping[str, Any]:
+        while True:
+            if self._cancellation_requested():
+                raise _CancellationRequested
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                raise _JobTimedOut
+            try:
+                return container.wait(timeout=min(_WAIT_POLL_SECONDS, remaining))
+            except Exception as error:
+                if _is_docker_wait_timeout(error):
+                    continue
+                raise
 
     def _safe_data_path(self, relative_path: str) -> Path:
         candidate = (self._data_root / relative_path).resolve(strict=False)
@@ -262,6 +291,28 @@ def _trusted_host_data_root(value: str) -> PurePosixPath:
     ):
         raise ValueError("docker_host_data_root must be an absolute trusted directory")
     return root
+
+
+def _is_docker_wait_timeout(error: Exception) -> bool:
+    """Recognize Python, requests, urllib3, and timeout HTTP response variants."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (TimeoutError, subprocess.TimeoutExpired)):
+            return True
+        response = getattr(current, "response", None)
+        if getattr(response, "status_code", None) in {408, 504}:
+            return True
+        if any(
+            exception_type.__module__ in {"requests.exceptions", "urllib3.exceptions"}
+            and exception_type.__name__
+            in {"Timeout", "ReadTimeout", "TimeoutError", "ReadTimeoutError"}
+            for exception_type in type(current).__mro__
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _stop_container(container: ContainerProtocol | None) -> None:

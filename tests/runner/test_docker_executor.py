@@ -9,7 +9,30 @@ import zstandard
 from hub_runner.docker_executor import DockerExecutor, RunnerBuild, RunnerJob
 from python_hub_contracts import JobStatus, ProgressEvent
 
-from deploy.runner.docker_runner_service import _job_from_payload, _reconcile_interrupted_jobs
+from deploy.runner.docker_runner_service import (
+    _cancellation_checker,
+    _job_from_payload,
+    _reconcile_interrupted_jobs,
+)
+
+
+class ReadTimeout(Exception):
+    pass
+
+
+ReadTimeout.__module__ = "requests.exceptions"
+
+
+class ReadTimeoutError(Exception):
+    pass
+
+
+ReadTimeoutError.__module__ = "urllib3.exceptions"
+
+
+class DockerAPIWaitTimeout(Exception):
+    def __init__(self, status_code: int) -> None:
+        self.response = type("Response", (), {"status_code": status_code})()
 
 
 class FakeImage:
@@ -28,9 +51,17 @@ class FakeImages:
 
 
 class FakeContainer:
-    def __init__(self, *, status_code: int = 0, logs: list[bytes] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        status_code: int = 0,
+        logs: list[bytes] | None = None,
+        wait_results: list[dict[str, int] | Exception] | None = None,
+    ) -> None:
         self.status_code = status_code
         self._logs = logs or []
+        self._wait_results = wait_results or []
+        self.wait_timeouts: list[float] = []
         self.removed = False
         self.stopped = False
         self.killed = False
@@ -38,7 +69,13 @@ class FakeContainer:
     def logs(self, **_: Any) -> Iterable[bytes]:
         return iter(self._logs)
 
-    def wait(self, **_: Any) -> dict[str, int]:
+    def wait(self, **kwargs: Any) -> dict[str, int]:
+        self.wait_timeouts.append(float(kwargs["timeout"]))
+        if self._wait_results:
+            result = self._wait_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
         return {"StatusCode": self.status_code}
 
     def stop(self, **_: Any) -> None:
@@ -189,6 +226,62 @@ def test_docker_executor_rejects_cancelled_job_before_start(tmp_path: Path) -> N
     assert client.containers.run_kwargs == {}
 
 
+def test_docker_executor_stops_running_container_when_cancellation_is_requested(
+    tmp_path: Path,
+) -> None:
+    container = FakeContainer(wait_results=[ReadTimeout("poll elapsed")])
+    client = FakeDockerClient(digest="1" * 64, container=container)
+    cancellation_states = iter([False, True])
+
+    result = DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/tmp/hub-data",
+        cancellation_requested=lambda: next(cancellation_states),
+        monotonic=lambda: 0.0,
+    ).execute(_docker_job())
+
+    assert result.status is JobStatus.CANCELLED
+    assert result.exit_code is None
+    assert container.wait_timeouts == [1.0]
+    assert container.stopped is True
+    assert container.killed is False
+    assert container.removed is True
+
+
+@pytest.mark.parametrize(
+    "wait_error",
+    [
+        TimeoutError("poll elapsed"),
+        ReadTimeout("poll elapsed"),
+        ReadTimeoutError("poll elapsed"),
+        DockerAPIWaitTimeout(408),
+        DockerAPIWaitTimeout(504),
+    ],
+)
+def test_docker_executor_maps_wait_timeouts_to_job_timed_out(
+    tmp_path: Path, wait_error: Exception
+) -> None:
+    container = FakeContainer(wait_results=[wait_error])
+    client = FakeDockerClient(digest="1" * 64, container=container)
+    clock_values = iter([0.0, 0.0, 30.0])
+
+    result = DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/tmp/hub-data",
+        cancellation_requested=lambda: False,
+        monotonic=lambda: next(clock_values),
+    ).execute(_docker_job())
+
+    assert result.status is JobStatus.TIMED_OUT
+    assert result.exit_code is None
+    assert result.error_summary == "JOB_TIMED_OUT"
+    assert container.wait_timeouts == [1.0]
+    assert container.stopped is True
+    assert container.removed is True
+
+
 @pytest.mark.parametrize(
     "host_root",
     ["data", "../data", "/", "/srv/../data", "//host/data"],
@@ -256,6 +349,36 @@ def test_docker_runner_service_reconciles_interrupted_jobs_before_polling() -> N
 
     assert calls == [
         ("/jobs/reconcile", {"runtime_type": "docker"}),
+    ]
+
+
+def test_docker_runner_checks_authenticated_internal_cancellation_endpoint() -> None:
+    calls: list[tuple[str, str, str, dict[str, object]]] = []
+
+    def post(
+        base_url: str,
+        token: str,
+        path: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        calls.append((base_url, token, path, payload))
+        return {"cancel_requested": True}
+
+    check = _cancellation_checker(
+        "http://hub/internal/v1",
+        "secret-token",
+        "job_123",
+        post=post,
+    )
+
+    assert check() is True
+    assert calls == [
+        (
+            "http://hub/internal/v1",
+            "secret-token",
+            "/jobs/job_123/cancellation",
+            {"runtime_type": "docker"},
+        )
     ]
 
 
