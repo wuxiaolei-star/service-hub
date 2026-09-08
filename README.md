@@ -37,20 +37,30 @@ deploy/nginx                 Nginx 边界配置
 宿主机上的绝对路径，不能使用 `./data`：Docker Runner 会把这个值交给宿主 Docker daemon
 作为插件容器的 bind source。
 
-```bash
-sudo git clone <approved-repository-url> /srv/python-service-hub
-cd /srv/python-service-hub
-sudo install -d -m 0750 /srv/python-service-hub/config /srv/python-service-hub/data
-sudo cp config/hub.yaml.example config/hub.yaml
+首次部署时由普通发布者账号持有源码目录，后续可直接创建虚拟环境和 `dist`；配置与
+运行数据使用单独的受限权限。以下在尚未使用的目录执行：
 
-RUNNER_TOKEN="$(openssl rand -hex 32)"
-sudo sed -i "s/replace-with-a-random-high-entropy-token/${RUNNER_TOKEN}/g" \
-  config/hub.yaml compose.yaml
+```bash
+sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 /srv/python-service-hub
+git clone <approved-repository-url> /srv/python-service-hub
+cd /srv/python-service-hub
+sudo install -d -o root -g 65532 -m 0750 config
+sudo install -d -m 0750 /srv/python-service-hub/data
+sudo install -o root -g 65532 -m 0640 config/hub.yaml.example config/hub.yaml
+
+sudo install -o root -g root -m 0600 /dev/null .env
+RUNNER_TOKEN="$(openssl rand -hex 32)" || exit 1
+printf 'HUB_RUNNER_TOKEN=%s\n' "${RUNNER_TOKEN}" | sudo tee .env >/dev/null
 unset RUNNER_TOKEN
 
+sudo docker compose config --quiet
 sudo docker compose up -d --build
 curl -fsS http://127.0.0.1:8000/api/v1/system/health
 ```
+
+`.env` 是三个服务内部 Token 的唯一来源，覆盖 YAML 示例值；不要替换 Compose 内的
+Token。自定义数据目录时按完整手册把 `HUB_DATA_DIR` 写入同一 `.env`。上述生成 Token
+命令仅用于新部署，恢复备份时保留备份中的 `.env`。
 
 期望健康响应为 `{"status":"UP"}`。随后按完整手册构建并注册：
 
@@ -68,7 +78,7 @@ nc_to_shp-1.0.0-linux-amd64-docker.pypkg
 python -m pytest
 python -m ruff check .
 python -m mypy packages
-docker compose config
+sudo docker compose config --quiet
 ```
 
 真实双运行时验收只在原生 Linux AMD64 Docker 主机执行，并要求外部真实 NC 文件：
