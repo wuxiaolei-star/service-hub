@@ -83,6 +83,21 @@ def _seed_build(session: Session, runtime_type: RuntimeType) -> PluginBuild:
     return record
 
 
+def test_unpublished_installation_cannot_be_claimed(client: TestClient) -> None:
+    plugin, manifest = _manifest("docker")
+    with client.app.state.session_factory() as publisher:
+        record = HubRepository(publisher).create_build_installation(
+            plugin_manifest=plugin, build_manifest=manifest, package_sha256="a" * 64
+        )
+        with client.app.state.session_factory() as worker:
+            assert HubRepository(worker).claim_operation("docker") is None
+        record.package_path = f"plugins/{record.build_key}"
+        record.runtime_archive_path = f"{record.package_path}/image.tar.zst"
+        publisher.commit()
+        with client.app.state.session_factory() as worker:
+            assert HubRepository(worker).claim_operation("docker") is not None
+
+
 @pytest.mark.parametrize("runtime_type", ["docker", "conda-pack"])
 def test_reconcile_terminates_interrupted_installations(client: TestClient, runtime_type) -> None:
     with client.app.state.session_factory() as session:

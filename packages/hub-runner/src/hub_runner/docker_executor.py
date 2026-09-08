@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
@@ -34,6 +36,8 @@ class ContainerProtocol(Protocol):
 
 class ContainersProtocol(Protocol):
     def run(self, **kwargs: Any) -> ContainerProtocol: ...
+
+    def list(self, **kwargs: Any) -> list[ContainerProtocol]: ...
 
 
 class DockerClientProtocol(Protocol):
@@ -82,6 +86,8 @@ EventCallback = Callable[[RunnerEvent], None]
 CancellationCheck = Callable[[], bool]
 MonotonicClock = Callable[[], float]
 _WAIT_POLL_SECONDS = 1.0
+SERVICE_HUB_OWNER_LABEL = "io.python-service-hub.owner"
+SERVICE_HUB_JOB_LABEL = "io.python-service-hub.job-id"
 
 
 class _CancellationRequested(Exception):
@@ -156,6 +162,7 @@ class DockerExecutor:
             writable_root.mkdir(parents=True, exist_ok=True)
         image = f"sha256:{job.image_digest}"
         container: ContainerProtocol | None = None
+        container_needs_stop = False
         deadline = self._monotonic() + job.timeout_seconds
         try:
             container = self._client.containers.run(
@@ -175,6 +182,12 @@ class DockerExecutor:
                 user="65532:65532",
                 read_only=True,
                 cap_drop=["ALL"],
+                labels={
+                    SERVICE_HUB_OWNER_LABEL: service_hub_owner_value(
+                        str(self._docker_host_data_root)
+                    ),
+                    SERVICE_HUB_JOB_LABEL: job.id,
+                },
                 working_dir="/",
                 environment={
                     "HUB_INPUT_DIR": "/job/input",
@@ -199,13 +212,17 @@ class DockerExecutor:
                 stdout=True,
                 stderr=True,
             )
+            container_needs_stop = True
             result = self._wait_for_container(container, deadline)
+            container_needs_stop = False
             self._forward_logs(container.logs(stdout=True, stderr=True))
         except _CancellationRequested:
             _stop_container(container)
+            container_needs_stop = False
             return RunnerCompletion(status=JobStatus.CANCELLED, exit_code=None)
         except _JobTimedOut:
             _stop_container(container)
+            container_needs_stop = False
             return RunnerCompletion(
                 status=JobStatus.TIMED_OUT,
                 exit_code=None,
@@ -219,6 +236,8 @@ class DockerExecutor:
             )
         finally:
             if container is not None:
+                if container_needs_stop:
+                    _stop_container(container)
                 container.remove(force=True)
 
         exit_code = int(result.get("StatusCode", 1))
@@ -293,6 +312,31 @@ def _trusted_host_data_root(value: str) -> PurePosixPath:
     ):
         raise ValueError("docker_host_data_root must be an absolute trusted directory")
     return root
+
+
+def service_hub_owner_value(docker_host_data_root: str) -> str:
+    """Return the stable ownership label for one Hub data-root deployment."""
+    root = _trusted_host_data_root(docker_host_data_root)
+    digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:24]
+    return f"python-service-hub-{digest}"
+
+
+def cleanup_owned_plugin_containers(
+    client: DockerClientProtocol,
+    *,
+    docker_host_data_root: str,
+) -> int:
+    """Stop and remove only plugin containers labeled for this Hub deployment."""
+    owner = service_hub_owner_value(docker_host_data_root)
+    containers = client.containers.list(
+        all=True,
+        filters={"label": [f"{SERVICE_HUB_OWNER_LABEL}={owner}"]},
+    )
+    for container in containers:
+        with suppress(Exception):
+            container.stop(timeout=10)
+        container.remove(force=True)
+    return len(containers)
 
 
 def _is_docker_wait_timeout(error: Exception) -> bool:

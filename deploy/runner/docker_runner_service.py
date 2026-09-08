@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import time
 import urllib.error
 import urllib.request
@@ -14,6 +15,7 @@ from hub_runner.docker_executor import (
     DockerExecutor,
     RunnerBuild,
     RunnerJob,
+    cleanup_owned_plugin_containers,
     load_result_payload,
 )
 from python_hub_contracts import JobStatus, RunnerEvent
@@ -30,61 +32,73 @@ def main() -> int:
     docker_host_data_root = os.environ["HUB_DOCKER_HOST_DATA_ROOT"]
     poll_interval = float(os.environ.get("HUB_RUNNER_POLL_INTERVAL_SECONDS", "2"))
     client = docker.from_env()
-    executor = DockerExecutor(
-        client=client,
-        data_root=data_root,
-        docker_host_data_root=docker_host_data_root,
-    )
-    _reconcile_interrupted_jobs(base_url, token)
+    signal.signal(signal.SIGTERM, _terminate_cleanly)
+    try:
+        executor = DockerExecutor(
+            client=client,
+            data_root=data_root,
+            docker_host_data_root=docker_host_data_root,
+        )
+        _reconcile_interrupted_jobs(
+            base_url,
+            token,
+            client=client,
+            docker_host_data_root=docker_host_data_root,
+        )
 
-    while True:
-        operation = _post(base_url, token, "/operations/claim", {"runtime_type": "docker"})
-        if operation is not None:
-            result = executor.install(_build_from_payload(operation["build"], operation))
-            _post(
-                base_url,
-                token,
-                f"/operations/{operation['operation_id']}/complete",
-                {
-                    "runtime_type": "docker",
-                    "status": result.status,
-                    "image_digest": result.image_digest,
-                    "metadata": result.metadata or {},
-                    "error_summary": result.error_summary,
-                    "exit_code": result.exit_code,
-                },
-            )
-            continue
+        while True:
+            operation = _post(base_url, token, "/operations/claim", {"runtime_type": "docker"})
+            if operation is not None:
+                result = executor.install(_build_from_payload(operation["build"], operation))
+                _post(
+                    base_url,
+                    token,
+                    f"/operations/{operation['operation_id']}/complete",
+                    {
+                        "runtime_type": "docker",
+                        "status": result.status,
+                        "image_digest": result.image_digest,
+                        "metadata": result.metadata or {},
+                        "error_summary": result.error_summary,
+                        "exit_code": result.exit_code,
+                    },
+                )
+                continue
 
-        job = _post(base_url, token, "/jobs/claim", {"runtime_type": "docker"})
-        if job is not None:
-            runner_job = _job_from_payload(job)
-            executor = DockerExecutor(
-                client=client,
-                data_root=data_root,
-                docker_host_data_root=docker_host_data_root,
-                event_callback=_event_forwarder(base_url, token, runner_job.id),
-                cancellation_requested=_cancellation_checker(
-                    base_url, token, runner_job.id
-                ),
-            )
-            completion = executor.execute(runner_job)
-            result_payload = load_result_payload(data_root, runner_job.result_path)
-            if result_payload is None:
-                result_payload = _fallback_result(job["job"]["job"]["id"], completion.status)
-            _post(
-                base_url,
-                token,
-                f"/jobs/{job['job_id']}/complete",
-                {
-                    "runtime_type": "docker",
-                    "result": result_payload,
-                    "exit_code": completion.exit_code,
-                },
-            )
-            continue
+            job = _post(base_url, token, "/jobs/claim", {"runtime_type": "docker"})
+            if job is not None:
+                runner_job = _job_from_payload(job)
+                executor = DockerExecutor(
+                    client=client,
+                    data_root=data_root,
+                    docker_host_data_root=docker_host_data_root,
+                    event_callback=_event_forwarder(base_url, token, runner_job.id),
+                    cancellation_requested=_cancellation_checker(
+                        base_url, token, runner_job.id
+                    ),
+                )
+                completion = executor.execute(runner_job)
+                result_payload = load_result_payload(data_root, runner_job.result_path)
+                if result_payload is None:
+                    result_payload = _fallback_result(job["job"]["job"]["id"], completion.status)
+                _post(
+                    base_url,
+                    token,
+                    f"/jobs/{job['job_id']}/complete",
+                    {
+                        "runtime_type": "docker",
+                        "result": result_payload,
+                        "exit_code": completion.exit_code,
+                    },
+                )
+                continue
 
-        time.sleep(poll_interval)
+            time.sleep(poll_interval)
+    finally:
+        cleanup_owned_plugin_containers(
+            client,
+            docker_host_data_root=docker_host_data_root,
+        )
 
 
 def _post(
@@ -117,9 +131,19 @@ def _reconcile_interrupted_jobs(
     base_url: str,
     token: str,
     *,
+    client: Any,
+    docker_host_data_root: str,
     post: PostFunc = _post,
 ) -> None:
+    cleanup_owned_plugin_containers(
+        client,
+        docker_host_data_root=docker_host_data_root,
+    )
     post(base_url, token, "/jobs/reconcile", {"runtime_type": "docker"})
+
+
+def _terminate_cleanly(_signum: int, _frame: Any) -> None:
+    raise SystemExit(0)
 
 
 def _build_from_payload(build: dict[str, Any], operation: dict[str, Any]) -> RunnerBuild:

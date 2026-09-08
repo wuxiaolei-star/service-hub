@@ -11,6 +11,12 @@ def test_shared_deployment_token_overrides_transferred_stale_config(monkeypatch)
     assert settings.runner.shared_token.get_secret_value() == "fresh-target-token"
 
 
+def test_arm64_runtime_selects_native_platform(monkeypatch) -> None:
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
+    settings = HubSettings.from_yaml(Path("config/hub.yaml.example"))
+    assert settings.platform_arch == "arm64"
+
+
 def test_loads_settings_from_yaml(tmp_path: Path) -> None:
     """A valid YAML document produces typed nested settings."""
     config = tmp_path / "hub.yaml"

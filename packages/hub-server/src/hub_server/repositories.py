@@ -152,9 +152,12 @@ class HubRepository:
         """Atomically claim the oldest pending installation for one runtime."""
         operation = self._session.scalar(
             select(RunnerOperation)
+            .join(PluginBuild)
             .where(
                 RunnerOperation.runtime_type == runtime_type,
                 RunnerOperation.status == "PENDING",
+                PluginBuild.package_path.is_not(None),
+                PluginBuild.status == "INSTALLING",
             )
             .order_by(RunnerOperation.created_at, RunnerOperation.id)
             .limit(1)

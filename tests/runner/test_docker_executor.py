@@ -6,7 +6,15 @@ from typing import Any
 
 import pytest
 import zstandard
-from hub_runner.docker_executor import DockerExecutor, RunnerBuild, RunnerJob
+from hub_runner.docker_executor import (
+    SERVICE_HUB_JOB_LABEL,
+    SERVICE_HUB_OWNER_LABEL,
+    DockerExecutor,
+    RunnerBuild,
+    RunnerJob,
+    cleanup_owned_plugin_containers,
+    service_hub_owner_value,
+)
 from python_hub_contracts import JobStatus, ProgressEvent
 
 from deploy.runner.docker_runner_service import (
@@ -56,7 +64,7 @@ class FakeContainer:
         *,
         status_code: int = 0,
         logs: list[bytes] | None = None,
-        wait_results: list[dict[str, int] | Exception] | None = None,
+        wait_results: list[dict[str, int] | BaseException] | None = None,
     ) -> None:
         self.status_code = status_code
         self._logs = logs or []
@@ -73,7 +81,7 @@ class FakeContainer:
         self.wait_timeouts.append(float(kwargs["timeout"]))
         if self._wait_results:
             result = self._wait_results.pop(0)
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 raise result
             return result
         return {"StatusCode": self.status_code}
@@ -89,19 +97,36 @@ class FakeContainer:
 
 
 class FakeContainers:
-    def __init__(self, container: FakeContainer) -> None:
+    def __init__(
+        self,
+        container: FakeContainer,
+        *,
+        listed: list[FakeContainer] | None = None,
+    ) -> None:
         self.container = container
+        self.listed = listed or []
         self.run_kwargs: dict[str, Any] = {}
+        self.list_kwargs: dict[str, Any] = {}
 
     def run(self, **kwargs: Any) -> FakeContainer:
         self.run_kwargs = kwargs
         return self.container
 
+    def list(self, **kwargs: Any) -> list[FakeContainer]:
+        self.list_kwargs = kwargs
+        return self.listed
+
 
 class FakeDockerClient:
-    def __init__(self, *, digest: str, container: FakeContainer | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        digest: str,
+        container: FakeContainer | None = None,
+        listed: list[FakeContainer] | None = None,
+    ) -> None:
         self.images = FakeImages(f"sha256:{digest}")
-        self.containers = FakeContainers(container or FakeContainer())
+        self.containers = FakeContainers(container or FakeContainer(), listed=listed)
 
 
 def test_docker_executor_loads_archive_and_reports_verified_digest(tmp_path: Path) -> None:
@@ -186,6 +211,12 @@ def test_docker_executor_runs_digest_pinned_container_with_only_job_mounts(
     assert client.containers.run_kwargs["user"] == "65532:65532"
     assert client.containers.run_kwargs["read_only"] is True
     assert client.containers.run_kwargs["cap_drop"] == ["ALL"]
+    assert client.containers.run_kwargs["labels"] == {
+        SERVICE_HUB_OWNER_LABEL: service_hub_owner_value(
+            "/srv/python-service-hub/data"
+        ),
+        SERVICE_HUB_JOB_LABEL: "job_123",
+    }
     assert client.containers.run_kwargs["command"][-2:] == [
         "--result",
         "/job/output/result.json",
@@ -210,6 +241,30 @@ def test_docker_executor_runs_digest_pinned_container_with_only_job_mounts(
     assert events == [
         ProgressEvent(protocol_version="1.0", type="progress", percent=40)
     ]
+
+
+def test_cleanup_stops_and_removes_only_containers_owned_by_this_hub() -> None:
+    first = FakeContainer()
+    second = FakeContainer()
+    client = FakeDockerClient(digest="1" * 64, listed=[first, second])
+
+    removed = cleanup_owned_plugin_containers(
+        client,
+        docker_host_data_root="/srv/python-service-hub/data",
+    )
+
+    assert client.containers.list_kwargs == {
+        "all": True,
+        "filters": {
+            "label": [
+                f"{SERVICE_HUB_OWNER_LABEL}="
+                f"{service_hub_owner_value('/srv/python-service-hub/data')}"
+            ]
+        },
+    }
+    assert removed == 2
+    assert all(container.stopped for container in (first, second))
+    assert all(container.removed for container in (first, second))
 
 
 def test_docker_executor_rejects_cancelled_job_before_start(tmp_path: Path) -> None:
@@ -246,6 +301,24 @@ def test_docker_executor_stops_running_container_when_cancellation_is_requested(
     assert container.wait_timeouts == [1.0]
     assert container.stopped is True
     assert container.killed is False
+    assert container.removed is True
+
+
+def test_docker_executor_stops_owned_container_during_runner_shutdown(
+    tmp_path: Path,
+) -> None:
+    container = FakeContainer(wait_results=[SystemExit(0)])
+    client = FakeDockerClient(digest="1" * 64, container=container)
+
+    with pytest.raises(SystemExit):
+        DockerExecutor(
+            client=client,
+            data_root=tmp_path,
+            docker_host_data_root="/tmp/hub-data",
+            monotonic=lambda: 0.0,
+        ).execute(_docker_job())
+
+    assert container.stopped is True
     assert container.removed is True
 
 
@@ -341,15 +414,25 @@ def test_docker_runner_service_maps_claim_to_digest_runtime_job() -> None:
 
 def test_docker_runner_service_reconciles_interrupted_jobs_before_polling() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
+    orphan = FakeContainer()
+    client = FakeDockerClient(digest="1" * 64, listed=[orphan])
 
     def post(_: str, __: str, path: str, payload: dict[str, object]) -> None:
         calls.append((path, payload))
 
-    _reconcile_interrupted_jobs("http://hub/internal/v1", "token", post=post)
+    _reconcile_interrupted_jobs(
+        "http://hub/internal/v1",
+        "token",
+        client=client,
+        docker_host_data_root="/srv/python-service-hub/data",
+        post=post,
+    )
 
     assert calls == [
         ("/jobs/reconcile", {"runtime_type": "docker"}),
     ]
+    assert orphan.stopped is True
+    assert orphan.removed is True
 
 
 def test_docker_runner_checks_authenticated_internal_cancellation_endpoint() -> None:

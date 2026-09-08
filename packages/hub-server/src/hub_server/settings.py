@@ -1,6 +1,7 @@
 """Strict configuration models for the Hub server."""
 
 import os
+import platform
 from pathlib import Path
 from typing import Literal, Self
 
@@ -37,6 +38,15 @@ class RunnerSettings(StrictSettingsModel):
     poll_interval_seconds: int = Field(default=2, gt=0)
 
 
+def _native_architecture() -> Literal["amd64", "arm64"]:
+    machine = platform.machine().lower()
+    if machine in {"amd64", "x86_64"}:
+        return "amd64"
+    if machine in {"arm64", "aarch64"}:
+        return "arm64"
+    raise ValueError(f"unsupported Hub architecture: {machine}")
+
+
 class HubSettings(StrictSettingsModel):
     deployment: DeploymentSettings
     storage: StorageSettings
@@ -45,7 +55,7 @@ class HubSettings(StrictSettingsModel):
     runner: RunnerSettings
     hub_version: str = "0.1.0"
     platform_os: Literal["linux"] = "linux"
-    platform_arch: Literal["amd64", "arm64"] = "amd64"
+    platform_arch: Literal["amd64", "arm64"] = Field(default_factory=_native_architecture)
 
     @classmethod
     def from_yaml(cls, path: Path) -> Self:

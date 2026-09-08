@@ -190,6 +190,8 @@ def test_claim_operation_only_claims_oldest_matching_pending_runtime(session: Se
     conda_build = _build("conda-pack")
     docker_build = _build("docker")
     docker_build.plugin_version = conda_build.plugin_version
+    conda_build.package_path = "plugins/conda-build"
+    docker_build.package_path = "plugins/docker-build"
     conda_operation = RunnerOperation(
         plugin_build=conda_build,
         runtime_type="conda-pack",
