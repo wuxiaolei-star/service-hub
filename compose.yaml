@@ -10,7 +10,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./config/hub.yaml:/app/config/hub.yaml:ro
-      - ./data:/data
+      - ${HUB_DATA_DIR:-/srv/python-service-hub/data}:/data
   hub-conda-runner:
     build:
       context: .
@@ -25,7 +25,7 @@ services:
       HUB_RUNNER_TOKEN: replace-with-a-random-high-entropy-token
       HUB_RUNNER_POLL_INTERVAL_SECONDS: "2"
     volumes:
-      - ./data:/data
+      - ${HUB_DATA_DIR:-/srv/python-service-hub/data}:/data
   hub-docker-runner:
     build:
       context: .
@@ -39,6 +39,7 @@ services:
       HUB_INTERNAL_BASE_URL: http://hub:8000/internal/v1
       HUB_RUNNER_TOKEN: replace-with-a-random-high-entropy-token
       HUB_RUNNER_POLL_INTERVAL_SECONDS: "2"
+      HUB_DOCKER_HOST_DATA_ROOT: ${HUB_DATA_DIR:-/srv/python-service-hub/data}
     volumes:
-      - ./data:/data
+      - ${HUB_DATA_DIR:-/srv/python-service-hub/data}:/data
       - /var/run/docker.sock:/var/run/docker.sock

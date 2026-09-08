@@ -173,3 +173,7 @@ def test_converter_writes_requested_shapefiles_and_manifest(
     assert manifest["feature_count"] == 5
     assert result.data == {"feature_count": 5, "metrics": ["depth", "stage"]}
     assert compare_archives(archive, archive) == []
+    assert compare_archives(archive, archive, expected_features=6) == [
+        "depth_1-2.shp: expected 6 features, got 5",
+        "stage_1-2.shp: expected 6 features, got 5",
+    ]

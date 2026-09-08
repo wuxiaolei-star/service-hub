@@ -1,8 +1,10 @@
 """Smoke coverage for the deployable Docker Compose service."""
 
 import json
+import platform
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -60,6 +62,11 @@ def _write_smoke_compose(
 ) -> None:
     """Write a standalone deployment that never merges with production port mappings."""
     config_file = repository_root / "config" / "hub.yaml"
+    shared_runner_environment = (
+        "      HUB_INTERNAL_BASE_URL: http://hub:8000/internal/v1\n"
+        "      HUB_RUNNER_TOKEN: replace-with-a-random-high-entropy-token\n"
+        "      HUB_RUNNER_POLL_INTERVAL_SECONDS: \"2\"\n"
+    )
     path.write_text(
         "services:\n"
         "  hub:\n"
@@ -72,7 +79,33 @@ def _write_smoke_compose(
         f"      - {json.dumps(f'127.0.0.1:{port}:8000')}\n"
         "    volumes:\n"
         f"      - {json.dumps(f'{config_file}:/app/config/hub.yaml:ro')}\n"
-        f"      - {json.dumps(f'{data_directory}:/data')}\n",
+        f"      - {json.dumps(f'{data_directory}:/data')}\n"
+        "  hub-conda-runner:\n"
+        "    build:\n"
+        f"      context: {json.dumps(str(repository_root))}\n"
+        "      dockerfile: deploy/runner/Dockerfile.conda-runner\n"
+        "    image: python-service-hub-conda-runner:0.1.0-linux-amd64\n"
+        "    platform: linux/amd64\n"
+        "    depends_on:\n"
+        "      - hub\n"
+        "    environment:\n"
+        f"{shared_runner_environment}"
+        "    volumes:\n"
+        f"      - {json.dumps(f'{data_directory}:/data')}\n"
+        "  hub-docker-runner:\n"
+        "    build:\n"
+        f"      context: {json.dumps(str(repository_root))}\n"
+        "      dockerfile: deploy/runner/Dockerfile.docker-runner\n"
+        "    image: python-service-hub-docker-runner:0.1.0-linux-amd64\n"
+        "    platform: linux/amd64\n"
+        "    depends_on:\n"
+        "      - hub\n"
+        "    environment:\n"
+        f"{shared_runner_environment}"
+        f"      HUB_DOCKER_HOST_DATA_ROOT: {json.dumps(str(data_directory))}\n"
+        "    volumes:\n"
+        f"      - {json.dumps(f'{data_directory}:/data')}\n"
+        "      - /var/run/docker.sock:/var/run/docker.sock\n",
         encoding="utf-8",
     )
 
@@ -134,12 +167,63 @@ def test_production_compose_keeps_docker_socket_on_docker_runner_only() -> None:
     assert "/var/run/docker.sock" not in hub_section
     assert "/var/run/docker.sock" not in conda_section
     assert "/var/run/docker.sock:/var/run/docker.sock" in docker_section
+    assert '"127.0.0.1:8000:8000"' in hub_section
+    assert "ports:" not in conda_section
     assert "ports:" not in docker_section
+    assert "HUB_DOCKER_HOST_DATA_ROOT" not in hub_section
+    assert "HUB_DOCKER_HOST_DATA_ROOT" not in conda_section
+    assert "HUB_DOCKER_HOST_DATA_ROOT: ${HUB_DATA_DIR:-/srv/python-service-hub/data}" in (
+        docker_section
+    )
+
+
+def test_hub_and_docker_plugin_share_a_fixed_non_root_data_uid() -> None:
+    """A plugin can write its Job output without opening the directory to every UID."""
+    hub_dockerfile = Path("Dockerfile").read_text("utf-8")
+    plugin_dockerfile = Path("packages/nc-to-shp-plugin/docker/Dockerfile").read_text(
+        "utf-8"
+    )
+
+    assert "groupadd --system --gid 65532 hub" in hub_dockerfile
+    assert "useradd --system --uid 65532 --gid 65532" in hub_dockerfile
+    assert "USER 65532:65532" in plugin_dockerfile
+
+
+def test_disposable_smoke_compose_contains_both_runners(tmp_path: Path) -> None:
+    """The release smoke stack should exercise the same three-service topology."""
+    repository_root = Path("/workspace/python-service-hub")
+    compose_file = tmp_path / "compose.smoke.yaml"
+
+    _write_smoke_compose(compose_file, repository_root, tmp_path / "data", 18080)
+
+    compose = compose_file.read_text("utf-8")
+    assert "  hub:\n" in compose
+    assert "  hub-conda-runner:\n" in compose
+    assert "  hub-docker-runner:\n" in compose
+    assert "127.0.0.1:18080:8000" in compose
+    hub_section = compose.split("  hub:\n", maxsplit=1)[1].split(
+        "  hub-conda-runner:\n", maxsplit=1
+    )[0]
+    conda_section = compose.split("  hub-conda-runner:\n", maxsplit=1)[1].split(
+        "  hub-docker-runner:\n", maxsplit=1
+    )[0]
+    docker_section = compose.split("  hub-docker-runner:\n", maxsplit=1)[1]
+    assert "/var/run/docker.sock" not in hub_section
+    assert "/var/run/docker.sock" not in conda_section
+    assert "/var/run/docker.sock:/var/run/docker.sock" in docker_section
+    assert "ports:" not in conda_section
+    assert "ports:" not in docker_section
+    assert "HUB_DOCKER_HOST_DATA_ROOT" not in hub_section
+    assert "HUB_DOCKER_HOST_DATA_ROOT" not in conda_section
+    expected_host_root = json.dumps(str(tmp_path / "data"))
+    assert f"HUB_DOCKER_HOST_DATA_ROOT: {expected_host_root}" in docker_section
 
 
 @pytest.mark.integration
 def test_compose_health_and_upload() -> None:
     """A disposable AMD64 Compose project exposes health and accepts uploads."""
+    if sys.platform != "linux" or platform.machine().lower() not in {"x86_64", "amd64"}:
+        pytest.skip("Compose smoke requires a native Linux AMD64 Docker host")
     repository_root = Path(__file__).resolve().parents[2]
     project_name = f"hub-smoke-{uuid.uuid4().hex}"
     port = _available_local_port()

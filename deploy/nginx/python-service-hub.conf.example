@@ -8,6 +8,14 @@ server {
     access_log /var/log/nginx/python-service-hub.access.log;
     client_max_body_size 10g;
 
+    location = /internal/v1 {
+        deny all;
+    }
+
+    location ^~ /internal/v1/ {
+        deny all;
+    }
+
     location / {
         # Replace these example private networks with the actual internal callers.
         allow 10.0.0.0/8;

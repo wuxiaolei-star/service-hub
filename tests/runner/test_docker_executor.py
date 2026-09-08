@@ -79,7 +79,11 @@ def test_docker_executor_loads_archive_and_reports_verified_digest(tmp_path: Pat
     )
     client = FakeDockerClient(digest=digest)
 
-    result = DockerExecutor(client=client, data_root=tmp_path).install(build)
+    result = DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/tmp/hub-data",
+    ).install(build)
 
     assert result.status == "SUCCESS"
     assert result.image_digest == digest
@@ -95,7 +99,11 @@ def test_docker_executor_rejects_conda_build(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="docker"):
-        DockerExecutor(client=FakeDockerClient(digest="1" * 64), data_root=tmp_path).install(build)
+        DockerExecutor(
+            client=FakeDockerClient(digest="1" * 64),
+            data_root=tmp_path,
+            docker_host_data_root="/tmp/hub-data",
+        ).install(build)
 
 
 def test_docker_executor_rejects_mismatched_loaded_digest(tmp_path: Path) -> None:
@@ -110,6 +118,7 @@ def test_docker_executor_rejects_mismatched_loaded_digest(tmp_path: Path) -> Non
     result = DockerExecutor(
         client=FakeDockerClient(digest="2" * 64),
         data_root=tmp_path,
+        docker_host_data_root="/tmp/hub-data",
     ).install(build)
 
     assert result.status == "FAILED"
@@ -129,6 +138,7 @@ def test_docker_executor_runs_digest_pinned_container_with_only_job_mounts(
     result = DockerExecutor(
         client=client,
         data_root=tmp_path,
+        docker_host_data_root="/srv/python-service-hub/data",
         event_callback=events.append,
     ).execute(job)
 
@@ -144,6 +154,13 @@ def test_docker_executor_runs_digest_pinned_container_with_only_job_mounts(
         "/job/output/result.json",
     ]
     volumes = client.containers.run_kwargs["volumes"]
+    assert set(volumes) == {
+        "/srv/python-service-hub/data/jobs/job_123/input",
+        "/srv/python-service-hub/data/jobs/job_123/job.json",
+        "/srv/python-service-hub/data/jobs/job_123/work",
+        "/srv/python-service-hub/data/jobs/job_123/output",
+        "/srv/python-service-hub/data/jobs/job_123/logs",
+    }
     assert sorted((value["bind"], value["mode"]) for value in volumes.values()) == [
         ("/job/input", "ro"),
         ("/job/job.json", "ro"),
@@ -162,10 +179,29 @@ def test_docker_executor_rejects_cancelled_job_before_start(tmp_path: Path) -> N
     client = FakeDockerClient(digest="1" * 64)
     job = _docker_job(cancel_requested=True)
 
-    result = DockerExecutor(client=client, data_root=tmp_path).execute(job)
+    result = DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/tmp/hub-data",
+    ).execute(job)
 
     assert result.status is JobStatus.CANCELLED
     assert client.containers.run_kwargs == {}
+
+
+@pytest.mark.parametrize(
+    "host_root",
+    ["data", "../data", "/", "/srv/../data", "//host/data"],
+)
+def test_docker_executor_rejects_unsafe_host_data_root(
+    tmp_path: Path, host_root: str
+) -> None:
+    with pytest.raises(ValueError, match="absolute trusted directory"):
+        DockerExecutor(
+            client=FakeDockerClient(digest="1" * 64),
+            data_root=tmp_path,
+            docker_host_data_root=host_root,
+        )
 
 
 def test_compose_adds_docker_runner_as_only_socket_mount() -> None:

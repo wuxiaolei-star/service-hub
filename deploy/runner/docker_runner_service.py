@@ -27,9 +27,14 @@ def main() -> int:
     base_url = os.environ["HUB_INTERNAL_BASE_URL"].rstrip("/")
     token = os.environ["HUB_RUNNER_TOKEN"]
     data_root = Path(os.environ.get("HUB_DATA_ROOT", "/data"))
+    docker_host_data_root = os.environ["HUB_DOCKER_HOST_DATA_ROOT"]
     poll_interval = float(os.environ.get("HUB_RUNNER_POLL_INTERVAL_SECONDS", "2"))
     client = docker.from_env()
-    executor = DockerExecutor(client=client, data_root=data_root)
+    executor = DockerExecutor(
+        client=client,
+        data_root=data_root,
+        docker_host_data_root=docker_host_data_root,
+    )
     _reconcile_interrupted_jobs(base_url, token)
 
     while True:
@@ -57,6 +62,7 @@ def main() -> int:
             executor = DockerExecutor(
                 client=client,
                 data_root=data_root,
+                docker_host_data_root=docker_host_data_root,
                 event_callback=_event_forwarder(base_url, token, runner_job.id),
             )
             completion = executor.execute(runner_job)

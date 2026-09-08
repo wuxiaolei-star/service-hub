@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any
 
 
-def compare_archives(left: Path, right: Path) -> list[str]:
+def compare_archives(
+    left: Path, right: Path, *, expected_features: int | None = None
+) -> list[str]:
     """Return semantic differences; an empty list means equality."""
     with (
         tempfile.TemporaryDirectory(prefix="nc-shp-left-") as left_name,
@@ -30,7 +32,13 @@ def compare_archives(left: Path, right: Path) -> list[str]:
         if left_manifest != right_manifest:
             differences.append("manifest.json differs")
         for name in sorted(item for item in left_names if item.endswith(".shp")):
-            differences.extend(_compare_shapefile(left_root / name, right_root / name))
+            differences.extend(
+                _compare_shapefile(
+                    left_root / name,
+                    right_root / name,
+                    expected_features=expected_features,
+                )
+            )
         return differences
 
 
@@ -48,7 +56,9 @@ def _extract_flat(archive: Path, destination: Path) -> set[str]:
     return set(names)
 
 
-def _compare_shapefile(left: Path, right: Path) -> list[str]:
+def _compare_shapefile(
+    left: Path, right: Path, *, expected_features: int | None
+) -> list[str]:
     from osgeo import ogr  # type: ignore[import-not-found]
 
     left_source = ogr.Open(str(left), 0)
@@ -71,7 +81,22 @@ def _compare_shapefile(left: Path, right: Path) -> list[str]:
     right_srs = right_layer.GetSpatialRef()
     if left_srs is None or right_srs is None or not bool(left_srs.IsSame(right_srs)):
         differences.append(f"{prefix}: CRS differs")
-    if left_layer.GetFeatureCount() != right_layer.GetFeatureCount():
+    left_count = left_layer.GetFeatureCount()
+    right_count = right_layer.GetFeatureCount()
+    if expected_features is not None and left_count == right_count != expected_features:
+        differences.append(
+            f"{prefix}: expected {expected_features} features, got {left_count}"
+        )
+    elif expected_features is not None:
+        if left_count != expected_features:
+            differences.append(
+                f"{prefix}: expected {expected_features} left features, got {left_count}"
+            )
+        if right_count != expected_features:
+            differences.append(
+                f"{prefix}: expected {expected_features} right features, got {right_count}"
+            )
+    if left_count != right_count:
         differences.append(f"{prefix}: feature count differs")
     if _field_schema(left_layer) != _field_schema(right_layer):
         differences.append(f"{prefix}: field schema differs")

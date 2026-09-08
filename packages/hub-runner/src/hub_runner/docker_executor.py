@@ -4,7 +4,7 @@ import json
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 
 import zstandard
@@ -88,10 +88,12 @@ class DockerExecutor:
         *,
         client: DockerClientProtocol,
         data_root: Path,
+        docker_host_data_root: str,
         event_callback: EventCallback | None = None,
     ) -> None:
         self._client = client
         self._data_root = data_root.resolve()
+        self._docker_host_data_root = _trusted_host_data_root(docker_host_data_root)
         self._event_callback = event_callback or (lambda event: None)
 
     def install(self, build: RunnerBuild) -> InstallResult:
@@ -165,14 +167,17 @@ class DockerExecutor:
                     "PYTHONUNBUFFERED": "1",
                 },
                 volumes={
-                    str(input_root): {"bind": "/job/input", "mode": "ro"},
-                    str(self._safe_data_path(job.job_path)): {
+                    self._docker_host_path(input_root): {"bind": "/job/input", "mode": "ro"},
+                    self._docker_host_path(self._safe_data_path(job.job_path)): {
                         "bind": "/job/job.json",
                         "mode": "ro",
                     },
-                    str(work_root): {"bind": "/job/work", "mode": "rw"},
-                    str(output_root): {"bind": "/job/output", "mode": "rw"},
-                    str(logs_root): {"bind": "/job/logs", "mode": "rw"},
+                    self._docker_host_path(work_root): {"bind": "/job/work", "mode": "rw"},
+                    self._docker_host_path(output_root): {
+                        "bind": "/job/output",
+                        "mode": "rw",
+                    },
+                    self._docker_host_path(logs_root): {"bind": "/job/logs", "mode": "rw"},
                 },
                 stdout=True,
                 stderr=True,
@@ -220,6 +225,11 @@ class DockerExecutor:
             raise ValueError("runner path must stay inside data root") from error
         return candidate
 
+    def _docker_host_path(self, container_path: Path) -> str:
+        """Map a container-local /data path to the Docker daemon host bind source."""
+        relative = container_path.resolve(strict=False).relative_to(self._data_root)
+        return str(self._docker_host_data_root.joinpath(*relative.parts))
+
     def _forward_logs(self, lines: Iterable[bytes | str]) -> None:
         for raw_line in lines:
             text = (
@@ -240,6 +250,18 @@ def _normalize_digest(value: str | None) -> str | None:
     if separator and prefix == "sha256":
         return suffix
     return value
+
+
+def _trusted_host_data_root(value: str) -> PurePosixPath:
+    root = PurePosixPath(value)
+    if (
+        not root.is_absolute()
+        or root.anchor != "/"
+        or root == PurePosixPath("/")
+        or ".." in root.parts
+    ):
+        raise ValueError("docker_host_data_root must be an absolute trusted directory")
+    return root
 
 
 def _stop_container(container: ContainerProtocol | None) -> None:
