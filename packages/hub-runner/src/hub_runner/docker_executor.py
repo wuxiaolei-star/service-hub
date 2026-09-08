@@ -149,7 +149,7 @@ class DockerExecutor:
                     "--plugin-root",
                     "/plugin",
                     "--result",
-                    "/output/result.json",
+                    "/job/output/result.json",
                 ],
                 detach=True,
                 network_mode="none",

@@ -139,6 +139,10 @@ def test_docker_executor_runs_digest_pinned_container_with_only_job_mounts(
     assert client.containers.run_kwargs["user"] == "65532:65532"
     assert client.containers.run_kwargs["read_only"] is True
     assert client.containers.run_kwargs["cap_drop"] == ["ALL"]
+    assert client.containers.run_kwargs["command"][-2:] == [
+        "--result",
+        "/job/output/result.json",
+    ]
     volumes = client.containers.run_kwargs["volumes"]
     assert sorted((value["bind"], value["mode"]) for value in volumes.values()) == [
         ("/job/input", "ro"),
