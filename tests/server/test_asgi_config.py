@@ -14,7 +14,8 @@ def test_asgi_app_loads_settings_from_hub_config_path(
         "deployment:\n  mode: offline\n"
         "storage:\n  root: /configured/data\n"
         "database:\n  url: sqlite:////configured/data/hub.db\n"
-        "uploads:\n  max_size_bytes: 2048\n",
+        "uploads:\n  max_size_bytes: 2048\n"
+        "runner:\n  shared_token: runner-test-secret\n  poll_interval_seconds: 1\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("HUB_CONFIG_PATH", str(config))

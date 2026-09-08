@@ -6,3 +6,6 @@ database:
   url: sqlite:////data/db/hub.db
 uploads:
   max_size_bytes: 10737418240
+runner:
+  shared_token: replace-with-a-random-high-entropy-token
+  poll_interval_seconds: 2

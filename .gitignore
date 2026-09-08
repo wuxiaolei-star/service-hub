@@ -1,4 +1,5 @@
 .worktrees/
+.superpowers/sdd/
 .venv/
 __pycache__/
 .pytest_cache/

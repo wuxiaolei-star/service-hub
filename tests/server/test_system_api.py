@@ -7,6 +7,7 @@ from hub_server.settings import (
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
+    RunnerSettings,
     StorageSettings,
     UploadSettings,
 )
@@ -19,6 +20,7 @@ def settings() -> HubSettings:
         storage=StorageSettings(root="/var/lib/hub"),
         database=DatabaseSettings(url="sqlite:////var/lib/hub/db/hub.db"),
         uploads=UploadSettings(max_size_bytes=1024),
+        runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
         platform_os="linux",
         platform_arch="amd64",
     )

@@ -1,0 +1,500 @@
+from __future__ import annotations
+
+import io
+import os
+import stat
+import sys
+import tarfile
+import time
+from collections.abc import Sequence
+from pathlib import Path
+
+import hub_runner.conda_executor as conda_executor_module
+import pytest
+import zstandard
+from hub_runner.conda_executor import CommandResult, CondaExecutor, RunnerBuild, RunnerJob
+from python_hub_contracts import JobStatus, ProgressEvent
+
+from deploy.runner.conda_runner_service import (
+    _cancellation_checker,
+    _job_from_payload,
+    _reconcile_interrupted_jobs,
+)
+
+
+class FakeCommandRunner:
+    def __init__(self, result: CommandResult | None = None) -> None:
+        self.calls: list[list[str]] = []
+        self.environments: list[dict[str, str]] = []
+        self.result = result or CommandResult(returncode=0, stdout="", stderr="")
+
+    def __call__(
+        self,
+        args: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        timeout: int | None = None,
+        event_callback: object | None = None,
+        cancellation_requested: object | None = None,
+    ) -> CommandResult:
+        del cwd, timeout, event_callback, cancellation_requested
+        self.calls.append([str(arg) for arg in args])
+        self.environments.append(dict(env or {}))
+        return self.result
+
+
+def test_conda_executor_runs_conda_unpack_then_import_healthcheck(tmp_path: Path) -> None:
+    """Skipping unpack or healthcheck would mark an unusable conda-pack environment ready."""
+    archive = _write_env_archive(tmp_path / "env.tar.zst")
+    fake_runner = FakeCommandRunner()
+    build = RunnerBuild(
+        id="plugin_build_123",
+        runtime_type="conda-pack",
+        runtime_archive=_relative_to_data(tmp_path, archive),
+        timeout_seconds=60,
+    )
+
+    result = CondaExecutor(data_root=tmp_path, command_runner=fake_runner).install(build)
+
+    env_root = tmp_path / "environments" / build.id
+    assert result.status == "SUCCESS"
+    assert result.environment_path == f"environments/{build.id}"
+    assert fake_runner.calls == [
+        [str(env_root / "bin" / "conda-unpack")],
+        [
+            str(env_root / "bin" / "python"),
+            "-c",
+            "import h5py, scipy; from osgeo import ogr",
+        ],
+    ]
+    if os.name != "nt":
+        assert (env_root / "bin" / "conda-unpack").stat().st_mode & stat.S_IXUSR
+        assert (env_root / "bin" / "python").stat().st_mode & stat.S_IXUSR
+
+
+def test_conda_executor_rejects_docker_build(tmp_path: Path) -> None:
+    """Accepting docker builds in the conda runner breaks runtime isolation."""
+    build = RunnerBuild(
+        id="plugin_build_123",
+        runtime_type="docker",
+        runtime_archive="plugins/plugin_build_123/image.tar.zst",
+    )
+
+    with pytest.raises(ValueError, match="conda-pack"):
+        CondaExecutor(data_root=tmp_path).install(build)
+
+
+def test_conda_executor_reports_failed_healthcheck_without_ready_environment(
+    tmp_path: Path,
+) -> None:
+    """A nonzero unpack or healthcheck must not register the environment as READY."""
+    archive = _write_env_archive(tmp_path / "env.tar.zst")
+    fake_runner = FakeCommandRunner(CommandResult(returncode=2, stdout="", stderr="bad env"))
+    build = RunnerBuild(
+        id="plugin_build_123",
+        runtime_type="conda-pack",
+        runtime_archive=_relative_to_data(tmp_path, archive),
+        timeout_seconds=60,
+    )
+
+    result = CondaExecutor(data_root=tmp_path, command_runner=fake_runner).install(build)
+
+    assert result.status == "FAILED"
+    assert result.exit_code == 2
+    assert result.error_summary == "bad env"
+    assert not (tmp_path / "environments" / build.id).exists()
+
+
+def test_failed_duplicate_install_preserves_existing_ready_environment(
+    tmp_path: Path,
+) -> None:
+    """A retried install must never delete an already promoted immutable environment."""
+    archive = _write_env_archive(tmp_path / "env.tar.zst")
+    existing = tmp_path / "environments" / "plugin_build_123"
+    existing.mkdir(parents=True)
+    marker = existing / "ready-marker"
+    marker.write_text("ready", encoding="utf-8")
+    build = RunnerBuild(
+        id="plugin_build_123",
+        runtime_type="conda-pack",
+        runtime_archive=_relative_to_data(tmp_path, archive),
+    )
+
+    result = CondaExecutor(
+        data_root=tmp_path, command_runner=FakeCommandRunner()
+    ).install(build)
+
+    assert result.status == "FAILED"
+    assert marker.read_text("utf-8") == "ready"
+
+
+def test_conda_executor_rejects_build_id_that_escapes_environments_root(
+    tmp_path: Path,
+) -> None:
+    """A path-shaped Build ID must not promote executable files outside environments/."""
+    archive = _write_env_archive(tmp_path / "env.tar.zst")
+    build = RunnerBuild(
+        id="../escaped-build",
+        runtime_type="conda-pack",
+        runtime_archive=_relative_to_data(tmp_path, archive),
+    )
+
+    result = CondaExecutor(
+        data_root=tmp_path, command_runner=FakeCommandRunner()
+    ).install(build)
+
+    assert result.status == "FAILED"
+    assert not (tmp_path / "escaped-build").exists()
+
+
+def test_conda_executor_limits_total_decompressed_environment_size(
+    tmp_path: Path,
+) -> None:
+    """A small compressed archive must not expand without a configured safety bound."""
+    archive = _write_env_archive(
+        tmp_path / "env.tar.zst",
+        files={
+            "bin/conda-unpack": b"#!/bin/sh\n",
+            "bin/python": b"#!/bin/sh\n",
+            "payload": b"12345678",
+        },
+    )
+    build = RunnerBuild(
+        id="plugin_build_123",
+        runtime_type="conda-pack",
+        runtime_archive=_relative_to_data(tmp_path, archive),
+    )
+
+    result = CondaExecutor(
+        data_root=tmp_path,
+        command_runner=FakeCommandRunner(),
+        max_extracted_size_bytes=16,
+    ).install(build)
+
+    assert result.status == "FAILED"
+    assert "size limit" in (result.error_summary or "")
+    assert not (tmp_path / "environments" / build.id).exists()
+
+
+def test_conda_executor_rejects_hardlink_whose_archive_target_escapes_root(
+    tmp_path: Path,
+) -> None:
+    """Tar hardlinks resolve from archive root, not from the link member's parent."""
+    environments = tmp_path / "environments"
+    environments.mkdir()
+    outside = environments / "outside-target"
+    outside.write_text("outside", encoding="utf-8")
+    archive = _write_env_archive(
+        tmp_path / "env.tar.zst",
+        hardlinks={"nested/link": "../outside-target"},
+    )
+    build = RunnerBuild(
+        id="plugin_build_123",
+        runtime_type="conda-pack",
+        runtime_archive=_relative_to_data(tmp_path, archive),
+    )
+
+    result = CondaExecutor(
+        data_root=tmp_path, command_runner=FakeCommandRunner()
+    ).install(build)
+
+    assert result.status == "FAILED"
+    assert outside.read_text("utf-8") == "outside"
+    assert not (environments / build.id).exists()
+
+
+def test_conda_executor_executes_hub_runner_with_limited_job_environment(
+    tmp_path: Path,
+) -> None:
+    """Leaking ambient environment or bypassing hub_runner breaks reproducible execution."""
+    fake_runner = FakeCommandRunner(
+        CommandResult(
+            returncode=0,
+            stdout='@@HUB@@{"protocol_version":"1.0","type":"progress","percent":25}\n',
+            stderr="",
+        )
+    )
+    events: list[ProgressEvent] = []
+    job = RunnerJob(
+        id="job_123",
+        runtime_type="conda-pack",
+        workspace="jobs/job_123",
+        job_path="jobs/job_123/job.json",
+        manifest_path="plugins/plugin_build_123/plugin.yaml",
+        plugin_root="plugins/plugin_build_123/plugin",
+        result_path="jobs/job_123/result.json",
+        environment_path="environments/plugin_build_123",
+        timeout_seconds=30,
+        cancel_requested=False,
+    )
+
+    result = CondaExecutor(
+        data_root=tmp_path,
+        command_runner=fake_runner,
+        event_callback=events.append,
+        job_process_runner=fake_runner,
+    ).execute(job)
+
+    assert result.status is JobStatus.SUCCESS
+    assert result.exit_code == 0
+    assert fake_runner.calls == [
+        [
+            str(tmp_path / "environments" / "plugin_build_123" / "bin" / "python"),
+            "-m",
+            "hub_runner",
+            "--job",
+            str(tmp_path / "jobs" / "job_123" / "job.json"),
+            "--manifest",
+            str(tmp_path / "plugins" / "plugin_build_123" / "plugin.yaml"),
+            "--plugin-root",
+            str(tmp_path / "plugins" / "plugin_build_123" / "plugin"),
+            "--result",
+            str(tmp_path / "jobs" / "job_123" / "result.json"),
+        ]
+    ]
+    assert fake_runner.environments == [
+        {
+            "HUB_INPUT_DIR": str(tmp_path / "jobs" / "job_123" / "input"),
+            "HUB_WORK_DIR": str(tmp_path / "jobs" / "job_123" / "work"),
+            "HUB_OUTPUT_DIR": str(tmp_path / "jobs" / "job_123" / "output"),
+            "HUB_LOG_DIR": str(tmp_path / "jobs" / "job_123" / "logs"),
+            "PYTHONUNBUFFERED": "1",
+        }
+    ]
+    assert events == [
+        ProgressEvent(protocol_version="1.0", type="progress", percent=25)
+    ]
+
+
+def test_conda_executor_rejects_cancelled_job_before_start(tmp_path: Path) -> None:
+    """A pre-cancelled claim should not launch plugin code."""
+    fake_runner = FakeCommandRunner()
+    job = RunnerJob(
+        id="job_123",
+        runtime_type="conda-pack",
+        workspace="jobs/job_123",
+        job_path="jobs/job_123/job.json",
+        manifest_path="plugins/plugin_build_123/plugin.yaml",
+        plugin_root="plugins/plugin_build_123/plugin",
+        result_path="jobs/job_123/result.json",
+        environment_path="environments/plugin_build_123",
+        timeout_seconds=30,
+        cancel_requested=True,
+    )
+
+    result = CondaExecutor(data_root=tmp_path, command_runner=fake_runner).execute(job)
+
+    assert result.status is JobStatus.CANCELLED
+    assert result.exit_code is None
+    assert fake_runner.calls == []
+
+
+def test_job_process_forwards_event_before_child_can_exit(tmp_path: Path) -> None:
+    """Buffering stdout until exit deadlocks plugins that depend on live event delivery."""
+    gate = tmp_path / "event-forwarded"
+    script = (
+        "import pathlib,sys,time; "
+        "print('@@HUB@@{\"protocol_version\":\"1.0\",\"type\":\"progress\",\"percent\":40}', "
+        "flush=True); "
+        "gate=pathlib.Path(sys.argv[1]); "
+        "deadline=time.monotonic()+1.5; "
+        "exec('while not gate.exists() and time.monotonic() < deadline:\\n time.sleep(0.01)'); "
+        "raise SystemExit(0 if gate.exists() else 9)"
+    )
+    events: list[ProgressEvent] = []
+
+    def forward(event: ProgressEvent) -> None:
+        events.append(event)
+        gate.write_text("forwarded", encoding="utf-8")
+
+    result = conda_executor_module._run_job_process(
+        [sys.executable, "-c", script, str(gate)],
+        cwd=tmp_path,
+        env={"PYTHONUNBUFFERED": "1"},
+        timeout=2,
+        event_callback=forward,
+        cancellation_requested=lambda: False,
+    )
+
+    assert result.returncode == 0
+    assert result.termination_reason is None
+    assert events == [
+        ProgressEvent(protocol_version="1.0", type="progress", percent=40)
+    ]
+
+
+def test_job_process_observes_cancellation_while_running(tmp_path: Path) -> None:
+    """Checking cancellation only at claim time leaves a running Job impossible to stop."""
+    started = tmp_path / "started"
+    script = (
+        "import pathlib,sys,time; "
+        "pathlib.Path(sys.argv[1]).write_text('started'); "
+        "exec('while True:\\n time.sleep(0.05)')"
+    )
+
+    result = conda_executor_module._run_job_process(
+        [sys.executable, "-c", script, str(started)],
+        cwd=tmp_path,
+        env={"PYTHONUNBUFFERED": "1"},
+        timeout=5,
+        event_callback=lambda event: None,
+        cancellation_requested=started.exists,
+    )
+
+    assert result.termination_reason == "cancelled"
+    assert result.returncode is not None
+
+
+def test_job_process_stops_when_live_event_forwarding_fails(tmp_path: Path) -> None:
+    """An internal API failure must not orphan plugin code outside worker control."""
+    script = (
+        "import time; "
+        "print('@@HUB@@{\"protocol_version\":\"1.0\",\"type\":\"progress\",\"percent\":50}', "
+        "flush=True); time.sleep(1)"
+    )
+
+    def reject_event(_: ProgressEvent) -> None:
+        raise RuntimeError("internal API unavailable")
+
+    result = conda_executor_module._run_job_process(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env={"PYTHONUNBUFFERED": "1"},
+        timeout=5,
+        event_callback=reject_event,
+        cancellation_requested=lambda: False,
+    )
+
+    assert result.returncode != 0
+    assert "event forwarding failed" in result.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Production process-group semantics are POSIX-only")
+def test_job_process_cancellation_terminates_the_entire_process_group(
+    tmp_path: Path,
+) -> None:
+    """Killing only the runner leaves plugin grandchildren executing after cancellation."""
+    started = tmp_path / "grandchild-started"
+    heartbeat = tmp_path / "heartbeat"
+    grandchild = (
+        "import pathlib,sys,time; p=pathlib.Path(sys.argv[1]); "
+        "exec(\"while True:\\n p.open('a').write('x')\\n time.sleep(0.02)\")"
+    )
+    parent = (
+        "import pathlib,subprocess,sys,time; "
+        "subprocess.Popen([sys.executable,'-c',sys.argv[3],sys.argv[2]], "
+        "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+        "pathlib.Path(sys.argv[1]).write_text('started'); "
+        "exec('while True:\\n time.sleep(0.05)')"
+    )
+
+    result = conda_executor_module._run_job_process(
+        [sys.executable, "-c", parent, str(started), str(heartbeat), grandchild],
+        cwd=tmp_path,
+        env={"PYTHONUNBUFFERED": "1"},
+        timeout=5,
+        event_callback=lambda event: None,
+        cancellation_requested=started.exists,
+    )
+
+    assert result.termination_reason == "cancelled"
+    size_after_stop = heartbeat.stat().st_size if heartbeat.exists() else 0
+    time.sleep(0.15)
+    assert (heartbeat.stat().st_size if heartbeat.exists() else 0) == size_after_stop
+
+
+def test_compose_adds_conda_runner_without_ports_or_docker_socket() -> None:
+    """The conda runner must not be externally reachable or able to control Docker."""
+    compose = Path("compose.yaml").read_text("utf-8")
+
+    assert "hub-conda-runner:" in compose
+    conda_section = compose.split("hub-conda-runner:", maxsplit=1)[1]
+    conda_section = conda_section.split("\n  hub-docker-runner:", maxsplit=1)[0]
+    assert "ports:" not in conda_section
+    assert "/var/run/docker.sock" not in conda_section
+
+
+def test_conda_runner_service_maps_claim_paths_relative_to_workspace() -> None:
+    """Treating result.json as data-root-relative would complete Jobs without their result."""
+    job = _job_from_payload(
+        {
+            "job_id": "job_123",
+            "runtime_type": "conda-pack",
+            "cancel_requested": False,
+            "workspace": "jobs/job_123",
+            "paths": {"job": "job.json", "result": "result.json"},
+            "job": {"execution": {"timeout": 30}},
+            "build": {
+                "manifest": "plugins/build_123/plugin.yaml",
+                "source": "plugins/build_123/plugin",
+                "environment_path": "environments/build_123",
+            },
+        }
+    )
+
+    assert job.job_path == "jobs/job_123/job.json"
+    assert job.result_path == "jobs/job_123/result.json"
+
+
+def test_conda_runner_service_reconciles_interrupted_jobs_before_polling() -> None:
+    """Skipping startup reconciliation leaves abandoned jobs permanently RUNNING."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def post(_: str, __: str, path: str, payload: dict[str, object]) -> None:
+        calls.append((path, payload))
+
+    _reconcile_interrupted_jobs("http://hub/internal/v1", "token", post=post)
+
+    assert calls == [
+        ("/jobs/reconcile", {"runtime_type": "conda-pack"}),
+    ]
+
+
+def test_conda_runner_service_checks_live_cancellation_via_internal_api() -> None:
+    """Without an internal status check the worker cannot observe cancellation after claim."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def post(_: str, __: str, path: str, payload: dict[str, object]) -> dict[str, object]:
+        calls.append((path, payload))
+        return {"job_id": "job_123", "cancel_requested": True}
+
+    check = _cancellation_checker(
+        "http://hub/internal/v1", "token", "job_123", post=post
+    )
+
+    assert check() is True
+    assert calls == [
+        ("/jobs/job_123/cancellation", {"runtime_type": "conda-pack"}),
+    ]
+
+
+def _write_env_archive(
+    path: Path,
+    *,
+    files: dict[str, bytes] | None = None,
+    hardlinks: dict[str, str] | None = None,
+) -> Path:
+    tar_payload = io.BytesIO()
+    with tarfile.open(fileobj=tar_payload, mode="w") as archive:
+        archive_files = files or {
+            "bin/conda-unpack": b"#!/bin/sh\n",
+            "bin/python": b"#!/bin/sh\n",
+        }
+        for name, content in archive_files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            info.mode = 0o755
+            archive.addfile(info, io.BytesIO(content))
+        for name, target in (hardlinks or {}).items():
+            info = tarfile.TarInfo(name)
+            info.type = tarfile.LNKTYPE
+            info.linkname = target
+            archive.addfile(info)
+    compressor = zstandard.ZstdCompressor()
+    path.write_bytes(compressor.compress(tar_payload.getvalue()))
+    return path
+
+
+def _relative_to_data(data_root: Path, path: Path) -> str:
+    return path.resolve().relative_to(data_root.resolve()).as_posix()

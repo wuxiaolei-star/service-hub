@@ -156,6 +156,42 @@ def test_successful_result_round_trips_with_uppercase_enum_status(
     assert result.finished_at.tzinfo is not None
 
 
+def test_timed_out_result_requires_timeout_error(
+    successful_result: dict[str, Any]
+) -> None:
+    successful_result["status"] = "TIMED_OUT"
+    successful_result["error"] = {
+        "type": "RunnerTimeout",
+        "code": "JOB_TIMED_OUT",
+        "message": "任务超过时限",
+    }
+
+    result = JobResult.model_validate(successful_result)
+
+    assert result.status is JobStatus.TIMED_OUT
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        None,
+        {
+            "type": "RunnerTimeout",
+            "code": "EXEC_FAILED",
+            "message": "任务超过时限",
+        },
+    ],
+)
+def test_timed_out_result_rejects_missing_or_wrong_error_code(
+    error: dict[str, Any] | None, successful_result: dict[str, Any]
+) -> None:
+    successful_result["status"] = "TIMED_OUT"
+    successful_result["error"] = error
+
+    with pytest.raises(ValidationError):
+        JobResult.model_validate(successful_result)
+
+
 @pytest.mark.parametrize("protocol_version", ["1.1", "2.0"])
 def test_job_result_rejects_non_v1_protocol_versions(
     protocol_version: str, successful_result: dict[str, Any]

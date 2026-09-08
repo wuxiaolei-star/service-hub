@@ -20,6 +20,7 @@ class JobStatus(StrEnum):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    TIMED_OUT = "TIMED_OUT"
 
 
 class FileRole(StrEnum):
@@ -130,7 +131,12 @@ class JobResult(StrictContractModel):
 
     protocol_version: Literal["1.0"]
     job_id: str = Field(min_length=1)
-    status: Literal[JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.CANCELLED]
+    status: Literal[
+        JobStatus.SUCCESS,
+        JobStatus.FAILED,
+        JobStatus.CANCELLED,
+        JobStatus.TIMED_OUT,
+    ]
     started_at: datetime
     finished_at: datetime
     duration_ms: int = Field(ge=0)
@@ -160,4 +166,8 @@ class JobResult(StrictContractModel):
             raise ValueError("successful results must not include an error")
         if self.status is JobStatus.FAILED and self.error is None:
             raise ValueError("failed results must include an error")
+        if self.status is JobStatus.TIMED_OUT and (
+            self.error is None or self.error.code != "JOB_TIMED_OUT"
+        ):
+            raise ValueError("timed out results require a JOB_TIMED_OUT error")
         return self

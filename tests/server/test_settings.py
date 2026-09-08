@@ -5,6 +5,18 @@ from hub_server.settings import HubSettings
 from pydantic import ValidationError
 
 
+def test_shared_deployment_token_overrides_transferred_stale_config(monkeypatch) -> None:
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", "fresh-target-token")
+    settings = HubSettings.from_yaml(Path("config/hub.yaml.example"))
+    assert settings.runner.shared_token.get_secret_value() == "fresh-target-token"
+
+
+def test_arm64_runtime_selects_native_platform(monkeypatch) -> None:
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
+    settings = HubSettings.from_yaml(Path("config/hub.yaml.example"))
+    assert settings.platform_arch == "arm64"
+
+
 def test_loads_settings_from_yaml(tmp_path: Path) -> None:
     """A valid YAML document produces typed nested settings."""
     config = tmp_path / "hub.yaml"
@@ -12,7 +24,8 @@ def test_loads_settings_from_yaml(tmp_path: Path) -> None:
         "deployment:\n  mode: offline\n"
         "storage:\n  root: /var/lib/hub\n"
         "database:\n  url: sqlite:////var/lib/hub/db/hub.db\n"
-        "uploads:\n  max_size_bytes: 1024\n",
+        "uploads:\n  max_size_bytes: 1024\n"
+        "runner:\n  shared_token: runner-test-secret\n  poll_interval_seconds: 1\n",
         encoding="utf-8",
     )
 
@@ -30,6 +43,7 @@ def test_rejects_unknown_yaml_settings(tmp_path: Path) -> None:
         "storage:\n  root: /var/lib/hub\n"
         "database:\n  url: sqlite:////var/lib/hub/db/hub.db\n"
         "uploads:\n  max_size_bytes: 1024\n"
+        "runner:\n  shared_token: runner-test-secret\n  poll_interval_seconds: 1\n"
         "unknown: true\n",
         encoding="utf-8",
     )
