@@ -74,6 +74,10 @@ nc_to_shp-1.0.0-linux-amd64-docker.pypkg
 命令、验收、备份和 ARM64 重建流程见
 [双运行时插件构建与部署指南](docs/guides/双运行时插件构建与部署.md)。
 
+如果你现在只有一台 Linux AMD64 服务器，并希望从上传源码开始，逐条完成 Hub 部署、
+NC 插件双运行时注册和真实文件验收，请直接执行
+[Linux AMD64 首次部署与 NC 插件验收清单](docs/guides/Linux-AMD64-首次部署与NC插件验收清单.md)。
+
 ## 本地质量检查
 
 ```bash
