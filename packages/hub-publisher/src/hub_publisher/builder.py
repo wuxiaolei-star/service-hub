@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import platform
 import shutil
@@ -126,7 +125,7 @@ def create_build_manifest(
             "python_version": project.manifest.runtime.python.version,
             "runtime": runtime_data,
             "sdk_version": "1.0.0",
-            "source_sha256": source_digest(project),
+            "source_sha256": project.source_digest(),
             "built_at": datetime.fromtimestamp(source_date_epoch, tz=UTC)
             .isoformat()
             .replace("+00:00", "Z"),
@@ -134,19 +133,6 @@ def create_build_manifest(
     )
     build.assert_matches_plugin(project.manifest)
     return build
-
-
-def source_digest(project: PluginProject) -> str:
-    digest = hashlib.sha256()
-    for path in project.source_files():
-        relative = path.relative_to(project.source_dir).as_posix().encode("utf-8")
-        digest.update(relative)
-        digest.update(b"\0")
-        with path.open("rb") as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(chunk)
-        digest.update(b"\0")
-    return digest.hexdigest()
 
 
 def _build_runtime(
@@ -248,7 +234,7 @@ def _build_docker_runtime(
             "--platform",
             docker_platform,
             "--build-arg",
-            f"SOURCE_SHA256={source_digest(project)}",
+            f"SOURCE_SHA256={project.source_digest()}",
             "--tag",
             image,
             str(context),

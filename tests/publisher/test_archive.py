@@ -15,7 +15,18 @@ from python_hub_contracts import PluginBuildManifest
 from tests.publisher.test_project import _write_project
 
 
-def _build_manifest(runtime_type: str, runtime_sha256: str) -> PluginBuildManifest:
+def _sample_source_sha256() -> str:
+    # The digest basis is the entrypoint package directory (src/sample_plugin),
+    # matching the legacy NC script basis so rebuilds keep their metadata.
+    return hashlib.sha256(b"__init__.py\0\0").hexdigest()
+
+
+def _build_manifest(
+    runtime_type: str,
+    runtime_sha256: str,
+    *,
+    source_sha256: str | None = None,
+) -> PluginBuildManifest:
     runtime = (
         {
             "type": "conda-pack",
@@ -40,7 +51,7 @@ def _build_manifest(runtime_type: str, runtime_sha256: str) -> PluginBuildManife
             "python_version": "3.12",
             "runtime": runtime,
             "sdk_version": "1.0.0",
-            "source_sha256": "0" * 64,
+            "source_sha256": source_sha256 or _sample_source_sha256(),
             "built_at": datetime.fromtimestamp(0, tz=UTC),
         }
     )
@@ -118,4 +129,32 @@ def test_create_plugin_package_rejects_runtime_symlink(
     build = _build_manifest("conda-pack", hashlib.sha256(runtime.read_bytes()).hexdigest())
 
     with pytest.raises(ValueError, match="symbolic link"):
+        create_plugin_package(project, build, runtime, tmp_path / "out", 0)
+
+
+def test_create_plugin_package_rejects_tampered_source_digest(tmp_path: Path) -> None:
+    """Trusting build.json source metadata would make packages unreproducible."""
+    _write_project(tmp_path / "project")
+    project = PluginProject.load(tmp_path / "project")
+    runtime = tmp_path / "env.tar.zst"
+    runtime.write_bytes(b"prepared runtime")
+    build = _build_manifest(
+        "conda-pack",
+        hashlib.sha256(runtime.read_bytes()).hexdigest(),
+        source_sha256="f" * 64,
+    )
+
+    with pytest.raises(ValueError, match="source_sha256"):
+        create_plugin_package(project, build, runtime, tmp_path / "out", 0)
+
+
+def test_create_plugin_package_rejects_tampered_conda_fingerprint(tmp_path: Path) -> None:
+    """A conda fingerprint that does not match the archive would install the wrong runtime."""
+    _write_project(tmp_path / "project")
+    project = PluginProject.load(tmp_path / "project")
+    runtime = tmp_path / "env.tar.zst"
+    runtime.write_bytes(b"prepared runtime")
+    build = _build_manifest("conda-pack", "f" * 64)
+
+    with pytest.raises(ValueError, match="fingerprint"):
         create_plugin_package(project, build, runtime, tmp_path / "out", 0)

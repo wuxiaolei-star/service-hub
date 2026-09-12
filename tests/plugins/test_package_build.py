@@ -88,3 +88,29 @@ def test_package_build_is_reproducible_for_fixed_inputs(tmp_path: Path) -> None:
     )
 
     assert first.read_bytes() == second.read_bytes()
+
+
+def test_nc_wrapper_preserves_legacy_source_digest_basis(tmp_path: Path) -> None:
+    """Changing the NC digest basis would fork metadata for the same legacy package."""
+    runtime = tmp_path / "env.tar.zst"
+    runtime.write_bytes(b"prepared target-platform runtime")
+
+    package = build_package(
+        runtime_type="conda-pack",
+        arch="amd64",
+        output_dir=tmp_path / "out",
+        prepared_runtime=runtime,
+    )
+
+    members = _members(package)
+    build = PluginBuildManifest.model_validate_json(members["build.json"])
+    legacy_root = Path("packages/nc-to-shp-plugin/src/nc_to_shp_plugin")
+    digest = hashlib.sha256()
+    for path in sorted(legacy_root.rglob("*")):
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+            digest.update(path.relative_to(legacy_root).as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+
+    assert build.source_sha256 == digest.hexdigest()

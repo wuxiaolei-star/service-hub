@@ -12,7 +12,7 @@ import tarfile
 from pathlib import Path, PurePosixPath
 
 import zstandard
-from python_hub_contracts import PluginBuildManifest
+from python_hub_contracts import CondaPackRuntime, PluginBuildManifest
 
 from .project import PluginProject
 
@@ -33,6 +33,7 @@ def create_plugin_package(
         raise ValueError("runtime archive must not be a symbolic link")
     runtime_archive = runtime_archive.resolve(strict=True)
     build.assert_matches_plugin(project.manifest)
+    _verify_build_matches_sources(build, project, runtime_archive)
     runtime_path = _runtime_archive_path(build)
     files: dict[str, Path | bytes] = {
         "plugin.yaml": project.manifest_path,
@@ -121,6 +122,28 @@ def _runtime_archive_path(build: PluginBuildManifest) -> str:
     if build.runtime.archive != expected:
         raise ValueError("build runtime archive path is not compatible with the Hub")
     return expected
+
+
+def _verify_build_matches_sources(
+    build: PluginBuildManifest,
+    project: PluginProject,
+    runtime_archive: Path,
+) -> None:
+    """Reject manifests whose digests disagree with the packaged inputs."""
+    actual_source_sha256 = project.source_digest()
+    if build.source_sha256 != actual_source_sha256:
+        raise ValueError(
+            "build.json source_sha256 does not match the plugin sources; "
+            "rebuild the manifest with the current project files"
+        )
+    if (
+        isinstance(build.runtime, CondaPackRuntime)
+        and build.runtime.fingerprint != sha256_file(runtime_archive)
+    ):
+        raise ValueError(
+            "conda runtime fingerprint does not match the runtime archive; "
+            "the prepared runtime belongs to a different build"
+        )
 
 
 def _write_tar(destination: Path, files: dict[str, Path | bytes], epoch: int) -> None:
