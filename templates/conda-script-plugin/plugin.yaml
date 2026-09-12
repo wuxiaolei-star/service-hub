@@ -1,0 +1,48 @@
+spec_version: "1.0"
+
+plugin:
+  id: example_script
+  name: 示例脚本插件
+  version: "1.0.0"
+  description: 将 message 参数写入 result.txt 的最小示例插件
+  author: Python Service Hub
+  category: example
+  tags: [example, script]
+
+sdk:
+  version: "1.0"
+
+runtime:
+  type: process
+  python:
+    version: "3.12"
+
+entrypoint:
+  module: example_plugin.main
+  function: run
+
+parameters:
+  - name: message
+    label: 输出文本
+    type: string
+    required: false
+    default: hello
+
+inputs: []
+
+outputs:
+  - name: result
+    label: 结果文本文件
+    type: file
+    required: true
+
+execution:
+  timeout: 60
+  concurrency: 1
+
+environment_variables:
+  required: []
+
+healthcheck:
+  enabled: true
+  type: import
