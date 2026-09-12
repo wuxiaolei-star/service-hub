@@ -9,14 +9,25 @@ from pathlib import Path
 def validate_host_data_dir(value: str) -> Path:
     """Return a safe POSIX deployment directory supplied by the host."""
     data_dir = Path(value)
-    normalized = data_dir.as_posix()
-    if not normalized.startswith("/"):
+    raw_path = data_dir.as_posix()
+    if not raw_path.startswith("/"):
         raise ValueError("HUB_HOST_DATA_DIR must be an absolute POSIX path")
+    parts: list[str] = []
+    for part in raw_path.split("/"):
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    normalized_path = Path("/" + "/".join(parts))
+    normalized = normalized_path.as_posix()
     if normalized in {"/", "/srv", "/tmp", "/var", "/data"}:
         raise ValueError("HUB_HOST_DATA_DIR is too broad")
-    if len(data_dir.parts) < 3:
+    if len(normalized_path.parts) < 3:
         raise ValueError("HUB_HOST_DATA_DIR must have at least two path components")
-    return data_dir
+    return normalized_path
 
 
 def load_or_create_runner_token(data_root: Path, explicit: str | None) -> str:

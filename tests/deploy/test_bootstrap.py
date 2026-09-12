@@ -26,6 +26,19 @@ def test_validate_host_data_dir_accepts_deployment_path() -> None:
     assert validate_host_data_dir("/srv/service-hub-data").as_posix() == "/srv/service-hub-data"
 
 
+@pytest.mark.parametrize("value", ["/srv/service-hub-data/../../", "/data/child/../.."])
+def test_validate_host_data_dir_rejects_paths_that_normalize_to_unsafe_roots(value: str) -> None:
+    with pytest.raises(ValueError):
+        validate_host_data_dir(value)
+
+
+def test_validate_host_data_dir_normalizes_safe_dot_segments() -> None:
+    assert (
+        validate_host_data_dir("/srv/./service-hub-data/releases/../archive").as_posix()
+        == "/srv/service-hub-data/archive"
+    )
+
+
 def test_generated_token_is_private_and_stable(tmp_path: Path) -> None:
     first = load_or_create_runner_token(tmp_path, None)
     second = load_or_create_runner_token(tmp_path, None)
