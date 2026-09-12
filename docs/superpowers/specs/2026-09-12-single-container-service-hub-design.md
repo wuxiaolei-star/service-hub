@@ -279,8 +279,13 @@ hub-plugin 是发布者侧工具，不在 Hub 服务中在线安装依赖。它�
 Conda 或 Docker，生成运行归档、build.json、摘要和规范命名的 .pypkg。
 
 插件通过 SDK 获得输入、参数、输出、日志、进度和取消状态，读取 job.json 并写
-result.json。简单脚本模板只要求作者实现签名为
-run(context: PluginContext) -> PluginResult 的入口函数。
+result.json。为保持现有 SDK 契约，简单脚本模板要求作者实现签名为
+run(params: dict[str, object], inputs: dict[str, InputFile | list[InputFile]],
+context: PluginContext) -> PluginResult 的入口函数。
+
+conda-pack Build 的安装健康检查必须是通用检查，只验证预构建环境能够导入 hub_runner、
+python_hub_sdk 和 python_hub_contracts。不得继续硬编码 h5py、scipy 或 osgeo 等
+NC→SHP 专用依赖；业务入口及业务依赖在实际 Job 启动时验证，失败时进入 Job FAILED。
 
 ## 10. 管理工具
 
@@ -339,7 +344,8 @@ Log API 保存。
 
 ## 13. 测试与 NC→SHP 验收
 
-单元测试覆盖路径校验、Token、Socket GID、连接重试、健康检查、hubctl 和 hub-plugin。
+单元测试覆盖路径校验、Token、Socket GID、连接重试、通用 conda-pack 健康检查、
+容器健康检查、hubctl 和 hub-plugin。
 容器测试覆盖单服务、三个内部进程、权限、SIGTERM、进程恢复和数据保持。集成测试覆盖
 Build 安装启用、两种 Job、文件、日志、取消、超时和旧数据迁移。
 
