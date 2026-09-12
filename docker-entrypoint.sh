@@ -6,7 +6,7 @@ socket_path=/var/run/docker.sock
 permissions_marker="$data_root/.permissions-single-container-v1"
 
 python -m deploy.service_hub.bootstrap
-. /run/service-hub/runtime.env
+HUB_RUNNER_TOKEN=$(python -m deploy.service_hub.entrypoint read-runtime-token /run/service-hub/runtime.env)
 export HUB_RUNNER_TOKEN
 export HUB_INTERNAL_BASE_URL=http://127.0.0.1:8000/internal/v1
 export HUB_DATA_ROOT="$data_root"
@@ -18,6 +18,12 @@ if [ ! -S "$socket_path" ]; then
 fi
 
 socket_gid=$(stat -c '%g' "$socket_path")
+hub_data_gid=$(getent group hub-data | cut -d: -f3 || true)
+if [ -z "$hub_data_gid" ]; then
+    printf '%s\n' 'service-hub-entrypoint: hub-data group is required' >&2
+    exit 1
+fi
+python -m deploy.service_hub.entrypoint check-socket-gid "$socket_gid" "$hub_data_gid"
 socket_group=$(getent group "$socket_gid" | cut -d: -f1 || true)
 if [ -z "$socket_group" ]; then
     socket_group=docker-socket
