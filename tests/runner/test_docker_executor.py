@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 import zstandard
 from hub_runner.docker_executor import (
     SERVICE_HUB_JOB_LABEL,
@@ -554,19 +555,17 @@ def test_docker_executor_rejects_unsafe_host_data_root(
         )
 
 
-def test_compose_adds_docker_runner_as_only_socket_mount() -> None:
-    compose = Path("compose.yaml").read_text("utf-8")
+def test_unified_service_starts_the_docker_runner_with_one_socket_mount() -> None:
+    """The shared Hub image must supervise the retained Docker Runner entrypoint."""
+    model = yaml.safe_load(Path("compose.yaml").read_text("utf-8"))
+    supervisor = Path("deploy/service_hub/supervisord.conf").read_text("utf-8")
 
-    assert "hub-docker-runner:" in compose
-    hub_section = compose.split("  hub:", maxsplit=1)[1].split("  hub-conda-runner:", maxsplit=1)[0]
-    conda_section = compose.split("  hub-conda-runner:", maxsplit=1)[1].split(
-        "  hub-docker-runner:", maxsplit=1
-    )[0]
-    docker_section = compose.split("  hub-docker-runner:", maxsplit=1)[1]
-    assert "/var/run/docker.sock" not in hub_section
-    assert "/var/run/docker.sock" not in conda_section
-    assert "/var/run/docker.sock:/var/run/docker.sock" in docker_section
-    assert "ports:" not in docker_section
+    service = model["services"]["service-hub"]
+    assert set(model["services"]) == {"service-hub"}
+    assert service["image"] == "python-service-hub:1.0.0-linux-amd64"
+    assert service["volumes"].count("/var/run/docker.sock:/var/run/docker.sock") == 1
+    assert "[program:docker-runner]" in supervisor
+    assert "python -m deploy.runner.docker_runner_service" in supervisor
 
 
 def test_docker_runner_service_maps_claim_to_digest_runtime_job() -> None:

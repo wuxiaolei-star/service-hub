@@ -13,6 +13,7 @@ from pathlib import Path
 
 import hub_runner.conda_executor as conda_executor_module
 import pytest
+import yaml
 import zstandard
 from hub_runner.conda_executor import CommandResult, CondaExecutor, RunnerBuild, RunnerJob
 from python_hub_contracts import JobStatus, ProgressEvent
@@ -458,15 +459,17 @@ def test_job_process_cancellation_terminates_the_entire_process_group(
     assert (heartbeat.stat().st_size if heartbeat.exists() else 0) == size_after_stop
 
 
-def test_compose_adds_conda_runner_without_ports_or_docker_socket() -> None:
-    """The conda runner must not be externally reachable or able to control Docker."""
-    compose = Path("compose.yaml").read_text("utf-8")
+def test_unified_service_starts_the_conda_runner() -> None:
+    """The shared Hub image must supervise the retained conda Runner entrypoint."""
+    model = yaml.safe_load(Path("compose.yaml").read_text("utf-8"))
+    supervisor = Path("deploy/service_hub/supervisord.conf").read_text("utf-8")
 
-    assert "hub-conda-runner:" in compose
-    conda_section = compose.split("hub-conda-runner:", maxsplit=1)[1]
-    conda_section = conda_section.split("\n  hub-docker-runner:", maxsplit=1)[0]
-    assert "ports:" not in conda_section
-    assert "/var/run/docker.sock" not in conda_section
+    service = model["services"]["service-hub"]
+    assert set(model["services"]) == {"service-hub"}
+    assert service["image"] == "python-service-hub:1.0.0-linux-amd64"
+    assert service["volumes"].count("/var/run/docker.sock:/var/run/docker.sock") == 1
+    assert "[program:conda-runner]" in supervisor
+    assert "python -m deploy.runner.conda_runner_service" in supervisor
 
 
 def test_conda_runner_retries_reconciliation_and_registers_shutdown_handler(

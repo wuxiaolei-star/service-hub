@@ -1,47 +1,12 @@
 services:
-  hub:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: python-service-hub:0.1.0-linux-amd64
+  service-hub:
+    image: python-service-hub:1.0.0-linux-amd64
     platform: linux/amd64
     restart: unless-stopped
     environment:
-      HUB_RUNNER_TOKEN: ${HUB_RUNNER_TOKEN:-replace-with-a-random-high-entropy-token}
+      HUB_HOST_DATA_DIR: ${HUB_HOST_DATA_DIR:?HUB_HOST_DATA_DIR must be set}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - ./config/hub.yaml:/app/config/hub.yaml:ro
-      - ${HUB_DATA_DIR:-/srv/python-service-hub/data}:/data
-  hub-conda-runner:
-    build:
-      context: .
-      dockerfile: deploy/runner/Dockerfile.conda-runner
-    image: python-service-hub-conda-runner:0.1.0-linux-amd64
-    platform: linux/amd64
-    restart: unless-stopped
-    depends_on:
-      - hub
-    environment:
-      HUB_INTERNAL_BASE_URL: http://hub:8000/internal/v1
-      HUB_RUNNER_TOKEN: ${HUB_RUNNER_TOKEN:-replace-with-a-random-high-entropy-token}
-      HUB_RUNNER_POLL_INTERVAL_SECONDS: "2"
-    volumes:
-      - ${HUB_DATA_DIR:-/srv/python-service-hub/data}:/data
-  hub-docker-runner:
-    build:
-      context: .
-      dockerfile: deploy/runner/Dockerfile.docker-runner
-    image: python-service-hub-docker-runner:0.1.0-linux-amd64
-    platform: linux/amd64
-    restart: unless-stopped
-    depends_on:
-      - hub
-    environment:
-      HUB_INTERNAL_BASE_URL: http://hub:8000/internal/v1
-      HUB_RUNNER_TOKEN: ${HUB_RUNNER_TOKEN:-replace-with-a-random-high-entropy-token}
-      HUB_RUNNER_POLL_INTERVAL_SECONDS: "2"
-      HUB_DOCKER_HOST_DATA_ROOT: ${HUB_DATA_DIR:-/srv/python-service-hub/data}
-    volumes:
-      - ${HUB_DATA_DIR:-/srv/python-service-hub/data}:/data
+      - ${HUB_HOST_DATA_DIR:?HUB_HOST_DATA_DIR must be set}:/data
       - /var/run/docker.sock:/var/run/docker.sock
