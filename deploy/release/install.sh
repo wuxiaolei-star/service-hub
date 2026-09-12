@@ -9,14 +9,35 @@ fail() {
 }
 
 validate_data_dir() {
-    value="$1"
-    case "${value}" in
-        /*) ;;
-        *) fail "HUB_HOST_DATA_DIR must be an absolute path" ;;
-    esac
-    case "${value}" in
-        /|/srv|/tmp|/var|/data) fail "refusing unsafe HUB_HOST_DATA_DIR: ${value}" ;;
-    esac
+    python3 - "$1" <<'PY'
+from pathlib import PurePosixPath
+import sys
+
+raw_path = sys.argv[1]
+if not raw_path.startswith("/"):
+    print("HUB_HOST_DATA_DIR must be an absolute POSIX path", file=sys.stderr)
+    raise SystemExit(2)
+
+parts: list[str] = []
+for part in raw_path.split("/"):
+    if part in {"", "."}:
+        continue
+    if part == "..":
+        if parts:
+            parts.pop()
+        continue
+    parts.append(part)
+
+normalized_path = PurePosixPath("/" + "/".join(parts))
+normalized = normalized_path.as_posix()
+if normalized in {"/", "/srv", "/tmp", "/var", "/data"}:
+    print(f"refusing unsafe HUB_HOST_DATA_DIR because it is too broad: {normalized}", file=sys.stderr)
+    raise SystemExit(2)
+if len(normalized_path.parts) < 3:
+    print("HUB_HOST_DATA_DIR must have at least two path components", file=sys.stderr)
+    raise SystemExit(2)
+print(normalized)
+PY
 }
 
 read_env_data_dir() {
@@ -45,7 +66,7 @@ if [ -f ".env" ]; then
 else
     data_dir="${HUB_HOST_DATA_DIR:-${DEFAULT_DATA_DIR}}"
 fi
-validate_data_dir "${data_dir}"
+data_dir="$(validate_data_dir "${data_dir}")"
 
 install -d -m 0750 "${data_dir}"
 

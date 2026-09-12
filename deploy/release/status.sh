@@ -32,6 +32,9 @@ try:
     response = connection.getresponse()
     body = response.read().decode("utf-8", errors="replace")
     print(f"hub health http_status={response.status} body={body}")
+except Exception as error:
+    print(f"hub health unavailable: {error}")
+    raise SystemExit(1) from None
 finally:
     try:
         connection.close()
