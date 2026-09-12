@@ -46,5 +46,7 @@ def retry_startup(
         try:
             action()
             return
+        except urllib.error.HTTPError:
+            raise
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             sleep(delay_seconds)

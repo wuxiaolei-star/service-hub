@@ -25,6 +25,39 @@ def test_retry_startup_retries_connection_errors() -> None:
     assert delays == [0.25, 0.25]
 
 
+def test_retry_startup_propagates_http_errors_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected startup reconciliation is a protocol error, not transient Hub latency."""
+    error = HTTPError("http://hub/internal/v1/jobs/reconcile", 400, "bad request", {}, None)
+    delays: list[float] = []
+
+    def reject(_: Any, *, timeout: int) -> None:
+        assert timeout == 30
+        raise error
+
+    monkeypatch.setattr("urllib.request.urlopen", reject)
+
+    def unexpected_sleep(delay: float) -> None:
+        delays.append(delay)
+        raise AssertionError("HTTP errors must not be retried")
+
+    with pytest.raises(HTTPError) as raised:
+        retry_startup(
+            lambda: post_json(
+                "http://hub/internal/v1",
+                "token",
+                "/jobs/reconcile",
+                {"runtime_type": "docker"},
+            ),
+            sleep=unexpected_sleep,
+            delay_seconds=0.25,
+        )
+
+    assert raised.value is error
+    assert delays == []
+
+
 def test_post_json_preserves_http_client_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """Treating a protocol rejection as startup latency would hide invalid runner requests."""
     error = HTTPError("http://hub/internal/v1/jobs/claim", 400, "bad request", {}, None)
