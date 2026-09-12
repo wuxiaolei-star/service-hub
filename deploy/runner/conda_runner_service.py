@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,11 @@ from typing import Any
 from hub_runner.conda_executor import CondaExecutor, RunnerBuild, RunnerJob
 from python_hub_contracts import JobStatus, RunnerEvent
 
+from deploy.runner.service_common import post_json, retry_startup
+
 PostFunc = Callable[[str, str, str, dict[str, Any]], dict[str, Any] | None]
+
+_post = post_json
 
 
 def main() -> int:
@@ -21,7 +24,8 @@ def main() -> int:
     data_root = Path(os.environ.get("HUB_DATA_ROOT", "/data"))
     poll_interval = float(os.environ.get("HUB_RUNNER_POLL_INTERVAL_SECONDS", "2"))
     executor = CondaExecutor(data_root=data_root)
-    _reconcile_interrupted_jobs(base_url, token)
+    signal.signal(signal.SIGTERM, _terminate_cleanly)
+    retry_startup(lambda: _reconcile_interrupted_jobs(base_url, token))
 
     while True:
         operation = _post(base_url, token, "/operations/claim", {"runtime_type": "conda-pack"})
@@ -74,32 +78,6 @@ def main() -> int:
         time.sleep(poll_interval)
 
 
-def _post(
-    base_url: str,
-    token: str,
-    path: str,
-    payload: dict[str, Any],
-) -> dict[str, Any] | None:
-    request = urllib.request.Request(
-        f"{base_url}{path}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Runner-Token": token,
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            if response.status == 204:
-                return None
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        if error.code == 204:
-            return None
-        raise
-
-
 def _reconcile_interrupted_jobs(
     base_url: str,
     token: str,
@@ -107,6 +85,10 @@ def _reconcile_interrupted_jobs(
     post: PostFunc = _post,
 ) -> None:
     post(base_url, token, "/jobs/reconcile", {"runtime_type": "conda-pack"})
+
+
+def _terminate_cleanly(_signum: int, _frame: Any) -> None:
+    raise SystemExit(0)
 
 
 def _build_from_payload(build: dict[str, Any], operation: dict[str, Any]) -> RunnerBuild:

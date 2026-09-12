@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import io
 import os
+import signal
 import stat
+import subprocess
 import sys
 import tarfile
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import hub_runner.conda_executor as conda_executor_module
@@ -15,6 +17,7 @@ import zstandard
 from hub_runner.conda_executor import CommandResult, CondaExecutor, RunnerBuild, RunnerJob
 from python_hub_contracts import JobStatus, ProgressEvent
 
+from deploy.runner import conda_runner_service
 from deploy.runner.conda_runner_service import (
     _cancellation_checker,
     _job_from_payload,
@@ -60,14 +63,14 @@ def test_conda_executor_runs_conda_unpack_then_import_healthcheck(tmp_path: Path
     env_root = tmp_path / "environments" / build.id
     assert result.status == "SUCCESS"
     assert result.environment_path == f"environments/{build.id}"
-    assert fake_runner.calls == [
-        [str(env_root / "bin" / "conda-unpack")],
-        [
-            str(env_root / "bin" / "python"),
-            "-c",
-            "import h5py, scipy; from osgeo import ogr",
-        ],
+    assert fake_runner.calls[0] == [str(env_root / "bin" / "conda-unpack")]
+    assert fake_runner.calls[1] == [
+        str(env_root / "bin" / "python"),
+        "-c",
+        "import hub_runner, python_hub_contracts, python_hub_sdk",
     ]
+    assert "h5py" not in " ".join(fake_runner.calls[1])
+    assert "osgeo" not in " ".join(fake_runner.calls[1])
     if os.name != "nt":
         assert (env_root / "bin" / "conda-unpack").stat().st_mode & stat.S_IXUSR
         assert (env_root / "bin" / "python").stat().st_mode & stat.S_IXUSR
@@ -346,6 +349,57 @@ def test_job_process_observes_cancellation_while_running(tmp_path: Path) -> None
     assert result.returncode is not None
 
 
+def test_job_process_terminates_plugin_group_when_runner_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A runner shutdown must signal its live plugin group before propagating the exit."""
+    class Process:
+        def __init__(self) -> None:
+            self.pid = 1234
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("")
+            self.wait_calls = 0
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise subprocess.TimeoutExpired("plugin", timeout)
+            return 0
+
+        def terminate(self) -> None:
+            raise AssertionError("the process group should receive signals directly")
+
+    process = Process()
+    signals: list[int] = []
+    monkeypatch.setattr(conda_executor_module.os, "name", "posix")
+    monkeypatch.setattr(
+        conda_executor_module.os,
+        "killpg",
+        lambda _, sig: signals.append(sig),
+        raising=False,
+    )
+    monkeypatch.setattr(conda_executor_module.signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(conda_executor_module.subprocess, "Popen", lambda *_, **__: process)
+
+    def shutdown_requested() -> bool:
+        raise SystemExit("runner shutdown")
+
+    with pytest.raises(SystemExit, match="runner shutdown"):
+        conda_executor_module._run_job_process(
+            ["plugin"],
+            cwd=tmp_path,
+            env={"PYTHONUNBUFFERED": "1"},
+            timeout=5,
+            event_callback=lambda event: None,
+            cancellation_requested=shutdown_requested,
+        )
+
+    assert signals == [signal.SIGTERM, 9]
+
+
 def test_job_process_stops_when_live_event_forwarding_fails(tmp_path: Path) -> None:
     """An internal API failure must not orphan plugin code outside worker control."""
     script = (
@@ -413,6 +467,56 @@ def test_compose_adds_conda_runner_without_ports_or_docker_socket() -> None:
     conda_section = conda_section.split("\n  hub-docker-runner:", maxsplit=1)[0]
     assert "ports:" not in conda_section
     assert "/var/run/docker.sock" not in conda_section
+
+
+def test_conda_runner_retries_reconciliation_and_registers_shutdown_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient Hub startup and SIGTERM must not strand this runner's plugin processes."""
+    reconciliations: list[None] = []
+    startup_actions: list[object] = []
+    registered_signals: list[tuple[int, object]] = []
+    monkeypatch.setenv("HUB_INTERNAL_BASE_URL", "http://hub/internal/v1")
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", "test-token")
+    monkeypatch.setenv("HUB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        conda_runner_service,
+        "signal",
+        type(
+            "Signals",
+            (),
+            {
+                "SIGTERM": signal.SIGTERM,
+                "signal": staticmethod(
+                    lambda signum, handler: registered_signals.append((signum, handler))
+                ),
+            },
+        )(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        conda_runner_service,
+        "_reconcile_interrupted_jobs",
+        lambda *_: reconciliations.append(None),
+    )
+
+    def retry(action: Callable[[], None]) -> None:
+        startup_actions.append(action)
+        action()
+
+    monkeypatch.setattr(conda_runner_service, "retry_startup", retry, raising=False)
+    monkeypatch.setattr(
+        conda_runner_service,
+        "_post",
+        lambda *_: (_ for _ in ()).throw(SystemExit("stop polling")),
+    )
+
+    with pytest.raises(SystemExit, match="stop polling"):
+        conda_runner_service.main()
+
+    assert len(startup_actions) == 1
+    assert reconciliations == [None]
+    assert registered_signals == [(signal.SIGTERM, conda_runner_service._terminate_cleanly)]
 
 
 def test_conda_runner_service_maps_claim_paths_relative_to_workspace() -> None:

@@ -140,7 +140,7 @@ class CondaExecutor:
                 [
                     str(python),
                     "-c",
-                    "import h5py, scipy; from osgeo import ogr",
+                    "import hub_runner, python_hub_contracts, python_hub_sdk",
                 ],
                 timeout=build.timeout_seconds,
             )
@@ -331,53 +331,57 @@ def _run_job_process(
     deadline = time.monotonic() + timeout
     termination_reason: Literal["cancelled", "timeout"] | None = None
     control_error: str | None = None
-    while process.poll() is None or open_streams:
-        if process.poll() is None and termination_reason is None:
+    try:
+        while process.poll() is None or open_streams:
+            if process.poll() is None and termination_reason is None:
+                try:
+                    cancel_now = cancellation_requested()
+                except Exception as error:
+                    cancel_now = False
+                    control_error = f"cancellation check failed: {error}"
+                    _terminate_process_group(process)
+                if cancel_now:
+                    termination_reason = "cancelled"
+                    _terminate_process_group(process)
+                elif time.monotonic() >= deadline:
+                    termination_reason = "timeout"
+                    _terminate_process_group(process)
             try:
-                cancel_now = cancellation_requested()
+                source, line = messages.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if line is None:
+                open_streams -= 1
+                continue
+            if source == "stderr":
+                stderr.append(line)
+                continue
+            stdout.append(line)
+            try:
+                event = parse_runner_line(line.rstrip("\r\n"))
+                if event is not None:
+                    event_callback(event)
             except Exception as error:
-                cancel_now = False
-                control_error = f"cancellation check failed: {error}"
+                control_error = f"event forwarding failed: {error}"
                 _terminate_process_group(process)
-            if cancel_now:
-                termination_reason = "cancelled"
-                _terminate_process_group(process)
-            elif time.monotonic() >= deadline:
-                termination_reason = "timeout"
-                _terminate_process_group(process)
-        try:
-            source, line = messages.get(timeout=0.05)
-        except queue.Empty:
-            continue
-        if line is None:
-            open_streams -= 1
-            continue
-        if source == "stderr":
-            stderr.append(line)
-            continue
-        stdout.append(line)
-        try:
-            event = parse_runner_line(line.rstrip("\r\n"))
-            if event is not None:
-                event_callback(event)
-        except Exception as error:
-            control_error = f"event forwarding failed: {error}"
-            _terminate_process_group(process)
 
-    for reader in readers:
-        reader.join(timeout=1)
-    returncode = process.wait()
-    if control_error is not None:
-        stderr.append(control_error)
-        if returncode == 0:
-            returncode = 1
-    return CommandResult(
-        returncode=returncode,
-        stdout="".join(stdout),
-        stderr="".join(stderr),
-        termination_reason=termination_reason,
-        events_forwarded=True,
-    )
+        for reader in readers:
+            reader.join(timeout=1)
+        returncode = process.wait()
+        if control_error is not None:
+            stderr.append(control_error)
+            if returncode == 0:
+                returncode = 1
+        return CommandResult(
+            returncode=returncode,
+            stdout="".join(stdout),
+            stderr="".join(stderr),
+            termination_reason=termination_reason,
+            events_forwarded=True,
+        )
+    finally:
+        if process.poll() is None:
+            _terminate_process_group(process)
 
 
 def _read_process_stream(

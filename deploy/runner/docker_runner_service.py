@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
 import signal
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,7 +17,11 @@ from hub_runner.docker_executor import (
 )
 from python_hub_contracts import JobStatus, RunnerEvent
 
+from deploy.runner.service_common import post_json, retry_startup
+
 PostFunc = Callable[[str, str, str, dict[str, Any]], dict[str, Any] | None]
+
+_post = post_json
 
 
 def main() -> int:
@@ -39,11 +40,13 @@ def main() -> int:
             data_root=data_root,
             docker_host_data_root=docker_host_data_root,
         )
-        _reconcile_interrupted_jobs(
-            base_url,
-            token,
-            client=client,
-            docker_host_data_root=docker_host_data_root,
+        retry_startup(
+            lambda: _reconcile_interrupted_jobs(
+                base_url,
+                token,
+                client=client,
+                docker_host_data_root=docker_host_data_root,
+            )
         )
 
         while True:
@@ -99,32 +102,6 @@ def main() -> int:
             client,
             docker_host_data_root=docker_host_data_root,
         )
-
-
-def _post(
-    base_url: str,
-    token: str,
-    path: str,
-    payload: dict[str, Any],
-) -> dict[str, Any] | None:
-    request = urllib.request.Request(
-        f"{base_url}{path}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Runner-Token": token,
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            if response.status == 204:
-                return None
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        if error.code == 204:
-            return None
-        raise
 
 
 def _reconcile_interrupted_jobs(

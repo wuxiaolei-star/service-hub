@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -412,6 +412,43 @@ def test_runner_posts_job_completion_despite_container_remove_failure(
     assert len(completions) == 1
     assert completions[0]["result"]["status"] == "SUCCESS"
     assert completions[0]["exit_code"] == 0
+
+
+def test_docker_runner_retries_startup_reconciliation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Docker runner must wait for Hub startup before it begins normal polling."""
+    client = FakeDockerClient(digest="1" * 64)
+    reconciliations: list[None] = []
+    startup_actions: list[Callable[[], None]] = []
+    monkeypatch.setitem(sys.modules, "docker", SimpleNamespace(from_env=lambda: client))
+    monkeypatch.setenv("HUB_INTERNAL_BASE_URL", "http://hub/internal/v1")
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", "test-token")
+    monkeypatch.setenv("HUB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("HUB_DOCKER_HOST_DATA_ROOT", "/srv/python-service-hub/data")
+    monkeypatch.setattr(docker_runner_service.signal, "signal", lambda *_: None)
+    monkeypatch.setattr(
+        docker_runner_service,
+        "_reconcile_interrupted_jobs",
+        lambda *_, **__: reconciliations.append(None),
+    )
+
+    def retry(action: Callable[[], None]) -> None:
+        startup_actions.append(action)
+        action()
+
+    monkeypatch.setattr(docker_runner_service, "retry_startup", retry, raising=False)
+    monkeypatch.setattr(
+        docker_runner_service,
+        "_post",
+        lambda *_: (_ for _ in ()).throw(SystemExit("stop polling")),
+    )
+
+    with pytest.raises(SystemExit, match="stop polling"):
+        docker_runner_service.main()
+
+    assert len(startup_actions) == 1
+    assert reconciliations == [None]
 
 
 def test_docker_executor_rejects_cancelled_job_before_start(tmp_path: Path) -> None:
