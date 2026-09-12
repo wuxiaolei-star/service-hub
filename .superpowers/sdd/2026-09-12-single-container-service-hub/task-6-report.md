@@ -88,3 +88,33 @@ HUB_URL=http://127.0.0.1:8000 python tools/hubctl plugin list
 ```
 
 Result: both exited 1 with `WinError 10061` because no Hub was listening on `127.0.0.1:8000` in this Windows worktree. No live Hub smoke pass is claimed.
+
+## Review Fix Round 1
+
+Findings addressed:
+
+- `job download` now treats the real output schema as `{file_id, name, extension}`. It preserves safe extensions such as `result_files.zip`, falls back to `file_id + extension` when `name` is path-unsafe, and still refuses to overwrite planned destinations.
+- Multipart upload now rejects CR, LF, NUL, DEL, and other ASCII control characters in filenames before constructing `Content-Disposition`; regression coverage includes `\r`, `\n`, `\x00`, `\x1f`, and `\x7f`.
+
+RED:
+
+```text
+python -m pytest tests/tools/test_hubctl.py -q
+4 failed, 12 passed
+```
+
+The failures showed downloads planned as `result_files`/`file_2` instead of `result_files.zip`/`file_2.txt`, overwrite detection missing the extension-preserving filename, and multipart filename validation reaching `.stat()` instead of rejecting control characters first.
+
+GREEN:
+
+```text
+python -m pytest tests/tools/test_hubctl.py -q
+20 passed in 0.34s
+```
+
+Additional verification for this round:
+
+```text
+.venv\Scripts\ruff.exe check tools/hubctl tests/tools/test_hubctl.py
+.venv\Scripts\mypy.exe --strict tools/hubctl tests/tools/test_hubctl.py
+```

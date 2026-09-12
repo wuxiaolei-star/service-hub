@@ -172,13 +172,13 @@ def test_job_download_fetches_outputs_and_refuses_to_overwrite(
     hubctl: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Overwriting an existing output would destroy caller data during batch downloads."""
-    existing = tmp_path / "result.zip"
+    existing = tmp_path / "result_files.zip"
     existing.write_bytes(b"old")
     fake_transport = FakeTransport(
         {
             "items": [
-                {"file_id": "file_1", "name": "result.zip"},
-                {"file_id": "file_2", "name": "../unsafe.txt"},
+                {"file_id": "file_1", "name": "result_files", "extension": ".zip"},
+                {"file_id": "file_2", "name": "../unsafe", "extension": ".txt"},
             ]
         }
     )
@@ -196,6 +196,25 @@ def test_job_download_fetches_outputs_and_refuses_to_overwrite(
     assert "refusing to overwrite" in capsys.readouterr().err
 
 
+def test_job_download_preserves_schema_extension(hubctl: ModuleType, tmp_path: Path) -> None:
+    """Ignoring FileResponse.extension would download result_files without its .zip suffix."""
+    fake_transport = FakeTransport(
+        {"items": [{"file_id": "file_1", "name": "result_files", "extension": ".zip"}]}
+    )
+
+    assert (
+        hubctl.main(
+            ["job", "download", "job_123", "--output", str(tmp_path)],
+            transport=fake_transport,
+        )
+        == 0
+    )
+
+    assert fake_transport.downloads == [
+        ("/api/v1/files/file_1/download", tmp_path / "result_files.zip")
+    ]
+
+
 def test_job_download_uses_safe_filenames_and_download_endpoint(
     hubctl: ModuleType, tmp_path: Path
 ) -> None:
@@ -203,8 +222,8 @@ def test_job_download_uses_safe_filenames_and_download_endpoint(
     fake_transport = FakeTransport(
         {
             "items": [
-                {"file_id": "file_1", "name": "result.zip"},
-                {"file_id": "file_2", "name": "../unsafe.txt"},
+                {"file_id": "file_1", "name": "result", "extension": ".zip"},
+                {"file_id": "file_2", "name": "../unsafe", "extension": ".txt"},
             ]
         }
     )
@@ -219,8 +238,23 @@ def test_job_download_uses_safe_filenames_and_download_endpoint(
 
     assert fake_transport.downloads == [
         ("/api/v1/files/file_1/download", tmp_path / "result.zip"),
-        ("/api/v1/files/file_2/download", tmp_path / "file_2"),
+        ("/api/v1/files/file_2/download", tmp_path / "file_2.txt"),
     ]
+
+
+@pytest.mark.parametrize("character", ["\r", "\n", "\x00", "\x1f", "\x7f"])
+def test_http_transport_rejects_control_characters_in_multipart_filename(
+    hubctl: ModuleType, character: str
+) -> None:
+    """Allowing CR/LF/NUL in filename would corrupt the multipart Content-Disposition header."""
+
+    class BadUploadPath:
+        name = f"bad{character}name.pypkg"
+
+    transport = hubctl.HttpTransport("http://127.0.0.1:8000")
+
+    with pytest.raises(ValueError, match="control characters"):
+        transport.upload("/api/v1/plugins/install", BadUploadPath())
 
 
 def test_http_transport_multipart_streams_file_with_content_length(

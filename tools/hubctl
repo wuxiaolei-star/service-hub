@@ -58,6 +58,7 @@ class HttpTransport:
     def upload(self, path: str, file_path: Path) -> object:
         boundary = f"hubctl-{uuid.uuid4()}"
         file_name = file_path.name or "upload.bin"
+        _reject_control_characters(file_name)
         disposition = (
             'Content-Disposition: form-data; name="file"; '
             f'filename="{_quote_header(file_name)}"\r\n'
@@ -337,14 +338,44 @@ def _plan_downloads(items: list[object], output_dir: Path) -> list[tuple[str, Pa
         file_id = item.get("file_id")
         if not isinstance(file_id, str) or not file_id:
             raise ValueError("job outputs response is missing file_id")
-        name = item.get("name")
-        file_name = name if isinstance(name, str) and Path(name).name == name else file_id
+        file_name = _download_filename(item, file_id)
         destination = output_dir / file_name
         if destination in seen:
             raise ValueError(f"duplicate output filename: {file_name}")
         seen.add(destination)
         planned.append((file_id, destination))
     return planned
+
+
+def _download_filename(item: dict[object, object], file_id: str) -> str:
+    extension = _safe_extension(item.get("extension"))
+    name = item.get("name")
+    if isinstance(name, str) and _is_safe_filename(name):
+        return name if not extension or name.endswith(extension) else f"{name}{extension}"
+    return f"{file_id}{extension}"
+
+
+def _safe_extension(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        return ""
+    if not value.startswith(".") or value == ".":
+        return ""
+    if not _is_safe_filename(value):
+        return ""
+    return value
+
+
+def _is_safe_filename(value: str) -> bool:
+    return Path(value).name == value and not _has_control_characters(value)
+
+
+def _has_control_characters(value: str) -> bool:
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+
+
+def _reject_control_characters(value: str) -> None:
+    if _has_control_characters(value):
+        raise ValueError("filename contains control characters")
 
 
 def _quote_header(value: str) -> str:
