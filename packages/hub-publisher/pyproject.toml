@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling>=1.25,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "python-hub-publisher"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "python-hub-contracts==0.1.0",
+  "zstandard>=0.23,<1",
+]
+
+[project.scripts]
+hub-plugin = "hub_publisher.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hub_publisher"]
