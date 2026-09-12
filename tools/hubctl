@@ -1,0 +1,366 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import http.client
+import json
+import os
+import sys
+import uuid
+from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import Protocol, cast
+from urllib.parse import quote, urlencode, urlparse
+
+_API_PREFIX = "/api/v1"
+_DEFAULT_HUB_URL = "http://127.0.0.1:8000"
+_UPLOAD_CHUNK_SIZE = 8192
+
+
+class Transport(Protocol):
+    def request_json(self, method: str, path: str, body: object | None) -> object: ...
+
+    def upload(self, path: str, file_path: Path) -> object: ...
+
+    def download(self, path: str, destination: Path) -> None: ...
+
+
+class HubApiError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+
+
+class HttpTransport:
+    def __init__(self, base_url: str, timeout: float = 60.0) -> None:
+        parsed = urlparse(base_url)
+        scheme = parsed.scheme or "http"
+        if scheme not in {"http", "https"}:
+            raise ValueError("HUB_URL must use http or https")
+        if not parsed.hostname:
+            raise ValueError("HUB_URL must include a host")
+        self._scheme = scheme
+        self._host = parsed.hostname
+        self._port = parsed.port or (443 if scheme == "https" else 80)
+        self._timeout = timeout
+        self._base_path = parsed.path.rstrip("/")
+
+    def request_json(self, method: str, path: str, body: object | None) -> object:
+        encoded = None if body is None else json.dumps(body).encode("utf-8")
+        headers = {"Accept": "application/json"}
+        if encoded is not None:
+            headers["Content-Type"] = "application/json"
+            headers["Content-Length"] = str(len(encoded))
+        response = self._request(method, path, body=encoded, headers=headers)
+        return self._read_json_response(response)
+
+    def upload(self, path: str, file_path: Path) -> object:
+        boundary = f"hubctl-{uuid.uuid4()}"
+        file_name = file_path.name or "upload.bin"
+        disposition = (
+            'Content-Disposition: form-data; name="file"; '
+            f'filename="{_quote_header(file_name)}"\r\n'
+        )
+        prefix = (
+            f"--{boundary}\r\n"
+            f"{disposition}"
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+        suffix = f"\r\n--{boundary}--\r\n".encode()
+        content_length = len(prefix) + file_path.stat().st_size + len(suffix)
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(content_length),
+        }
+        connection = self._connection()
+        try:
+            connection.putrequest("POST", self._full_path(path))
+            for name, value in headers.items():
+                connection.putheader(name, value)
+            connection.endheaders()
+            connection.send(prefix)
+            with file_path.open("rb") as stream:
+                while chunk := stream.read(_UPLOAD_CHUNK_SIZE):
+                    connection.send(chunk)
+            connection.send(suffix)
+            return self._read_json_response(connection.getresponse())
+        finally:
+            connection.close()
+
+    def download(self, path: str, destination: Path) -> None:
+        response = self._request("GET", path, body=None, headers={})
+        try:
+            if response.status < 200 or response.status >= 300:
+                self._raise_error(response)
+            with destination.open("xb") as output:
+                while chunk := response.read(_UPLOAD_CHUNK_SIZE):
+                    output.write(chunk)
+        finally:
+            connection = getattr(response, "_hubctl_connection", None)
+            if connection is not None:
+                connection.close()
+
+    def _request(
+        self, method: str, path: str, *, body: bytes | None, headers: dict[str, str]
+    ) -> http.client.HTTPResponse:
+        connection = self._connection()
+        try:
+            connection.request(method, self._full_path(path), body=body, headers=headers)
+            response = connection.getresponse()
+            response._hubctl_connection = connection  # type: ignore[attr-defined]
+            return response
+        except Exception:
+            connection.close()
+            raise
+
+    def _connection(self) -> http.client.HTTPConnection:
+        connection_class = (
+            http.client.HTTPSConnection if self._scheme == "https" else http.client.HTTPConnection
+        )
+        return connection_class(self._host, self._port, timeout=self._timeout)
+
+    def _full_path(self, path: str) -> str:
+        return f"{self._base_path}{path}" if self._base_path else path
+
+    def _read_json_response(self, response: http.client.HTTPResponse) -> object:
+        try:
+            body = response.read()
+            if response.status < 200 or response.status >= 300:
+                self._raise_error_from_body(response, body)
+            if not body:
+                return {}
+            return json.loads(body.decode("utf-8"))
+        finally:
+            connection = getattr(response, "_hubctl_connection", None)
+            if connection is not None:
+                connection.close()
+
+    def _raise_error(self, response: http.client.HTTPResponse) -> None:
+        body = response.read()
+        self._raise_error_from_body(response, body)
+
+    def _raise_error_from_body(self, response: http.client.HTTPResponse, body: bytes) -> None:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise HubApiError(f"HTTP_{response.status}", response.reason) from None
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict):
+                code = str(error.get("code") or f"HTTP_{response.status}")
+                message = str(error.get("message") or response.reason)
+                raise HubApiError(code, message)
+        raise HubApiError(f"HTTP_{response.status}", response.reason)
+
+
+def main(argv: Sequence[str] | None = None, transport: Transport | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    client = transport or HttpTransport(os.environ.get("HUB_URL", _DEFAULT_HUB_URL))
+    try:
+        result = _dispatch(args, client)
+    except (HubApiError, ValueError, OSError, json.JSONDecodeError) as error:
+        _print_error(error)
+        return 1
+    if result is not None:
+        _print_json(result)
+    return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="hubctl", description="Service Hub command client")
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    health = subcommands.add_parser("health", help="check Hub health")
+    health.set_defaults(handler=_cmd_health)
+
+    plugin = subcommands.add_parser("plugin", help="manage plugins")
+    plugin_subcommands = plugin.add_subparsers(dest="plugin_command", required=True)
+    plugin_list = plugin_subcommands.add_parser("list", help="list installed plugins")
+    plugin_list.set_defaults(handler=_cmd_plugin_list)
+    plugin_install = plugin_subcommands.add_parser("install", help="install a .pypkg package")
+    plugin_install.add_argument("package", type=Path)
+    plugin_install.set_defaults(handler=_cmd_plugin_install)
+    plugin_enable = plugin_subcommands.add_parser("enable", help="enable a plugin build")
+    plugin_enable.add_argument("build_id")
+    plugin_enable.set_defaults(handler=_cmd_plugin_enable)
+
+    file_parser = subcommands.add_parser("file", help="manage files")
+    file_subcommands = file_parser.add_subparsers(dest="file_command", required=True)
+    file_upload = file_subcommands.add_parser("upload", help="upload an input file")
+    file_upload.add_argument("file", type=Path)
+    file_upload.set_defaults(handler=_cmd_file_upload)
+
+    job = subcommands.add_parser("job", help="manage jobs")
+    job_subcommands = job.add_subparsers(dest="job_command", required=True)
+    job_run = job_subcommands.add_parser("run", help="create a job")
+    job_run.add_argument("plugin_id")
+    job_run.add_argument("--version", required=True)
+    job_run.add_argument("--runtime", dest="runtime_type", choices=["conda-pack", "docker"])
+    job_run.add_argument("--input", dest="inputs", action="append", default=[])
+    job_run.add_argument("--params", type=Path)
+    job_run.set_defaults(handler=_cmd_job_run)
+
+    job_status = job_subcommands.add_parser("status", help="show job status")
+    job_status.add_argument("job_id")
+    job_status.set_defaults(handler=_cmd_job_status)
+
+    job_logs = job_subcommands.add_parser("logs", help="show job logs")
+    job_logs.add_argument("job_id")
+    job_logs.add_argument("--cursor", type=int)
+    job_logs.add_argument("--limit", type=int)
+    job_logs.set_defaults(handler=_cmd_job_logs)
+
+    job_cancel = job_subcommands.add_parser("cancel", help="request job cancellation")
+    job_cancel.add_argument("job_id")
+    job_cancel.set_defaults(handler=_cmd_job_cancel)
+
+    job_download = job_subcommands.add_parser("download", help="download job outputs")
+    job_download.add_argument("job_id")
+    job_download.add_argument("--output", type=Path, required=True)
+    job_download.set_defaults(handler=_cmd_job_download)
+
+    return parser
+
+
+def _dispatch(args: argparse.Namespace, transport: Transport) -> object | None:
+    handler = cast(Callable[[argparse.Namespace, Transport], object], args.handler)
+    return handler(args, transport)
+
+
+def _cmd_health(_args: argparse.Namespace, transport: Transport) -> object:
+    return transport.request_json("GET", f"{_API_PREFIX}/system/health", None)
+
+
+def _cmd_plugin_list(_args: argparse.Namespace, transport: Transport) -> object:
+    return transport.request_json("GET", f"{_API_PREFIX}/plugins", None)
+
+
+def _cmd_plugin_install(args: argparse.Namespace, transport: Transport) -> object:
+    return transport.upload(f"{_API_PREFIX}/plugins/install", args.package)
+
+
+def _cmd_plugin_enable(args: argparse.Namespace, transport: Transport) -> object:
+    build_id = quote(args.build_id, safe="")
+    return transport.request_json("POST", f"{_API_PREFIX}/plugin-builds/{build_id}/enable", None)
+
+
+def _cmd_file_upload(args: argparse.Namespace, transport: Transport) -> object:
+    return transport.upload(f"{_API_PREFIX}/files", args.file)
+
+
+def _cmd_job_run(args: argparse.Namespace, transport: Transport) -> object:
+    body: dict[str, object] = {
+        "plugin_id": args.plugin_id,
+        "version": args.version,
+        "inputs": _parse_inputs(args.inputs),
+        "params": _load_params(args.params),
+    }
+    if args.runtime_type is not None:
+        body["runtime_type"] = args.runtime_type
+    return transport.request_json("POST", f"{_API_PREFIX}/jobs", body)
+
+
+def _cmd_job_status(args: argparse.Namespace, transport: Transport) -> object:
+    job_id = quote(args.job_id, safe="")
+    return transport.request_json("GET", f"{_API_PREFIX}/jobs/{job_id}", None)
+
+
+def _cmd_job_logs(args: argparse.Namespace, transport: Transport) -> object:
+    job_id = quote(args.job_id, safe="")
+    query: dict[str, int] = {}
+    if args.cursor is not None:
+        query["cursor"] = args.cursor
+    if args.limit is not None:
+        query["limit"] = args.limit
+    suffix = f"?{urlencode(query)}" if query else ""
+    return transport.request_json("GET", f"{_API_PREFIX}/jobs/{job_id}/logs{suffix}", None)
+
+
+def _cmd_job_cancel(args: argparse.Namespace, transport: Transport) -> object:
+    job_id = quote(args.job_id, safe="")
+    return transport.request_json("POST", f"{_API_PREFIX}/jobs/{job_id}/cancel", None)
+
+
+def _cmd_job_download(args: argparse.Namespace, transport: Transport) -> object:
+    job_id = quote(args.job_id, safe="")
+    output_dir = args.output
+    output_dir.mkdir(parents=True, exist_ok=True)
+    payload = transport.request_json("GET", f"{_API_PREFIX}/jobs/{job_id}/outputs", None)
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        raise ValueError("job outputs response is invalid")
+    planned = _plan_downloads(payload["items"], output_dir)
+    for _file_id, destination in planned:
+        if destination.exists():
+            raise ValueError(f"refusing to overwrite existing file: {destination}")
+    for file_id, destination in planned:
+        transport.download(f"{_API_PREFIX}/files/{quote(file_id, safe='')}/download", destination)
+    return {"downloaded": [str(destination) for _file_id, destination in planned]}
+
+
+def _parse_inputs(values: Sequence[str]) -> dict[str, object]:
+    inputs: dict[str, object] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError("--input must use NAME=FILE_ID")
+        name, file_id = value.split("=", 1)
+        if not name or not file_id:
+            raise ValueError("--input must use NAME=FILE_ID")
+        current = inputs.get(name)
+        if current is None:
+            inputs[name] = file_id
+        elif isinstance(current, list):
+            current.append(file_id)
+        else:
+            inputs[name] = [current, file_id]
+    return inputs
+
+
+def _load_params(path: Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+    with path.open("r", encoding="utf-8") as stream:
+        payload = json.load(stream)
+    if not isinstance(payload, dict):
+        raise ValueError("--params must contain a JSON object")
+    return payload
+
+
+def _plan_downloads(items: list[object], output_dir: Path) -> list[tuple[str, Path]]:
+    planned: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("job outputs response is invalid")
+        file_id = item.get("file_id")
+        if not isinstance(file_id, str) or not file_id:
+            raise ValueError("job outputs response is missing file_id")
+        name = item.get("name")
+        file_name = name if isinstance(name, str) and Path(name).name == name else file_id
+        destination = output_dir / file_name
+        if destination in seen:
+            raise ValueError(f"duplicate output filename: {file_name}")
+        seen.add(destination)
+        planned.append((file_id, destination))
+    return planned
+
+
+def _quote_header(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _print_json(value: object) -> None:
+    print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _print_error(error: Exception) -> None:
+    if isinstance(error, HubApiError):
+        print(f"{error.code}: {error.message}", file=sys.stderr)
+    else:
+        print(str(error), file=sys.stderr)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
