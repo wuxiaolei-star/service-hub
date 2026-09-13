@@ -16,6 +16,7 @@ from hub_server.dependencies_auth import (
 )
 from hub_server.errors import HubError
 from hub_server.models import UserRecord
+from hub_server.services.audit import record as audit
 from hub_server.services.auth import (
     AuthService,
     hash_password,
@@ -75,6 +76,16 @@ def login(
         or not user.is_active
         or not verify_password(body.password, user.password_hash)
     ):
+        audit(
+            session,
+            actor_type="anonymous" if user is None else "user",
+            actor_id=user.id if user else None,
+            actor_name=body.username,
+            action="auth.login_failed",
+            ip=_client_ip(request),
+            result="denied",
+        )
+        session.commit()
         raise HubError(
             code="INVALID_CREDENTIALS",
             message="用户名或口令错误",
@@ -84,6 +95,14 @@ def login(
     service = AuthService(session, session_ttl_hours=settings.auth.session_ttl_hours)
     _record, token = service.create_session(
         user.id, ip=_client_ip(request), user_agent=request.headers.get("user-agent")
+    )
+    audit(
+        session,
+        actor_type="user",
+        actor_id=user.id,
+        actor_name=user.username,
+        action="auth.login",
+        ip=_client_ip(request),
     )
     session.commit()
     _set_session_cookie(response, token, settings, request.url.scheme == "https")
@@ -114,10 +133,17 @@ def logout(
     session: Annotated[Session, Depends(get_session)],
 ) -> Response:
     """Revoke the presented session token and clear the cookie."""
-    del actor
     token = _current_token(request)
     if token is not None and not token.startswith("hub_"):
         AuthService(session).revoke_session(sha256_hex(token))
+        audit(
+            session,
+            actor_type="user",
+            actor_id=actor.id,
+            actor_name=actor.name,
+            action="auth.logout",
+            ip=_client_ip(request),
+        )
         session.commit()
     response.delete_cookie(SESSION_COOKIE_NAME)
     return Response(status_code=204)
@@ -164,5 +190,15 @@ def change_password(
         )
     user.password_hash = hash_password(body.new_password)
     user.must_change_password = False
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="auth.change_password",
+        resource_type="user",
+        resource_id=str(actor.id),
+        ip=None,
+    )
     session.commit()
     return {"username": user.username, "must_change_password": False}

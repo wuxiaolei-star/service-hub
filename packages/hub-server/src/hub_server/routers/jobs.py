@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from python_hub_contracts import JobStatus, RuntimeType
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hub_server.dependencies import get_session, get_settings, get_storage
-from hub_server.dependencies_auth import require_role
+from hub_server.dependencies_auth import Actor, actor_ip, get_actor, require_role
 from hub_server.models import FileRecord, Job
 from hub_server.routers.files import _file_response
 from hub_server.schemas import (
@@ -23,6 +23,7 @@ from hub_server.schemas import (
     JobOutputsResponse,
     JobResponse,
 )
+from hub_server.services.audit import record as audit
 from hub_server.services.jobs import JobService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
@@ -39,6 +40,8 @@ router = APIRouter(
     dependencies=[Depends(require_role("operator"))],
 )
 def create_job(
+    actor: Annotated[Actor, Depends(get_actor)],
+    http_request: Request,
     request: JobCreateRequest,
     session: Annotated[Session, Depends(get_session)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
@@ -52,6 +55,17 @@ def create_job(
         inputs=request.inputs,
         params=request.params,
     )
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="job.create",
+        resource_type="job",
+        resource_id=job.job_key,
+        ip=actor_ip(http_request),
+    )
+    session.commit()
     return _job_response(job)
 
 
@@ -85,6 +99,8 @@ def get_job(
     dependencies=[Depends(require_role("operator"))],
 )
 def cancel_job(
+    actor: Annotated[Actor, Depends(get_actor)],
+    http_request: Request,
     job_key: str,
     session: Annotated[Session, Depends(get_session)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
@@ -92,6 +108,16 @@ def cancel_job(
 ) -> JobCancelResponse:
     """Request idempotent cancellation; the runner owns terminal completion."""
     job = JobService(session, storage, settings).cancel(job_key)
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="job.cancel",
+        resource_type="job",
+        resource_id=job.job_key,
+        ip=actor_ip(http_request),
+    )
     return JobCancelResponse(
         job_id=job.job_key,
         status=JobStatus(job.status),

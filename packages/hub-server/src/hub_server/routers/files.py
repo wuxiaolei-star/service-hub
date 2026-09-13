@@ -11,10 +11,11 @@ from sqlalchemy.orm import Session
 from starlette.responses import FileResponse as StreamingFileResponse
 
 from hub_server.dependencies import get_session, get_settings, get_storage
-from hub_server.dependencies_auth import require_role
+from hub_server.dependencies_auth import Actor, actor_ip, get_actor, require_role
 from hub_server.errors import HubError
 from hub_server.models import FileRecord
 from hub_server.schemas import FileListResponse, FileResponse
+from hub_server.services.audit import record as audit
 from hub_server.services.files import FileService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage, StreamingUpload
@@ -60,6 +61,7 @@ def _file_service(session: Session, storage: LocalStorage, settings: HubSettings
     dependencies=[Depends(require_role("operator"))],
 )
 async def upload_file(
+    actor: Annotated[Actor, Depends(get_actor)],
     request: Request,
     session: Annotated[Session, Depends(get_session)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
@@ -70,6 +72,17 @@ async def upload_file(
     record = await _stream_multipart_file(
         request, service, storage, settings.uploads.max_size_bytes
     )
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="file.upload",
+        resource_type="file",
+        resource_id=record.file_key,
+        ip=actor_ip(request),
+    )
+    session.commit()
     return _file_response(record)
 
 
@@ -192,6 +205,8 @@ def _validation_error() -> HubError:
     dependencies=[Depends(require_role("operator"))],
 )
 def download_file(
+    actor: Annotated[Actor, Depends(get_actor)],
+    request: Request,
     file_key: str,
     session: Annotated[Session, Depends(get_session)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
@@ -199,6 +214,16 @@ def download_file(
 ) -> StreamingFileResponse:
     """Download the available payload with a safe attachment filename."""
     record, payload_path = _file_service(session, storage, settings).open_available(file_key)
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="file.download",
+        resource_type="file",
+        resource_id=record.file_key,
+        ip=actor_ip(request),
+    )
     return StreamingFileResponse(
         path=payload_path,
         media_type=record.mime_type or "application/octet-stream",

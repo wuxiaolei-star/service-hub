@@ -79,6 +79,20 @@ def resolve_actor(
     )
 
 
+def actor_ip(request: Request) -> str | None:
+    """Best-effort client address for audit rows."""
+    return request.client.host if request.client is not None else None
+
+
+def get_actor(
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
+) -> Actor:
+    """Resolve the request actor without an additional role floor."""
+    return resolve_actor(request, session, settings)
+
+
 def require_role(minimum: str) -> Callable[..., Actor]:
     """Build a dependency that requires at least one role from the matrix."""
     minimum_rank = ROLE_ORDER[minimum]

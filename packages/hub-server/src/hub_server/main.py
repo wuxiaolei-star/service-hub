@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from alembic import command
 from hub_server.db import create_engine_and_session_factory
 from hub_server.errors import HubError
+from hub_server.routers.audit import router as audit_router
 from hub_server.routers.auth import router as auth_router
 from hub_server.routers.files import router as files_router
 from hub_server.routers.internal_runner import router as internal_runner_router
@@ -74,6 +75,7 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(api_keys_router, prefix="/api/v1")
+    app.include_router(audit_router, prefix="/api/v1")
     app.include_router(files_router, prefix="/api/v1")
     app.include_router(plugins_router, prefix="/api/v1")
     app.include_router(jobs_router, prefix="/api/v1")

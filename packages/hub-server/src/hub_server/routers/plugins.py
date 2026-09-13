@@ -5,13 +5,13 @@ from __future__ import annotations
 import hashlib
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Request, UploadFile, status
 from python_hub_contracts import RuntimeType
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from hub_server.dependencies import get_session, get_settings, get_storage
-from hub_server.dependencies_auth import require_role
+from hub_server.dependencies_auth import Actor, actor_ip, get_actor, require_role
 from hub_server.errors import HubError
 from hub_server.models import Job, Plugin, PluginBuild, PluginVersion
 from hub_server.schemas import (
@@ -23,6 +23,7 @@ from hub_server.schemas import (
     PluginVersionDetail,
 )
 from hub_server.services.archives import PluginArchiveService
+from hub_server.services.audit import record as audit
 from hub_server.services.plugins import PluginService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
@@ -37,6 +38,8 @@ router = APIRouter(tags=["plugins"], dependencies=[Depends(require_role("viewer"
     dependencies=[Depends(require_role("publisher"))],
 )
 async def install_plugin(
+    actor: Annotated[Actor, Depends(get_actor)],
+    request: Request,
     package: Annotated[UploadFile, File(alias="file")],
     session: Annotated[Session, Depends(get_session)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
@@ -47,6 +50,17 @@ async def install_plugin(
     verified = PluginArchiveService(settings.storage.root).verify_and_install(
         package.file,
         package_sha256,
+    )
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="plugin.install",
+        resource_type="plugin_build",
+        resource_id=verified.build.build_id,
+        detail={"package_sha256": package_sha256},
+        ip=actor_ip(request),
     )
     build = PluginService(
         session,
@@ -137,6 +151,8 @@ def get_build(
     dependencies=[Depends(require_role("publisher"))],
 )
 def enable_build(
+    actor: Annotated[Actor, Depends(get_actor)],
+    request: Request,
     build_key: str,
     session: Annotated[Session, Depends(get_session)],
 ) -> PluginBuildResponse:
@@ -149,6 +165,16 @@ def enable_build(
             status_code=409,
         )
     build.status = "ENABLED"
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="plugin_build.enable",
+        resource_type="plugin_build",
+        resource_id=build.build_key,
+        ip=actor_ip(request),
+    )
     session.commit()
     session.refresh(build)
     return _build_response(build)
@@ -160,6 +186,8 @@ def enable_build(
     dependencies=[Depends(require_role("publisher"))],
 )
 def disable_build(
+    actor: Annotated[Actor, Depends(get_actor)],
+    request: Request,
     build_key: str,
     session: Annotated[Session, Depends(get_session)],
 ) -> PluginBuildResponse:
@@ -179,6 +207,16 @@ def disable_build(
         )
     if build.status == "ENABLED":
         build.status = "READY"
+        audit(
+            session,
+            actor_type=actor.kind,
+            actor_id=actor.id,
+            actor_name=actor.name,
+            action="plugin_build.disable",
+            resource_type="plugin_build",
+            resource_id=build.build_key,
+            ip=actor_ip(request),
+        )
         session.commit()
         session.refresh(build)
     return _build_response(build)

@@ -13,6 +13,7 @@ from hub_server.dependencies import get_session
 from hub_server.dependencies_auth import require_role
 from hub_server.errors import HubError
 from hub_server.models import ApiKeyRecord, UserRecord
+from hub_server.services.audit import record as audit
 from hub_server.services.auth import AuthService, hash_password
 
 router = APIRouter(
@@ -74,6 +75,17 @@ def create_user(
         username=body.username, password_hash=hash_password(body.password), role=body.role
     )
     session.add(user)
+    session.flush()
+    audit(
+        session,
+        actor_type="user",
+        actor_id=None,
+        actor_name="admin",
+        action="user.create",
+        resource_type="user",
+        resource_id=str(user.id),
+        detail={"username": user.username, "role": user.role},
+    )
     session.commit()
     return _user_response(user)
 
@@ -84,6 +96,15 @@ def disable_user(
 ) -> dict[str, object]:
     user = _get_user(session, user_id)
     user.is_active = False
+    audit(
+        session,
+        actor_type="user",
+        actor_id=None,
+        actor_name="admin",
+        action="user.disable",
+        resource_type="user",
+        resource_id=str(user.id),
+    )
     session.commit()
     return _user_response(user)
 
@@ -97,6 +118,15 @@ def reset_password(
     password = secrets.token_urlsafe(18)
     user.password_hash = hash_password(password)
     user.must_change_password = True
+    audit(
+        session,
+        actor_type="user",
+        actor_id=None,
+        actor_name="admin",
+        action="user.reset_password",
+        resource_type="user",
+        resource_id=str(user.id),
+    )
     session.commit()
     return {"username": user.username, "password": password, "must_change_password": True}
 
@@ -132,6 +162,16 @@ def create_api_key(
 ) -> dict[str, object]:
     service = AuthService(session)
     record, plaintext = service.create_api_key(name=body.name, role=body.role)
+    audit(
+        session,
+        actor_type="user",
+        actor_id=None,
+        actor_name="admin",
+        action="api_key.create",
+        resource_type="api_key",
+        resource_id=str(record.id),
+        detail={"name": record.name, "role": record.role},
+    )
     session.commit()
     return {
         "id": record.id,
@@ -151,5 +191,14 @@ def revoke_api_key(
     if record is None:
         raise HubError(code="API_KEY_NOT_FOUND", message="API Key 不存在", status_code=404)
     service.revoke_api_key(key_id)
+    audit(
+        session,
+        actor_type="user",
+        actor_id=None,
+        actor_name="admin",
+        action="api_key.revoke",
+        resource_type="api_key",
+        resource_id=str(record.id),
+    )
     session.commit()
     return {"id": record.id, "name": record.name, "revoked": True}
