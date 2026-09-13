@@ -10,3 +10,13 @@ services:
     volumes:
       - ${HUB_HOST_DATA_DIR:?HUB_HOST_DATA_DIR must be set}:/data
       - /var/run/docker.sock:/var/run/docker.sock
+
+  service-hub-web:
+    image: python-service-hub-web:1.0.0-linux-amd64
+    platform: linux/amd64
+    restart: unless-stopped
+    depends_on:
+      service-hub:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"

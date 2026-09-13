@@ -59,7 +59,7 @@ def _wait_for_health(url: str) -> httpx.Response:
 
 
 def _write_smoke_compose(
-    path: Path, repository_root: Path, data_directory: Path, port: int
+    path: Path, repository_root: Path, data_directory: Path, port: int, web_port: int
 ) -> None:
     """Write a standalone deployment that never merges with production port mappings."""
     host_data_directory = data_directory.resolve()
@@ -77,7 +77,18 @@ def _write_smoke_compose(
         f"      - {json.dumps(f'127.0.0.1:{port}:8000')}\n"
         "    volumes:\n"
         f"      - {json.dumps(f'{host_data_directory}:/data')}\n"
-        "      - /var/run/docker.sock:/var/run/docker.sock\n",
+        "      - /var/run/docker.sock:/var/run/docker.sock\n"
+        "  service-hub-web:\n"
+        "    build:\n"
+        f"      context: {json.dumps(str(repository_root / 'web'))}\n"
+        "      dockerfile: Dockerfile\n"
+        "    image: python-service-hub-web:1.0.0-linux-amd64\n"
+        "    platform: linux/amd64\n"
+        "    depends_on:\n"
+        "      service-hub:\n"
+        "        condition: service_healthy\n"
+        "    ports:\n"
+        f"      - {json.dumps(f'127.0.0.1:{web_port}:8080')}\n",
         encoding="utf-8",
     )
 
@@ -123,10 +134,10 @@ def test_compose_command_can_use_a_standalone_smoke_file() -> None:
 
 
 def test_production_compose_has_one_long_running_service() -> None:
-    """Production Compose deploys the unified image through one service only."""
+    """Production Compose deploys the backend and the Web console pair."""
     model = yaml.safe_load(Path("compose.yaml").read_text("utf-8"))
 
-    assert set(model["services"]) == {"service-hub"}
+    assert set(model["services"]) == {"service-hub", "service-hub-web"}
     service = model["services"]["service-hub"]
     required_data_directory = "${HUB_HOST_DATA_DIR:?HUB_HOST_DATA_DIR must be set}"
     assert service["image"] == "python-service-hub:1.0.0-linux-amd64"
@@ -153,14 +164,14 @@ def test_service_hub_and_docker_plugin_share_a_fixed_non_root_data_uid() -> None
 
 
 def test_disposable_smoke_compose_uses_the_single_service_topology(tmp_path: Path) -> None:
-    """The release smoke stack mirrors the one-service production topology."""
+    """The release smoke stack mirrors the production backend/web topology."""
     repository_root = Path("/workspace/python-service-hub")
     compose_file = tmp_path / "compose.smoke.yaml"
 
-    _write_smoke_compose(compose_file, repository_root, tmp_path / "data", 18080)
+    _write_smoke_compose(compose_file, repository_root, tmp_path / "data", 18080, 18081)
 
     model = yaml.safe_load(compose_file.read_text("utf-8"))
-    assert set(model["services"]) == {"service-hub"}
+    assert set(model["services"]) == {"service-hub", "service-hub-web"}
     service = model["services"]["service-hub"]
     expected_host_root = str((tmp_path / "data").resolve())
     assert service["ports"] == ["127.0.0.1:18080:8000"]
@@ -169,6 +180,10 @@ def test_disposable_smoke_compose_uses_the_single_service_topology(tmp_path: Pat
         f"{expected_host_root}:/data",
         "/var/run/docker.sock:/var/run/docker.sock",
     ]
+    web = model["services"]["service-hub-web"]
+    assert web["ports"] == ["127.0.0.1:18081:8080"]
+    assert not web.get("volumes")
+    assert web["depends_on"] == {"service-hub": {"condition": "service_healthy"}}
 
 
 @pytest.mark.integration
@@ -179,6 +194,7 @@ def test_compose_health_and_upload() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     project_name = f"hub-smoke-{uuid.uuid4().hex}"
     port = _available_local_port()
+    web_port = _available_local_port()
 
     with tempfile.TemporaryDirectory(prefix="python-service-hub-smoke-") as temporary_directory:
         temporary_root = Path(temporary_directory).resolve()
@@ -186,7 +202,7 @@ def test_compose_health_and_upload() -> None:
         assert data_directory.parent == temporary_root
         data_directory.mkdir()
         smoke_compose_file = temporary_root / "compose.smoke.yaml"
-        _write_smoke_compose(smoke_compose_file, repository_root, data_directory, port)
+        _write_smoke_compose(smoke_compose_file, repository_root, data_directory, port, web_port)
         command = _compose_command(
             repository_root,
             project_name,
@@ -207,6 +223,24 @@ def test_compose_health_and_upload() -> None:
                 timeout=30,
             )
             assert response.status_code == 201
+
+            web_root = httpx.get(f"http://127.0.0.1:{web_port}/", timeout=30)
+            assert web_root.status_code == 200
+            assert "text/html" in web_root.headers.get("content-type", "")
+
+            web_health = httpx.get(
+                f"http://127.0.0.1:{web_port}/api/v1/system/health", timeout=30
+            )
+            assert web_health.json() == {"status": "UP"}
+
+            spa_refresh = httpx.get(f"http://127.0.0.1:{web_port}/jobs/nonexistent", timeout=30)
+            assert spa_refresh.status_code == 200
+            assert "text/html" in spa_refresh.headers.get("content-type", "")
+
+            internal = httpx.get(
+                f"http://127.0.0.1:{web_port}/internal/v1/system/health", timeout=30
+            )
+            assert internal.status_code == 404
         finally:
             subprocess.run(
                 _compose_command(
