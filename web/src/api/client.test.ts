@@ -126,6 +126,9 @@ describe('public endpoint contracts', () => {
     await installPlugin(packageFile, packageProgress)
     await uploadFile(inputFile, fileProgress)
 
+    expect(post.mock.calls[0]?.[0]).toBe('/plugins/install')
+    expect(post.mock.calls[1]?.[0]).toBe('/files')
+
     for (const [index, expectedFile, progress] of [
       [1, packageFile, packageProgress],
       [2, inputFile, fileProgress],
@@ -191,9 +194,22 @@ describe('public endpoint contracts', () => {
 })
 
 describe('query key contracts', () => {
-  test('separates filter values, IDs, cursors, and limits', () => {
-    expect(queryKeys.plugins.list({ category: 'raster' })).not.toEqual(
-      queryKeys.plugins.list({ category: 'vector' }),
+  test('separates each filtered list key by filter values', () => {
+    const filteredListKeys = [
+      queryKeys.plugins.list,
+      queryKeys.plugins.builds,
+      queryKeys.files.list,
+      queryKeys.jobs.list,
+    ]
+
+    for (const makeKey of filteredListKeys) {
+      expect(makeKey({ status: 'active' })).not.toEqual(makeKey({ status: 'archived' }))
+    }
+  })
+
+  test('separates plugin version, IDs, cursors, and limits', () => {
+    expect(queryKeys.plugins.version('plugin/one', '1.0.0')).not.toEqual(
+      queryKeys.plugins.version('plugin/one', '2.0.0'),
     )
     expect(queryKeys.files.detail('file/one')).not.toEqual(queryKeys.files.detail('file/two'))
     expect(queryKeys.jobs.logs('job/one', 0, 100)).not.toEqual(
