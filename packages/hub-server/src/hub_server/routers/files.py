@@ -71,7 +71,10 @@ def list_files(
 ) -> FileListResponse:
     """Return the 100 most recently created public file records."""
     records = session.scalars(
-        select(FileRecord).order_by(FileRecord.created_at.desc()).limit(100)
+        select(FileRecord)
+        .where(FileRecord.status == "AVAILABLE")
+        .order_by(FileRecord.created_at.desc())
+        .limit(100)
     ).all()
     return FileListResponse(items=[_file_response(record) for record in records])
 

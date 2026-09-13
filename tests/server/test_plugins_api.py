@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -114,6 +115,54 @@ def test_plugin_build_list_is_capped_at_100_records(client: TestClient) -> None:
     assert len(builds.json()["items"]) == 100
 
 
+def test_plugin_build_list_orders_newest_first_then_build_key_descending(
+    client: TestClient,
+) -> None:
+    """Removing either order clause would make console Build ordering nondeterministic."""
+    tie_timestamp = datetime(2026, 1, 2, tzinfo=UTC)
+    _seed_build(
+        client,
+        runtime_type="conda-pack",
+        status="READY",
+        plugin_id="older",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    first_tie = _seed_build(
+        client,
+        runtime_type="conda-pack",
+        status="READY",
+        plugin_id="tie_a",
+        created_at=tie_timestamp,
+    )
+    second_tie = _seed_build(
+        client,
+        runtime_type="conda-pack",
+        status="READY",
+        plugin_id="tie_z",
+        created_at=tie_timestamp,
+    )
+
+    builds = client.get("/api/v1/plugin-builds")
+
+    assert builds.status_code == 200
+    assert [item["build_id"] for item in builds.json()["items"]] == [
+        second_tie,
+        first_tie,
+        "plugin_build_older_conda_pack",
+    ]
+
+
+def test_plugin_detail_orders_versions_descending(client: TestClient) -> None:
+    """Ascending version iteration would show stale plugin configuration first."""
+    _seed_plugin_version(client, version="1.0.0")
+    _seed_plugin_version(client, version="2.0.0")
+
+    detail = client.get("/api/v1/plugins/nc_to_shp")
+
+    assert detail.status_code == 200
+    assert [version["version"] for version in detail.json()["versions"]] == ["2.0.0", "1.0.0"]
+
+
 def _seed_build(
     client: TestClient,
     *,
@@ -121,6 +170,7 @@ def _seed_build(
     status: str,
     plugin_id: str = "nc_to_shp",
     version: str = "1.0.0",
+    created_at: datetime | None = None,
 ) -> str:
     with client.app.state.session_factory() as session:
         plugin = Plugin(plugin_key=plugin_id, name=plugin_id)
@@ -158,6 +208,7 @@ def _seed_build(
                 "runtime": runtime_metadata,
             },
             status=status,
+            created_at=created_at or datetime.now(UTC),
         )
         environment = Environment(
             plugin_build=build,
@@ -170,6 +221,26 @@ def _seed_build(
         session.add_all([plugin, plugin_version, build, environment])
         session.commit()
         return build.build_key
+
+
+def _seed_plugin_version(client: TestClient, *, version: str) -> None:
+    with client.app.state.session_factory() as session:
+        plugin = session.query(Plugin).filter_by(plugin_key="nc_to_shp").one_or_none()
+        if plugin is None:
+            plugin = Plugin(plugin_key="nc_to_shp", name="NC to Shapefile")
+            session.add(plugin)
+        session.add(
+            PluginVersion(
+                plugin=plugin,
+                version=version,
+                spec_version="1.0",
+                sdk_version="1.0",
+                source_sha256="a" * 64,
+                manifest_json=_manifest(),
+                status="INSTALLED",
+            )
+        )
+        session.commit()
 
 
 def _install_plugin(client: TestClient, tmp_path: Path) -> None:

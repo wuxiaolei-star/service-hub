@@ -1,12 +1,14 @@
 """HTTP contract tests for Hub file uploads and retrieval."""
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from hub_server.main import create_app
+from hub_server.models import FileRecord
 from hub_server.settings import (
     DatabaseSettings,
     DeploymentSettings,
@@ -65,6 +67,46 @@ def test_file_list_returns_the_100_newest_records_with_utc_timestamps(client: Te
     assert len(items) == 100
     assert [item["name"] for item in items] == [f"file-{index}.nc" for index in range(100, 0, -1)]
     assert items[0]["created_at"].endswith("Z")
+
+
+def test_file_list_excludes_newer_deleted_records_before_applying_limit(
+    client: TestClient,
+) -> None:
+    """Limiting before filtering would hide an available file behind newer deleted records."""
+    created = client.post(
+        "/api/v1/files",
+        files={"file": ("available.nc", b"available", "application/x-netcdf")},
+    )
+    assert created.status_code == 201
+    available_file_id = created.json()["file_id"]
+    oldest_deleted_at = datetime(2026, 1, 2, tzinfo=UTC)
+
+    with client.app.state.session_factory() as session:
+        available = session.query(FileRecord).filter_by(file_key=available_file_id).one()
+        available.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+        session.add_all(
+            [
+                FileRecord(
+                    file_key=f"deleted_{index}",
+                    logical_name=f"deleted-{index}.nc",
+                    original_filename=f"deleted-{index}.nc",
+                    relative_path=f"deleted/{index}.nc",
+                    extension=".nc",
+                    mime_type="application/x-netcdf",
+                    size_bytes=1,
+                    sha256=f"{index:064x}",
+                    status="DELETED",
+                    created_at=oldest_deleted_at + timedelta(seconds=index),
+                )
+                for index in range(100)
+            ]
+        )
+        session.commit()
+
+    files = client.get("/api/v1/files")
+
+    assert files.status_code == 200
+    assert [item["file_id"] for item in files.json()["items"]] == [available_file_id]
 
 
 def test_missing_file_uses_stable_error_shape(client: TestClient) -> None:
