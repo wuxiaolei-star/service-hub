@@ -1,9 +1,12 @@
 """File upload, metadata, and download endpoints."""
 
+from __future__ import annotations
+
+import re
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Path, Request, status
 from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import MultipartParser, parse_options_header
 from sqlalchemy import select
@@ -249,3 +252,38 @@ def get_file_metadata(
     """Return metadata for one available Hub file."""
     record, _ = _file_service(session, storage, settings).open_available(file_key)
     return _file_response(record)
+
+
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+@router.get(
+    "/by-sha256/{sha256}",
+    response_model=FileResponse,
+    dependencies=[Depends(require_role("operator"))],
+)
+def get_file_by_sha256(
+    sha256: Annotated[str, Path(pattern=r"^[0-9a-f]{64}$")],
+    session: Annotated[Session, Depends(get_session)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
+) -> FileResponse:
+    """Return metadata for the newest available upload matching one checksum."""
+    record = session.scalar(
+        select(FileRecord)
+        .where(FileRecord.status == "AVAILABLE", FileRecord.sha256 == sha256)
+        .order_by(FileRecord.created_at.desc(), FileRecord.id.desc())
+        .limit(1)
+    )
+    if record is None:
+        raise _sha256_not_found(sha256)
+    available, _ = _file_service(session, storage, settings).open_available(record.file_key)
+    return _file_response(available)
+
+
+def _sha256_not_found(sha256: str) -> HubError:
+    return HubError(
+        code="FILE_NOT_FOUND",
+        message=f"文件 {sha256} 不存在",
+        status_code=404,
+    )

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
 import http.client
 import json
 import os
@@ -241,6 +242,65 @@ def _backup_restore_steps(archive: Path) -> list[str]:
     ]
 
 
+def _cmd_registry_list(_args: argparse.Namespace, transport: Transport) -> object:
+    return transport.request_json("GET", f"{_API_PREFIX}/registry/plugins", None)
+
+
+def _cmd_registry_pull(args: argparse.Namespace, transport: Transport) -> object | None:
+    destination = _registry_package_destination(args.output, args.build_key)
+    transport.download(
+        f"{_API_PREFIX}/registry/download/{quote(args.build_key, safe='')}", destination
+    )
+    _print_checksum_line(destination)
+    return None
+
+
+def _cmd_registry_sync(args: argparse.Namespace, transport: Transport) -> object | None:
+    for build_key in _registry_enabled_build_keys(transport):
+        destination = _registry_package_destination(args.output, build_key)
+        transport.download(
+            f"{_API_PREFIX}/registry/download/{quote(build_key, safe='')}", destination
+        )
+        _print_checksum_line(destination)
+    return None
+
+
+def _registry_package_destination(output_dir: Path, build_key: str) -> Path:
+    if not _is_safe_filename(build_key):
+        raise ValueError("registry build key is not a safe filename")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / f"{build_key}.pypkg"
+
+
+def _registry_enabled_build_keys(transport: Transport) -> list[str]:
+    payload = transport.request_json("GET", f"{_API_PREFIX}/registry/plugins", None)
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        raise ValueError("registry list response is invalid")
+    build_keys: list[str] = []
+    for item in payload["items"]:
+        if not isinstance(item, dict):
+            raise ValueError("registry list response is invalid")
+        build_key = item.get("build_key")
+        status = item.get("status")
+        if not isinstance(build_key, str) or not isinstance(status, str):
+            raise ValueError("registry list response is invalid")
+        if status == "ENABLED":
+            build_keys.append(build_key)
+    return build_keys
+
+
+def _print_checksum_line(path: Path) -> None:
+    print(f"{_sha256_file(path)}  {path}")
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(_UPLOAD_CHUNK_SIZE):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def main(argv: Sequence[str] | None = None, transport: Transport | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -339,6 +399,20 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     backup_restore.add_argument("--file", type=Path, required=True, help="path to backup tar.gz")
     backup_restore.set_defaults(handler=_cmd_backup_restore)
+
+    registry = subcommands.add_parser("registry", help="browse the plugin registry")
+    registry_subcommands = registry.add_subparsers(dest="registry_command", required=True)
+    registry_list = registry_subcommands.add_parser("list", help="list registry plugin builds")
+    registry_list.set_defaults(handler=_cmd_registry_list)
+    registry_pull = registry_subcommands.add_parser("pull", help="download one build package")
+    registry_pull.add_argument("build_key")
+    registry_pull.add_argument("--output", type=Path, required=True)
+    registry_pull.set_defaults(handler=_cmd_registry_pull)
+    registry_sync = registry_subcommands.add_parser(
+        "sync", help="download every ENABLED build package"
+    )
+    registry_sync.add_argument("--output", type=Path, required=True)
+    registry_sync.set_defaults(handler=_cmd_registry_sync)
 
     return parser
 
