@@ -442,3 +442,26 @@ class AuditLogRecord(Base):
     detail: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     result: Mapped[str] = mapped_column(String(16), default="ok")
+
+
+class ServiceDef(Base):
+    """Desired state of one long-running service container (V3.0)."""
+
+    __tablename__ = "service_defs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(63), unique=True, index=True)
+    image: Mapped[str] = mapped_column(String(255))
+    container_name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    ports_json: Mapped[list[object]] = mapped_column(JSON)
+    env_json: Mapped[dict[str, object]] = mapped_column(JSON)
+    mounts_json: Mapped[list[object]] = mapped_column(JSON)
+    command_json: Mapped[list[object] | None] = mapped_column(JSON, nullable=True)
+    user_label: Mapped[str] = mapped_column(String(64), default="65532:65532")
+    desired_state: Mapped[str] = mapped_column(String(16), default="RUNNING")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now
+    )

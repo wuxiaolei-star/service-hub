@@ -33,6 +33,7 @@ RUN groupadd --system --gid 65532 hub-data \
     && useradd --system --gid hub-data --home-dir /nonexistent --shell /usr/sbin/nologin hub-api \
     && useradd --system --gid hub-data --home-dir /nonexistent --shell /usr/sbin/nologin conda-runner \
     && useradd --system --gid hub-data --home-dir /nonexistent --shell /usr/sbin/nologin docker-runner \
+    && useradd --system --gid hub-data --home-dir /nonexistent --shell /usr/sbin/nologin service-mgr \
     && mkdir -p /data /run/service-hub \
     && chmod 755 /usr/local/bin/service-hub-entrypoint
 

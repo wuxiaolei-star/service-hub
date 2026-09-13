@@ -20,7 +20,7 @@ class _HookRecorder(http.server.BaseHTTPRequestHandler):
     last_body: bytes = b""
     last_signature: str = ""
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         _HookRecorder.last_body = self.rfile.read(length)
         _HookRecorder.last_signature = self.headers.get("X-Hub-Signature", "")
@@ -69,7 +69,10 @@ def test_v2_automation_lifecycle() -> None:  # pragma: no cover - Linux AMD64 on
                 "runtime_type": "docker",
                 "inputs": {"source_nc": file_id},
                 "params": {},
-                "callback": {"url": f"http://127.0.0.1:{server.server_port}/hook", "secret": secret},
+                "callback": {
+                    "url": f"http://127.0.0.1:{server.server_port}/hook",
+                    "secret": secret,
+                },
             },
         )
         assert created.status_code == 201
@@ -112,7 +115,7 @@ def test_v2_automation_lifecycle() -> None:  # pragma: no cover - Linux AMD64 on
         )
         assert schedule.status_code == 201
 
-        # scheduler 进程（30s 周期）处理回调投递/管道步进；轮询等待
+        # scheduler sweeps every 30s: wait for callback delivery and pipeline step
         import time
 
         deadline = time.monotonic() + 120

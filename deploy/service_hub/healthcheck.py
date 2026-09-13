@@ -16,7 +16,14 @@ from urllib.request import urlopen
 _API_HEALTH_URL = "http://127.0.0.1:8000/api/v1/system/health"
 _DATA_ROOT = Path("/data")
 _SUPERVISOR_SOCKET = "/run/service-hub/supervisor.sock"
-_REQUIRED_PROCESSES = ("hub-api", "conda-runner", "docker-runner", "cleaner", "scheduler")
+_REQUIRED_PROCESSES = (
+    "hub-api",
+    "conda-runner",
+    "docker-runner",
+    "cleaner",
+    "scheduler",
+    "service-manager",
+)
 
 
 class HealthcheckError(RuntimeError):
