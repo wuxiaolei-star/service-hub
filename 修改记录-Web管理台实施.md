@@ -102,4 +102,52 @@
 
 提交信息：`feat(web): add job monitoring and outputs`
 
----
+## Task 10：Nginx + Compose 打包 Web 镜像（提交 d4b1814）
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `web/Dockerfile` | 新增 | 两阶段：`node:22-alpine`（npm ci + build）→ `nginx:1.27-alpine` 只复制 dist 与配置；EXPOSE 8080；wget HEALTHCHECK `/web-health` |
+| `web/nginx.conf` | 新增 | `listen 8080`；`/api/v1/` 代理到 `http://service-hub:8000/api/v1/`（关闭缓冲，10g 体积，3700s 读写超时）；`/internal/v1/` 返回 404；`/` SPA fallback `try_files $uri $uri/ /index.html`；`/web-health` 200 |
+| `web/.dockerignore` | 新增 | node_modules/dist/.git 不进构建上下文 |
+| `compose.yaml` | 修改 | 新增 `service-hub-web` 服务（image/platform/restart/`127.0.0.1:8080:8080`，无任何挂载，`depends_on: service-hub: service_healthy`） |
+| `tests/deploy/test_web_container_files.py` | 新增 | Compose 双服务静态断言、多阶段 Dockerfile、Nginx 安全路由断言 |
+| `tests/server/test_container_smoke.py` | 修改 | 生成器与集成冒烟改为双服务拓扑；集成用例增加 Web 首页/代理 health/SPA 刷新/internal 404 四项验证 |
+
+提交信息：`feat(deploy): serve web console through nginx`
+
+## Task 11：离线发布包扩展 Web 镜像（提交 e34145f + 28a2d25）
+
+- `deploy/release/build-release.sh`：新增 `WEB_IMAGE_NAME`，构建并保存 `service-hub-web-image.tar`，SHA256SUMS 纳入双镜像。
+- `deploy/release/install.sh`：`docker load -i service-hub-web-image.tar`。
+- `deploy/release/status.sh`：新增 8080 端口 web-proxied health 检查（失败也退出 1）。
+- `tests/deploy/test_release_scripts.py`：fixture 增加伪造 web 镜像 tar 与校验行、docker stub 支持双 load；build/install/status 断言更新。
+- 随后修复 2 个 runner 测试对新双服务 Compose 的过时断言（28a2d25）。
+
+验证：`bash -n` 全部通过；`pytest -m "not integration"` 499 passed。
+
+提交信息：`feat(release): bundle service hub web console`、`fix(runner): accept web service in compose assertions`
+
+## Task 12：文档与验收（提交 358830e）
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `docs/guides/Web管理台构建部署与使用.md` | 新增 | 中文操作指南：本地双镜像构建（Docker Desktop/PowerShell+Bash）、save/load 离线搬运、`HUB_HOST_DATA_DIR` + 一条 Compose 命令启动、四入口健康验证、SSH 隧道、运维命令、页面↔API 对照表、hubctl 等价用法、Nginx 边界、备份/升级/回滚（禁止 down -v）、常见错误表 |
+| `README.md` | 修改 | 目录表新增 web/；快速部署增加 Web 镜像构建与 8080 说明；入口链接指向 Web 指南 |
+| `docs/guides/单容器部署与脚本插件使用.md` | 修改 | Nginx 边界章节交叉引用 Web 指南与 service-hub-web 服务 |
+| `docs/reports/single-container-linux-amd64-acceptance.md` | 修改 | 新增"Web 管理台验收"章节（9 项待填字段）与质量门更新 |
+| `tests/deploy/test_documented_commands.py` | 修改 | 新增 4 条一致性测试：README 双镜像+8080+新指南链接；Web 指南覆盖构建/导入/Compose/边界/运维；工作流关键词；单容器指南交叉链接 |
+| `tests/integration/test_web_console_lifecycle.py` | 新增 | 集成验收：一次性 Compose 双服务栈，验证 SPA 首页、SPA 刷新、代理 health、internal 404、Web 容器无 /data 与 docker.sock 挂载、上传 201、restart 后数据持久化 |
+
+验证（开发机全部门禁）：
+
+- `python -m pytest -m "not integration"`：499 passed
+- `python -m ruff check .`：通过；`python -m mypy packages`：53 文件无问题
+- `web`：vitest 128 passed、typecheck/lint/build 通过（node_modules 曾因 npm 缓存目录不可写损坏，用本地缓存 `--cache .npm-cache` 重新 `npm ci` 修复）
+- Linux 侧验收项（真实镜像构建、集成测试、发布包）待原生 Linux AMD64 验收机执行并回填报告
+
+提交信息：`docs: add web console deployment and acceptance`
+
+## Final branch gate 状态
+
+- 本地可执行项（python 全量非集成、ruff、mypy、web 全套、compose config、git diff --check）全部通过。
+- Linux AMD64 侧（双镜像构建、`test_web_console_lifecycle.py`、NC 双运行时集成、离线发布包制作与 SHA256 校验）待验收机执行；报告"未通过项"为空后分支才可进入 PR 评审合并 main。
