@@ -41,3 +41,22 @@ finally:
     except NameError:
         pass
 PY
+
+python3 - <<'PY'
+from http.client import HTTPConnection
+
+try:
+    connection = HTTPConnection("127.0.0.1", 8080, timeout=5)
+    connection.request("GET", "/api/v1/system/health")
+    response = connection.getresponse()
+    body = response.read().decode("utf-8", errors="replace")
+    print(f"web health http_status={response.status} body={body}")
+except Exception as error:
+    print(f"web health unavailable: {error}")
+    raise SystemExit(1) from None
+finally:
+    try:
+        connection.close()
+    except NameError:
+        pass
+PY

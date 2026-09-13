@@ -2,6 +2,7 @@
 set -euo pipefail
 
 IMAGE_NAME="python-service-hub:1.0.0-linux-amd64"
+WEB_IMAGE_NAME="python-service-hub-web:1.0.0-linux-amd64"
 RELEASE_NAME="service-hub-linux-amd64"
 ARCHIVE_PATH="dist/service-hub-1.0.0-linux-amd64.tar.gz"
 
@@ -46,8 +47,12 @@ mkdir -p "${bundle_dir}" "dist"
 echo "Building ${IMAGE_NAME}"
 docker build --platform linux/amd64 -t "${IMAGE_NAME}" .
 
-echo "Saving image"
+echo "Building ${WEB_IMAGE_NAME}"
+docker build --platform linux/amd64 -t "${WEB_IMAGE_NAME}" web
+
+echo "Saving images"
 docker save -o "${bundle_dir}/service-hub-image.tar" "${IMAGE_NAME}"
+docker save -o "${bundle_dir}/service-hub-web-image.tar" "${WEB_IMAGE_NAME}"
 
 cp compose.yaml "${bundle_dir}/compose.yaml"
 cp deploy/release/install.sh "${bundle_dir}/install.sh"
@@ -82,6 +87,7 @@ README
     cd "${bundle_dir}"
     sha256sum \
         service-hub-image.tar \
+        service-hub-web-image.tar \
         compose.yaml \
         install.sh \
         start.sh \

@@ -32,11 +32,12 @@ def _prepare_release_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     release_dir.mkdir()
     for name in SCRIPT_NAMES - {"build-release.sh", "stop.sh"}:
         shutil.copy2(RELEASE_ROOT / name, release_dir / name)
-    image_tar = release_dir / "service-hub-image.tar"
-    image_tar.write_bytes(b"fake-image")
-    digest = hashlib.sha256(image_tar.read_bytes()).hexdigest()
+    digest = hashlib.sha256(b"fake-image").hexdigest()
+    web_digest = hashlib.sha256(b"fake-web-image").hexdigest()
+    (release_dir / "service-hub-image.tar").write_bytes(b"fake-image")
+    (release_dir / "service-hub-web-image.tar").write_bytes(b"fake-web-image")
     (release_dir / "SHA256SUMS").write_text(
-        f"{digest}  service-hub-image.tar\n",
+        f"{digest}  service-hub-image.tar\n{web_digest}  service-hub-web-image.tar\n",
         encoding="utf-8",
     )
 
@@ -52,6 +53,7 @@ printf '%s\\n' "$*" >> {shlex.quote(docker_log_posix)}
 case "$*" in
   "compose version") echo "Docker Compose version test" ;;
   "load -i service-hub-image.tar") echo "Loaded fake image" ;;
+  "load -i service-hub-web-image.tar") echo "Loaded fake web image" ;;
   "compose up -d") echo "Started fake service" ;;
   "compose ps") echo "NAME STATUS" ;;
   "compose ps -q service-hub") echo "service-hub-container" ;;
@@ -123,12 +125,15 @@ def test_build_release_creates_amd64_offline_bundle_with_hubctl() -> None:
     source = _read_script("build-release.sh")
 
     assert "python-service-hub:1.0.0-linux-amd64" in source
+    assert "python-service-hub-web:1.0.0-linux-amd64" in source
     assert "dist/service-hub-1.0.0-linux-amd64.tar.gz" in source
     assert "mktemp -d" in source
     assert "trap" in source
     assert "uname -m" in source
     assert "docker build" in source
     assert "docker save" in source
+    assert "service-hub-image.tar" in source
+    assert "service-hub-web-image.tar" in source
     assert "sha256sum" in source
     assert "tar -czf" in source
     assert "tools/hubctl" in source
@@ -144,6 +149,7 @@ def test_install_script_preserves_existing_env_and_loads_image() -> None:
     assert "docker compose version" in source
     assert "command -v python3" in source
     assert "docker load -i service-hub-image.tar" in source
+    assert "docker load -i service-hub-web-image.tar" in source
     assert "install -d -m 0750" in source
     assert "HUB_HOST_DATA_DIR" in source
     assert 'if [ ! -f ".env" ]' in source
@@ -210,6 +216,7 @@ def test_lifecycle_scripts_use_single_service_without_removing_data() -> None:
     assert "docker inspect" in status
     assert "/api/v1/system/health" in status
     assert "service-hub" in status
+    assert "127.0.0.1" in status and "8080" in status
     assert "docker compose down" not in stop
     assert "docker compose down" not in start
     assert "docker compose down" not in status

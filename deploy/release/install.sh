@@ -71,6 +71,7 @@ data_dir="$(validate_data_dir "${data_dir}")"
 install -d -m 0750 "${data_dir}"
 
 docker load -i service-hub-image.tar
+docker load -i service-hub-web-image.tar
 
 if [ ! -f ".env" ]; then
     umask 077
