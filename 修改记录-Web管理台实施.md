@@ -67,4 +67,21 @@
 
 提交信息：`feat(web): add file upload and download management`
 
+## Task 8：Manifest 驱动的新建 Job（提交 93104dd）
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `web/src/utils/jobPayload.ts` | 新增 | `validateJobRequest`（必填/默认值/min/max/enum 选项/boolean/string_list 去重/不支持类型阻断/多文件 min_count/缺失运行时）、`buildJobRequest`（canonical 请求对象，含默认值回填）、`parseJsonRequest`（JSON 模式校验） |
+| `web/src/components/PluginParameterForm.tsx` | 新增 | 按参数类型渲染控件（string→Input、integer/number→InputNumber、boolean→Switch、enum→Select、string_list→tags Select），带错误提示与必填星标 |
+| `web/src/pages/NewJobPage.tsx` | 新增 | 插件/版本选择 → 只列出 ENABLED Build 并据此约束运行时（单运行时自动锁定）→ 输入文件（可从最近文件选或手输 ID，files 类型逗号分隔多选）→ 表单/JSON 双模式共享请求预览（data-testid=request-preview）→ 校验失败阻止提交、成功跳转 `/jobs/{job_id}` |
+| `web/src/routes/router.tsx` | 修改 | `/jobs/new` → `NewJobPage` |
+| `web/src/utils/jobPayload.test.ts` | 新增 | 9 条：精确 NC payload、必填校验、min/max、enum/去重、不支持类型、多文件 min_count、缺失运行时、JSON 解析 |
+| `web/src/pages/NewJobPage.test.tsx` | 新增 | 4 条工作流：默认值+运行时锁定+预览、提交 canonical 请求并跳转、缺必填阻止提交、JSON 模式实时校验与预览 |
+
+实施要点：antd 两字按钮/Radio 的可访问名带空格或 input `pointer-events:none`，点击用标签文本；表单默认值通过 manifest 变化时的 effect 初始化；JSON 解析错误实时显示（不依赖提交）。
+
+验证：112 tests passed（两轮）；typecheck/lint/build 通过。
+
+提交信息：`feat(web): add manifest driven job creation`
+
 ---
