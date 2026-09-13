@@ -1,17 +1,19 @@
 """File upload, metadata, and download endpoints."""
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
 from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import MultipartParser, parse_options_header
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse as StreamingFileResponse
 
 from hub_server.dependencies import get_session, get_settings, get_storage
 from hub_server.errors import HubError
 from hub_server.models import FileRecord
-from hub_server.schemas import FileResponse
+from hub_server.schemas import FileListResponse, FileResponse
 from hub_server.services.files import FileService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage, StreamingUpload
@@ -32,7 +34,15 @@ def _file_response(record: FileRecord) -> FileResponse:
         extension=record.extension,
         mime_type=record.mime_type,
         status="AVAILABLE",
+        created_at=_utc_timestamp(record.created_at),
     )
+
+
+def _utc_timestamp(value: datetime) -> datetime:
+    """Normalize SQLite's timezone-naive values for the public UTC contract."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _file_service(session: Session, storage: LocalStorage, settings: HubSettings) -> FileService:
@@ -53,6 +63,17 @@ async def upload_file(
         request, service, storage, settings.uploads.max_size_bytes
     )
     return _file_response(record)
+
+
+@router.get("", response_model=FileListResponse)
+def list_files(
+    session: Annotated[Session, Depends(get_session)],
+) -> FileListResponse:
+    """Return the 100 most recently created public file records."""
+    records = session.scalars(
+        select(FileRecord).order_by(FileRecord.created_at.desc()).limit(100)
+    ).all()
+    return FileListResponse(items=[_file_response(record) for record in records])
 
 
 async def _stream_multipart_file(

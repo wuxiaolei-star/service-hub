@@ -8,12 +8,19 @@ from typing import Annotated, cast
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from python_hub_contracts import RuntimeType
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from hub_server.dependencies import get_session, get_settings, get_storage
 from hub_server.errors import HubError
-from hub_server.models import Job, Plugin, PluginBuild
-from hub_server.schemas import PluginBuildResponse, PluginListResponse, PluginSummary
+from hub_server.models import Job, Plugin, PluginBuild, PluginVersion
+from hub_server.schemas import (
+    PluginBuildListResponse,
+    PluginBuildResponse,
+    PluginDetailResponse,
+    PluginListResponse,
+    PluginSummary,
+    PluginVersionDetail,
+)
 from hub_server.services.archives import PluginArchiveService
 from hub_server.services.plugins import PluginService
 from hub_server.settings import HubSettings
@@ -53,18 +60,64 @@ def list_plugins(
     session: Annotated[Session, Depends(get_session)],
 ) -> PluginListResponse:
     """Return installed plugin summaries."""
-    plugins = session.scalars(select(Plugin).order_by(Plugin.plugin_key)).all()
-    items = [
-        PluginSummary(
-            id=plugin.plugin_key,
-            name=plugin.name,
-            description=plugin.description,
-            category=plugin.category,
-            latest_version=max((version.version for version in plugin.versions), default=None),
-        )
-        for plugin in plugins
-    ]
+    plugins = session.scalars(
+        select(Plugin).options(selectinload(Plugin.versions)).order_by(Plugin.plugin_key)
+    ).all()
+    items = [_plugin_summary(plugin) for plugin in plugins]
     return PluginListResponse(items=items)
+
+
+@router.get("/plugins/{plugin_id}", response_model=PluginDetailResponse)
+def get_plugin_detail(
+    plugin_id: str,
+    session: Annotated[Session, Depends(get_session)],
+) -> PluginDetailResponse:
+    """Return one installed plugin and the public manifests of its versions."""
+    plugin = session.scalar(
+        select(Plugin)
+        .where(Plugin.plugin_key == plugin_id)
+        .options(selectinload(Plugin.versions).selectinload(PluginVersion.builds))
+    )
+    if plugin is None:
+        raise HubError(code="PLUGIN_NOT_FOUND", message="插件不存在", status_code=404)
+    summary = _plugin_summary(plugin)
+    return PluginDetailResponse(
+        **summary.model_dump(),
+        author=plugin.author,
+        versions=[
+            PluginVersionDetail(
+                version=version.version,
+                spec_version=version.spec_version,
+                sdk_version=version.sdk_version,
+                source_sha256=version.source_sha256,
+                status=version.status,
+                manifest=version.manifest_json,
+            )
+            for version in sorted(
+                plugin.versions, key=lambda version: version.version, reverse=True
+            )
+        ],
+    )
+
+
+@router.get("/plugin-builds", response_model=PluginBuildListResponse)
+def list_plugin_builds(
+    session: Annotated[Session, Depends(get_session)],
+    plugin_id: str | None = None,
+) -> PluginBuildListResponse:
+    """Return up to 100 plugin Builds, optionally for one plugin."""
+    query = (
+        select(PluginBuild)
+        .join(PluginBuild.plugin_version)
+        .join(PluginVersion.plugin)
+        .options(selectinload(PluginBuild.plugin_version).selectinload(PluginVersion.plugin))
+        .order_by(PluginBuild.created_at.desc(), PluginBuild.build_key.desc())
+        .limit(100)
+    )
+    if plugin_id is not None:
+        query = query.where(Plugin.plugin_key == plugin_id)
+    builds = session.scalars(query).all()
+    return PluginBuildListResponse(items=[_build_response(build) for build in builds])
 
 
 @router.get("/plugin-builds/{build_key}", response_model=PluginBuildResponse)
@@ -130,6 +183,17 @@ def _find_build(session: Session, build_key: str) -> PluginBuild:
             status_code=404,
         )
     return build
+
+
+def _plugin_summary(plugin: Plugin) -> PluginSummary:
+    """Map one Plugin without exposing internal persistence metadata."""
+    return PluginSummary(
+        id=plugin.plugin_key,
+        name=plugin.name,
+        description=plugin.description,
+        category=plugin.category,
+        latest_version=max((version.version for version in plugin.versions), default=None),
+    )
 
 
 def _build_response(build: PluginBuild) -> PluginBuildResponse:

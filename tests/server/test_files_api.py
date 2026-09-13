@@ -49,6 +49,24 @@ def test_upload_then_get_metadata_and_download(client: TestClient) -> None:
     assert client.get(f"/api/v1/files/{file_key}/download").content == b"netcdf-data"
 
 
+def test_file_list_returns_the_100_newest_records_with_utc_timestamps(client: TestClient) -> None:
+    """Removing the limit or descending sort would make the file list unbounded or stale."""
+    for index in range(101):
+        created = client.post(
+            "/api/v1/files",
+            files={"file": (f"file-{index}.nc", b"x", "application/x-netcdf")},
+        )
+        assert created.status_code == 201
+
+    files = client.get("/api/v1/files")
+
+    assert files.status_code == 200
+    items = files.json()["items"]
+    assert len(items) == 100
+    assert [item["name"] for item in items] == [f"file-{index}.nc" for index in range(100, 0, -1)]
+    assert items[0]["created_at"].endswith("Z")
+
+
 def test_missing_file_uses_stable_error_shape(client: TestClient) -> None:
     """A missing lookup must preserve the documented error contract rather than a framework 404."""
     response = client.get("/api/v1/files/file_missing")

@@ -4,6 +4,9 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from hub_publisher.archive import create_plugin_package
+from hub_publisher.builder import create_build_manifest
+from hub_publisher.project import PluginProject
 from hub_server.main import create_app
 from hub_server.models import Environment, Plugin, PluginBuild, PluginVersion
 from hub_server.settings import (
@@ -51,12 +54,79 @@ def test_installing_build_cannot_be_enabled(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "PLUGIN_BUILD_NOT_READY"
 
 
-def _seed_build(client: TestClient, *, runtime_type: str, status: str) -> str:
+def test_plugin_detail_exposes_version_manifest_without_private_build_paths(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Removing the public detail read model would hide the manifest needed to create jobs."""
+    _install_plugin(client, tmp_path)
+
+    detail = client.get("/api/v1/plugins/nc_to_shp")
+
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["id"] == "nc_to_shp"
+    assert payload["versions"][0]["version"] == "1.0.0"
+    assert payload["versions"][0]["manifest"]["entrypoint"]["function"] == "run"
+    assert "package_path" not in payload
+    assert "runtime_archive_path" not in payload
+    assert "metadata_json" not in payload
+
+
+def test_unknown_plugin_detail_uses_plugin_not_found_error(client: TestClient) -> None:
+    """Treating a missing plugin as a framework route miss would break the stable API error."""
+    response = client.get("/api/v1/plugins/unknown")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "PLUGIN_NOT_FOUND"
+
+
+def test_plugin_build_list_filters_to_requested_plugin(client: TestClient) -> None:
+    """Dropping the joined plugin filter would leak Builds from unrelated plugins."""
+    nc_build_key = _seed_build(client, runtime_type="conda-pack", status="READY")
+    _seed_build(
+        client,
+        runtime_type="docker",
+        status="READY",
+        plugin_id="other_plugin",
+        version="2.0.0",
+    )
+
+    builds = client.get("/api/v1/plugin-builds", params={"plugin_id": "nc_to_shp"})
+
+    assert builds.status_code == 200
+    assert [item["build_id"] for item in builds.json()["items"]] == [nc_build_key]
+    assert builds.json()["items"][0]["plugin_id"] == "nc_to_shp"
+
+
+def test_plugin_build_list_is_capped_at_100_records(client: TestClient) -> None:
+    """Removing the query cap would let an unbounded Build history reach the console."""
+    for index in range(101):
+        _seed_build(
+            client,
+            runtime_type="conda-pack",
+            status="READY",
+            plugin_id=f"plugin_{index}",
+        )
+
+    builds = client.get("/api/v1/plugin-builds")
+
+    assert builds.status_code == 200
+    assert len(builds.json()["items"]) == 100
+
+
+def _seed_build(
+    client: TestClient,
+    *,
+    runtime_type: str,
+    status: str,
+    plugin_id: str = "nc_to_shp",
+    version: str = "1.0.0",
+) -> str:
     with client.app.state.session_factory() as session:
-        plugin = Plugin(plugin_key="nc_to_shp", name="NC to Shapefile")
-        version = PluginVersion(
+        plugin = Plugin(plugin_key=plugin_id, name=plugin_id)
+        plugin_version = PluginVersion(
             plugin=plugin,
-            version="1.0.0",
+            version=version,
             spec_version="1.0",
             sdk_version="1.0",
             source_sha256="a" * 64,
@@ -70,9 +140,9 @@ def _seed_build(client: TestClient, *, runtime_type: str, status: str) -> str:
         )
         fingerprint = runtime_metadata.get("fingerprint") or runtime_metadata["digest"]
         build = PluginBuild(
-            build_key=f"plugin_build_{runtime_type.replace('-', '_')}",
+            build_key=f"plugin_build_{plugin_id}_{runtime_type.replace('-', '_')}",
             manifest_build_id=f"build-{runtime_type}",
-            plugin_version=version,
+            plugin_version=plugin_version,
             target_os="linux",
             target_arch="amd64",
             runtime_type=runtime_type,
@@ -97,9 +167,68 @@ def _seed_build(client: TestClient, *, runtime_type: str, status: str) -> str:
             metadata_json=runtime_metadata,
             status=status,
         )
-        session.add_all([plugin, version, build, environment])
+        session.add_all([plugin, plugin_version, build, environment])
         session.commit()
         return build.build_key
+
+
+def _install_plugin(client: TestClient, tmp_path: Path) -> None:
+    """Create one valid package and register it through the public install endpoint."""
+    project_root = tmp_path / "plugin"
+    source = project_root / "src" / "nc_to_shp_plugin"
+    source.mkdir(parents=True)
+    (project_root / "plugin.yaml").write_text(_manifest_yaml(), encoding="utf-8")
+    (source / "__init__.py").write_text("", encoding="utf-8")
+    (source / "main.py").write_text("def run():\n    return None\n", encoding="utf-8")
+    runtime_archive = tmp_path / "runtime.tar.zst"
+    runtime_archive.write_bytes(b"test runtime")
+    project = PluginProject.load(project_root)
+    build = create_build_manifest(
+        project,
+        "conda-pack",
+        "amd64",
+        runtime_archive,
+        docker_digest=None,
+        source_date_epoch=0,
+    )
+    package = create_plugin_package(project, build, runtime_archive, tmp_path / "dist", 0)
+
+    response = client.post(
+        "/api/v1/plugins/install",
+        files={"file": (package.name, package.read_bytes(), "application/octet-stream")},
+    )
+
+    assert response.status_code == 202, response.text
+
+
+def _manifest_yaml() -> str:
+    return """\
+spec_version: "1.0"
+plugin:
+  id: nc_to_shp
+  name: NC to Shapefile
+  version: "1.0.0"
+sdk:
+  version: "1.0"
+runtime:
+  type: process
+  python:
+    version: "3.12"
+entrypoint:
+  module: nc_to_shp_plugin.main
+  function: run
+parameters: []
+inputs: []
+outputs: []
+execution:
+  timeout: 30
+  concurrency: 1
+environment_variables:
+  required: []
+healthcheck:
+  enabled: true
+  type: import
+"""
 
 
 def _manifest() -> dict[str, object]:

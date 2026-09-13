@@ -86,6 +86,29 @@ def test_create_job_uses_explicit_enabled_conda_build(client: TestClient) -> Non
     assert response.json()["status"] == "PENDING"
 
 
+def test_pending_job_detail_includes_unstarted_lifecycle_timestamps(client: TestClient) -> None:
+    """Omitting lifecycle timestamps would hide an unstarted Job from the monitor."""
+    _seed_build(client, runtime_type="docker")
+    file_id = _upload_nc(client)
+    created = client.post(
+        "/api/v1/jobs",
+        json={
+            "plugin_id": "nc_to_shp",
+            "version": "1.0.0",
+            "inputs": {"source_nc": file_id},
+            "params": {},
+        },
+    )
+    assert created.status_code == 201
+
+    job = client.get(f"/api/v1/jobs/{created.json()['job_id']}")
+
+    assert job.status_code == 200
+    assert job.json()["created_at"].endswith("Z")
+    assert job.json()["started_at"] is None
+    assert job.json()["finished_at"] is None
+
+
 def test_job_without_runtime_type_defaults_to_docker(client: TestClient) -> None:
     _seed_build(client, runtime_type="docker")
     file_id = _upload_nc(client)

@@ -1,5 +1,6 @@
 """Request and response schemas exposed by Hub HTTP endpoints."""
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -40,6 +41,7 @@ class FileResponse(BaseModel):
     extension: str | None
     mime_type: str | None
     status: Literal["AVAILABLE"]
+    created_at: datetime
 
 
 class PluginBuildResponse(BaseModel):
@@ -63,8 +65,26 @@ class PluginSummary(BaseModel):
     latest_version: str | None = None
 
 
+class PluginVersionDetail(BaseModel):
+    version: str
+    spec_version: str
+    sdk_version: str
+    source_sha256: str
+    status: str
+    manifest: dict[str, object]
+
+
+class PluginDetailResponse(PluginSummary):
+    author: str | None = None
+    versions: list[PluginVersionDetail]
+
+
 class PluginListResponse(BaseModel):
     items: list[PluginSummary]
+
+
+class PluginBuildListResponse(BaseModel):
+    items: list[PluginBuildResponse]
 
 
 class JobCreateRequest(BaseModel):
@@ -84,10 +104,17 @@ class JobResponse(BaseModel):
     status: JobStatus
     cancel_requested: bool = False
     error_summary: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class JobListResponse(BaseModel):
     items: list[JobResponse]
+
+
+class FileListResponse(BaseModel):
+    items: list[FileResponse]
 
 
 class JobCancelResponse(BaseModel):

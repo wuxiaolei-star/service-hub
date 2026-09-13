@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Query, status
@@ -126,7 +127,17 @@ def _job_response(job: Job) -> JobResponse:
         status=JobStatus(job.status),
         cancel_requested=job.cancel_requested,
         error_summary=job.error_summary,
+        created_at=_utc_timestamp(job.created_at),
+        started_at=_utc_timestamp(job.started_at) if job.started_at is not None else None,
+        finished_at=_utc_timestamp(job.finished_at) if job.finished_at is not None else None,
     )
+
+
+def _utc_timestamp(value: datetime) -> datetime:
+    """Normalize SQLite's timezone-naive values for the public UTC contract."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _file_summary(record: FileRecord) -> FileResponse:
