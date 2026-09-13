@@ -55,6 +55,10 @@ class FileRecord(Base):
     owner_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    job_files: Mapped[list[JobFile]] = relationship(back_populates="file_record")
 
 
 class Plugin(Base):
