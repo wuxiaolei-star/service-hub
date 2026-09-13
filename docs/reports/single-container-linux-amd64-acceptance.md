@@ -135,6 +135,26 @@ HUB_BOOTSTRAP_PASSWORD=<bootstrap-admin.json 中的口令> python -m pytest -m i
 | `HUB_AUTH_MODE=off` 时行为与 V1 等价 | （待填写） |
 | hubctl login/whoami/logout 流程 | （待填写） |
 
-## 9. 未通过项
+## 9. V2.1 配额、清理与备份验收
+
+执行：
+
+```bash
+HUB_BOOTSTRAP_PASSWORD=<口令> python -m pytest -m integration tests/integration/test_quota_lifecycle.py -v
+```
+
+| 项目 | 结果 |
+| --- | --- |
+| 上传超配额返回 409 QUOTA_EXCEEDED（含 used/limit） | （待填写） |
+| 并发 Job 超限返回 409 | （待填写） |
+| admin 豁免与 `quotas.enabled=false` 直通 | （待填写） |
+| `GET /users/{id}/usage` 数据正确 | （待填写） |
+| cleaner 为第四个受管进程且 RUNNING | （待填写） |
+| TTL 过期未引用输入被真实删除并写审计 | （待填写） |
+| `GET /system/metrics` admin 可抓取且格式为 Prometheus 文本 | （待填写） |
+| `hubctl backup create` 生成备份且超出份数被修剪 | （待填写） |
+| Web 用户页用量列与系统页指标卡渲染 | （待填写） |
+
+## 10. 未通过项
 
 （必须为空；如有未通过项，逐条记录现象、原因与修复 commit 后复验）

@@ -175,3 +175,22 @@
 web 131 passed + typecheck/lint/build 通过。
 
 待 Linux AMD64 验收项已列入 `docs/reports/single-container-linux-amd64-acceptance.md` 第 8 节。
+
+---
+
+# V2.1 资源治理与可观测（2026-09-13，设计与计划 f6ff388）
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 配置与模型 | fc4cf29 | QuotasSettings/RetentionSettings（strict）；users 三配额覆盖列；file_records/jobs.owner_user_id（迁移 0004，SQLite batch+命名外键） |
+| Task 2 配额强制 | 58a0118 | services/quotas.py：上传（预检 Content-Length + 落盘精确复核排除自身）与建 Job（用户非终态计数）双执行点；409 QUOTA_EXCEEDED 含 used/limit；admin/匿名豁免、开关直通 |
+| Task 3 用量端点 | 248188b | GET /users/{id}/usage（admin）：total_bytes/file_count/active_jobs |
+| Task 4 清理循环 | d2d39c1 | services/retention.py（INPUT+超 TTL+无引用→删除，含磁盘负载与审计，每轮≤500）；deploy cleaner 进程；supervisord 四进程 + healthcheck 同步 |
+| Task 5 指标端点 | bc0ecca | services/metrics.py 手写 Prometheus 文本；GET /system/metrics（admin） |
+| Task 6 备份 | 46cbfff | services/backup.py（SQLite backup API 在线快照+tar.gz 原子落盘+保留 3 份修剪）；POST /system/backup（admin+审计）；hubctl backup create/restore |
+| Task 7 Web 展示 | 8f81e6f | 用户页用量列（逐行懒加载）；系统页运行指标卡（15s 轮询，403 隐藏）；parseHubMetrics 解析器单测 |
+| Task 8 文档验收 | 71d7d07 系列 | hub.yaml.example quotas/retention 节；指南"配额、清理与备份"章；验收报告 V2.1 节；集成 test_quota_lifecycle.py；服务说明-V2.1.md |
+
+Task 6/7 由两个并行子智能体实施（文件集不相交，主会话统一验收提交）。
+最终质量门：python 非集成 599 passed；web 139 passed + typecheck/lint/build；mypy strict 63 文件无问题。
+服务说明：`docs/service-docs/服务说明-V2.1.md`。

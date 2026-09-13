@@ -12,3 +12,12 @@ runner:
 auth:
   mode: required            # required=启用认证；off=临时关闭（过渡用）
   session_ttl_hours: 24     # 会话有效期
+quotas:
+  enabled: true                # false=关闭配额直通
+  max_total_bytes: 1099511627776   # 全局+每用户总存储（默认 1TiB），用户列可覆盖
+  max_file_count: 10000            # 每用户文件数上限
+  max_concurrent_jobs: 8           # 每用户非终态 Job 上限
+retention:
+  input_ttl_hours: 720             # 未被引用的输入文件保留期（30 天）
+  sweep_interval_minutes: 30       # cleaner 清理循环间隔
+  backup_keep: 3                   # 备份保留份数
