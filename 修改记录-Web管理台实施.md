@@ -84,4 +84,22 @@
 
 提交信息：`feat(web): add manifest driven job creation`
 
+## Task 9：Job 中心/详情/日志/取消/输出（提交 64050aa）
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `web/src/utils/jobTime.ts` | 新增 | `formatDuration`：排队计时（创建起）、运行计时（开始起）、结束计时（开始→结束，无开始回退创建）、非法/缺失时间显示 `-`、小时格式 |
+| `web/src/hooks/useJobLogs.tsx`（原 `.ts`，含 JSX fixture 改名） | 新增 | 游标累加日志分页：按页签名去重（同页重复拉取不重复追加）、`active` 时 2s 轮询、拉平后 `exhausted` 停止、active=false 时拉平即停、卸载经 TanStack 取消 |
+| `web/src/components/JobLogViewer.tsx` | 新增 | `<pre>` 文本渲染（进度/级别前缀），底部跟随自动滚动，向上滚动暂停并显示"恢复自动滚动" |
+| `web/src/pages/JobsPage.tsx` | 新增 | 任务表（最近 100 条）：状态/创建时间/耗时列，存在活动任务时 2s 刷新，行操作跳转详情 |
+| `web/src/pages/JobDetailPage.tsx` | 新增 | 详情卡片（状态/耗时/Build/起止时间）、失败摘要 Alert、运行中可确认取消、RUNNING 时轮询；输出仅在 SUCCESS 后查询并支持安全命名下载 |
+| `web/src/routes/router.tsx` | 修改 | `/jobs`、`/jobs/:jobId` 接入实际页面；删除全部 placeholder |
+| 测试 | 新增 | `jobTime.test.ts`（6 条）、`useJobLogs.test.tsx`（4 条：有序累加/活动轮询/重复抑制/卸载停止）、`JobsPage.test.tsx`（2 条）、`JobDetailPage.test.tsx`（4 条：运行轮询+日志、失败摘要、确认取消、SUCCESS 后才取输出+安全下载） |
+
+实施要点：JobDetailPage 测试需同时 mock `useParams` 与 `useNavigate`（页面在 Router 上下文外渲染）；日志行带 `[INFO]` 前缀，断言用正则；`useJobLogs.test` 因 fixture 使用 JSX 由 `.ts` 改为 `.tsx`。
+
+验证：两轮 128 tests passed；typecheck/lint/build 通过。
+
+提交信息：`feat(web): add job monitoring and outputs`
+
 ---
