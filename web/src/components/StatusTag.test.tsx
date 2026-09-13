@@ -32,4 +32,30 @@ describe('StatusTag', () => {
     render(<StatusTag status={'UNKNOWN' as JobStatus} />)
     expect(screen.getByText('未知状态')).toBeInTheDocument()
   })
+
+  it.each([
+    ['READY', 'green'],
+    ['ENABLED', 'green'],
+    ['SUCCESS', 'green'],
+    ['PENDING', 'blue'],
+    ['INSTALLING', 'blue'],
+    ['RUNNING', 'cyan'],
+    ['CANCEL_REQUESTED', 'orange'],
+    ['FAILED', 'red'],
+    ['TIMED_OUT', 'red'],
+    ['CANCELLED', 'default'],
+    ['DISABLED', 'default'],
+  ])('renders %s with approved %s tag color', (status, color) => {
+    render(<StatusTag status={status} />)
+
+    const tag = screen.getByLabelText(/状态：/).closest('.ant-tag')
+
+    expect(tag).toHaveClass(`ant-tag-${color}`)
+  })
+
+  it('renders running status with a dynamic processing marker', () => {
+    const { container } = render(<StatusTag status="RUNNING" />)
+
+    expect(container.querySelector('.anticon-loading')).toBeInTheDocument()
+  })
 })

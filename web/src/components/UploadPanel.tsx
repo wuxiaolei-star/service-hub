@@ -1,6 +1,5 @@
 import { InboxOutlined } from '@ant-design/icons'
 import { Progress, Typography, Upload } from 'antd'
-import type { UploadRequestOption } from 'rc-upload/lib/interface'
 
 interface UploadPanelProps {
   accept?: string
@@ -24,9 +23,9 @@ export default function UploadPanel({
         disabled={uploading}
         showUploadList={false}
         multiple={false}
-        beforeUpload={(file) => beforeUpload(file as unknown as File) === false ? false : true}
-        customRequest={(options: UploadRequestOption) => {
-          options.onSuccess?.({})
+        beforeUpload={(file) => {
+          beforeUpload(file as unknown as File)
+          return false
         }}
         aria-label="文件上传区域"
       >

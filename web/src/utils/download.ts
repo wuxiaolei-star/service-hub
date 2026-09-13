@@ -1,4 +1,5 @@
 const DEFAULT_DOWNLOAD_BASENAME = 'download'
+const DEFAULT_DOWNLOAD_EXTENSION = '.bin'
 
 function hasControlCharacter(name: string): boolean {
   return Array.from(name).some((character) => {
@@ -23,12 +24,36 @@ function sanitizeSegment(name: string): string {
   return name.trim()
 }
 
+function safeExtension(extension: string): string | null {
+  const trimmed = extension.trim()
+  const suffix = trimmed.startsWith('.') ? trimmed.slice(1) : trimmed
+  if (
+    suffix === '' ||
+    suffix === '.' ||
+    suffix === '..' ||
+    suffix.includes('.') ||
+    suffix.includes('/') ||
+    suffix.includes('\\') ||
+    hasControlCharacter(suffix)
+  ) {
+    return null
+  }
+  return `.${suffix}`
+}
+
+function fallbackExtension(fallback: string): string {
+  const extensionStart = fallback.lastIndexOf('.')
+  if (extensionStart <= 0 || extensionStart === fallback.length - 1) {
+    return DEFAULT_DOWNLOAD_EXTENSION
+  }
+  return safeExtension(fallback.slice(extensionStart)) ?? DEFAULT_DOWNLOAD_EXTENSION
+}
+
 function withExtension(basename: string, extension: string): string {
-  const normalizedExtension = extension.startsWith('.') ? extension : `.${extension}`
-  if (basename.toLowerCase().endsWith(normalizedExtension.toLowerCase())) {
+  if (basename.toLowerCase().endsWith(extension.toLowerCase())) {
     return basename
   }
-  return `${basename}${normalizedExtension}`
+  return `${basename}${extension}`
 }
 
 /**
@@ -37,16 +62,17 @@ function withExtension(basename: string, extension: string): string {
  * instead of ever reaching the filesystem.
  */
 export function safeDownloadName(name: string, extension: string, fallback: string): string {
+  const normalizedExtension = safeExtension(extension) ?? fallbackExtension(fallback)
   const cleaned = sanitizeSegment(name)
   if (!isUnsafeSegment(cleaned)) {
-    return withExtension(cleaned, extension)
+    return withExtension(cleaned, normalizedExtension)
   }
 
   const cleanedFallback = sanitizeSegment(fallback)
   if (!isUnsafeSegment(cleanedFallback)) {
-    return withExtension(cleanedFallback, extension)
+    return withExtension(cleanedFallback, normalizedExtension)
   }
-  return withExtension(DEFAULT_DOWNLOAD_BASENAME, extension)
+  return withExtension(DEFAULT_DOWNLOAD_BASENAME, normalizedExtension)
 }
 
 /** Trigger a browser download for the blob and always release the object URL. */

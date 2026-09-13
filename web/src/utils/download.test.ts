@@ -26,6 +26,24 @@ describe('safeDownloadName', () => {
   it('does not duplicate the extension for dotted names', () => {
     expect(safeDownloadName('result.2024.tar', '.tar', 'download.bin')).toBe('result.2024.tar')
   })
+
+  it.each([
+    ['../zip'],
+    ['z/ip'],
+    ['z\\ip'],
+    ['\x07zip'],
+    [''],
+  ])('uses the trusted fallback extension when server extension %s is unsafe', (extension) => {
+    expect(safeDownloadName('server-name', extension, 'trusted.zip')).toBe('server-name.zip')
+  })
+
+  it('uses a single safe suffix from the server extension', () => {
+    expect(safeDownloadName('result.csv', '.tar.gz', 'trusted.zip')).toBe('result.csv.zip')
+  })
+
+  it('does not trust an unsafe fallback filename before applying the trusted suffix', () => {
+    expect(safeDownloadName('../server', '../zip', 'fallback.zip')).toBe('fallback.zip')
+  })
 })
 
 describe('saveBlob', () => {
