@@ -173,6 +173,17 @@ HUB_BOOTSTRAP_PASSWORD=<口令> python -m pytest -m integration tests/integratio
 | 管道步骤失败整条 FAILED 且不再步进 | （待填写） |
 | Web 定时任务/管道/回调卡片渲染正常 | （待填写） |
 
-## 11. 未通过项
+## 11. V2.3 仓库、秒传与 SSE 验收
+
+| 项目 | 结果 |
+| --- | --- |
+| `GET /registry/plugins` 列表完整（viewer 可读） | （待填写） |
+| `GET /registry/download/{build_key}` publisher 下载字节一致并写审计 | （待填写） |
+| `hubctl registry sync` 拉取 ENABLED 包并输出 SHA256 | （待填写） |
+| `GET /files/by-sha256/<哈希>` 命中复用 file_id / 404 / 422 | （待填写） |
+| `GET /jobs/{key}/logs/stream` SSE 推送日志且终态发 end | （待填写） |
+| Web 仓库页/秒传块/SSE 日志卡渲染正常 | （待填写） |
+
+## 12. 未通过项
 
 （必须为空；如有未通过项，逐条记录现象、原因与修复 commit 后复验）

@@ -107,6 +107,8 @@ python -m pytest -m integration tests/integration/test_single_container_lifecycl
 输入文件 TTL 自动清理（cleaner 进程）、`GET /api/v1/system/metrics` 指标端点与
 `hubctl backup create` 离线备份（保留最近 3 份）。V2.2 提供自动化闭环：
 Job 终态 Webhook 签名回调（自动重试）、周期定时任务、线性管道
-（上一步输出自动作为下一步输入，失败即停）。V1 时代无认证的限制必须保持 Hub 只监听 `127.0.0.1`，并由 Nginx TLS、来源网段限制和
+（上一步输出自动作为下一步输入，失败即停）。V2.3 提供插件仓库
+（`/registry` 页面 + `hubctl registry sync` 多机同步）、上传秒传查重与
+SSE 实时任务日志。V1 时代无认证的限制必须保持 Hub 只监听 `127.0.0.1`，并由 Nginx TLS、来源网段限制和
 主机防火墙保护；禁止外部访问 `/internal/v1`。容器内只有 docker-runner 进程可以访问
 Docker Socket，`hub-api` 与 `conda-runner` 被明确拒绝。

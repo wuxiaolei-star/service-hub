@@ -212,3 +212,20 @@ Task 6/7 由两个并行子智能体实施（文件集不相交，主会话统�
 Task 3/4/6 主会话独立验收后提交）；主会话负责 Task 1/5/7。
 质量门：python 非集成 256+ passed；web 153 passed + typecheck/lint/build；mypy strict 69 文件无问题。
 服务说明：`docs/service-docs/服务说明-V2.2.md`。
+
+---
+
+# V2.3 平台体验（2026-09-14，spec/plan e2f6395）
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 仓库+秒传 | 753292a | /registry/plugins 列表、/registry/download/{build_key}（publisher+，StreamingResponse+审计 registry.download）、GET /files/by-sha256（operator+，open_available 同语义）；hubctl registry list/pull/sync |
+| Task 2 SSE 日志流 | ddda6d6 | routers/logs_stream.py：游标增量+读尽自动推进、终态 event:end、300s 上限、断开回收、Job 删除优雅收尾 |
+| 路由挂载 | bc75d56 | main.py 挂载 registry/logs_stream |
+| Task 3 Web | af228f7 | 仓库页（列表+下载 saveBlob）、文件页秒传查重块、useJobLogStream（可注入 EventSource 工厂，终态降级轮询）、任务详情日志卡切换逻辑；顺手修复 automation.ts 预存 URL 断言 lint 失败 |
+| Task 4 文档 | 本次 | 指南"仓库、秒传与实时日志"章；README；验收报告 V2.3 节；服务说明-V2.3.md |
+
+实施方式：Task 1/2/3 由三个子智能体并行/接续完成，主会话验收提交并完成挂载与文档。
+质量门：python 非集成 273 passed；web 166 passed + typecheck/lint/build；mypy strict 71 文件无问题。
+分片/断点续传上传延后至 backlog（秒传已覆盖主要痛点）。
+服务说明：`docs/service-docs/服务说明-V2.3.md`。
