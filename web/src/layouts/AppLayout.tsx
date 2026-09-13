@@ -8,10 +8,13 @@ import {
   PlusCircleOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
-import { Button, Layout, Menu, Tag, Typography } from 'antd'
+import { useQuery } from '@tanstack/react-query'
+import { Badge, Button, Layout, Menu, Tag, Typography } from 'antd'
 import type { MenuProps } from 'antd'
 import { useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
+import { getHealth } from '../api/system'
+import { queryKeys } from '../hooks/queryKeys'
 
 const menuItems: MenuProps['items'] = [
   { key: '/', icon: <AppstoreOutlined />, label: <Link to="/">概览</Link> },
@@ -30,6 +33,13 @@ function selectedMenuKey(pathname: string) {
 export default function AppLayout() {
   const { pathname } = useLocation()
   const [collapsed, setCollapsed] = useState(false)
+  const health = useQuery({
+    queryKey: queryKeys.system.health(),
+    queryFn: getHealth,
+    refetchInterval: 10_000,
+  })
+  const healthLabel = health.data?.status === 'UP' ? '服务正常' : health.isError ? '服务离线' : '状态未知'
+  const healthStatus = health.data?.status === 'UP' ? 'success' : health.isError ? 'error' : 'default'
 
   return (
     <Layout className="app-shell">
@@ -63,7 +73,7 @@ export default function AppLayout() {
       <Layout>
         <Layout.Header className="app-header">
           <Typography.Text type="secondary">服务状态</Typography.Text>
-          <Tag color="success">健康状态待接入</Tag>
+          <Tag color={healthStatus}><Badge status={healthStatus} />{healthLabel}</Tag>
         </Layout.Header>
         <Layout.Content className="app-content">
           <Outlet />
