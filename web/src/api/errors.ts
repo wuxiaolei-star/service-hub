@@ -12,8 +12,12 @@ interface ErrorEnvelope {
   error: {
     code: string
     message: string
-    details?: Record<string, unknown>
+    details?: unknown
   }
+}
+
+function isDetailsRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
@@ -34,10 +38,11 @@ export function toHubApiError(reason: unknown): HubApiError {
   if (axios.isAxiosError(reason)) {
     const payload = reason.response?.data
     if (isErrorEnvelope(payload)) {
+      const details = isDetailsRecord(payload.error.details) ? payload.error.details : undefined
       return {
         code: payload.error.code,
         message: payload.error.message,
-        ...(payload.error.details === undefined ? {} : { details: payload.error.details }),
+        ...(details === undefined ? {} : { details }),
         ...(reason.response?.status === undefined ? {} : { status: reason.response.status }),
       }
     }
