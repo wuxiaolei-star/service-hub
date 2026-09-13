@@ -32,9 +32,10 @@ interface UseJobLogsResult {
  * so a refetch of the same page is suppressed instead of being appended
  * twice. Polling continues while the job is active and stops at terminal
  * state (active=false) once the log is exhausted; unmount cancels queries
- * through TanStack Query.
+ * through TanStack Query. `enabled` lets callers park the polling entirely
+ * (e.g. while the SSE log stream is healthy).
  */
-export function useJobLogs(jobId: string, active: boolean): UseJobLogsResult {
+export function useJobLogs(jobId: string, active: boolean, enabled = true): UseJobLogsResult {
   const [events, setEvents] = useState<JobLogLine[]>([])
   const [cursor, setCursor] = useState(0)
   const [exhausted, setExhausted] = useState(false)
@@ -43,7 +44,7 @@ export function useJobLogs(jobId: string, active: boolean): UseJobLogsResult {
   const query = useQuery({
     queryKey: queryKeys.jobs.logs(jobId, cursor, LOG_PAGE_LIMIT),
     queryFn: () => getJobLogs(jobId, cursor, LOG_PAGE_LIMIT),
-    enabled: active || !exhausted,
+    enabled: enabled && (active || !exhausted),
     refetchInterval: active ? POLL_INTERVAL_MS : false,
   })
 

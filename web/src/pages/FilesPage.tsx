@@ -4,6 +4,7 @@ import { Button, Card, Input, Space, Table, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { downloadFile, getFileMetadata, listFiles, uploadFile } from '../api/files'
 import { toHubApiError } from '../api/errors'
+import { findFileBySha256 } from '../api/registry'
 import EmptyState from '../components/EmptyState'
 import HubErrorAlert from '../components/HubErrorAlert'
 import PageHeader from '../components/PageHeader'
@@ -23,6 +24,8 @@ interface RowRecord {
   extension: string | null
   origin: 'server' | 'local'
 }
+
+const SHA256_PATTERN = /^[0-9a-fA-F]{64}$/
 
 function toRow(file: FileRecord): RowRecord {
   return {
@@ -75,6 +78,20 @@ export default function FilesPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.files.list() })
     },
   })
+
+  const [dedupSha, setDedupSha] = useState('')
+
+  const dedup = useMutation({ mutationFn: findFileBySha256 })
+  const dedupError =
+    dedup.error !== null && dedup.error !== undefined ? toHubApiError(dedup.error) : null
+  const dedupMiss = dedupError !== null && dedupError.status === 404
+
+  function runDedup() {
+    const value = dedupSha.trim().toLowerCase()
+    if (SHA256_PATTERN.test(value)) {
+      dedup.mutate(value)
+    }
+  }
 
   const download = useMutation({
     mutationFn: async (row: RowRecord) => {
@@ -165,6 +182,40 @@ export default function FilesPage() {
         />
         {upload.isError && <HubErrorAlert error={toHubApiError(upload.error)} />}
         {download.isError && <HubErrorAlert error={toHubApiError(download.error)} />}
+        <div style={{ marginTop: 16 }}>
+          <Typography.Text strong>秒传查重</Typography.Text>
+          <Space.Compact style={{ width: '100%', maxWidth: 480, marginTop: 8 }}>
+            <Input
+              aria-label="按 SHA256 查重"
+              placeholder="输入文件 SHA256（64 位十六进制）"
+              value={dedupSha}
+              onChange={(event) => setDedupSha(event.target.value)}
+              onPressEnter={runDedup}
+            />
+            <Button
+              type="primary"
+              loading={dedup.isPending}
+              disabled={!SHA256_PATTERN.test(dedupSha.trim())}
+              onClick={runDedup}
+            >
+              查重
+            </Button>
+          </Space.Compact>
+          <div style={{ marginTop: 8 }}>
+            {dedup.isSuccess && (
+              <Space wrap>
+                <Typography.Text>命中：{dedup.data.name}</Typography.Text>
+                <Typography.Text copyable={{ text: dedup.data.file_id }}>
+                  {dedup.data.file_id}
+                </Typography.Text>
+              </Space>
+            )}
+            {dedupMiss && <Typography.Text type="secondary">库中无此哈希文件</Typography.Text>}
+            {dedup.isError && !dedupMiss && dedupError !== null && (
+              <HubErrorAlert error={dedupError} />
+            )}
+          </div>
+        </div>
       </Card>
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space.Compact style={{ width: '100%', maxWidth: 480 }}>

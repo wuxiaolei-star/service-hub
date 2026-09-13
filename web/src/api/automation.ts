@@ -81,21 +81,17 @@ export async function listSchedules(): Promise<ListResponse<ScheduleRow>> {
 }
 
 export async function enableSchedule(scheduleId: number): Promise<ScheduleRow> {
-  const response = await apiClient.post<ScheduleRow>(
-    `/schedules//enable`,
-  )
+  const response = await apiClient.post<ScheduleRow>(`/schedules/${scheduleId}/enable`)
   return response.data
 }
 
 export async function disableSchedule(scheduleId: number): Promise<ScheduleRow> {
-  const response = await apiClient.post<ScheduleRow>(
-    `/schedules//disable`,
-  )
+  const response = await apiClient.post<ScheduleRow>(`/schedules/${scheduleId}/disable`)
   return response.data
 }
 
 export async function deleteSchedule(scheduleId: number): Promise<void> {
-  await apiClient.delete(`/schedules/`)
+  await apiClient.delete(`/schedules/${scheduleId}`)
 }
 
 export async function listJobCallbacks(jobKey: string): Promise<ListResponse<CallbackRow>> {
@@ -116,9 +112,7 @@ export async function listPipelines(): Promise<ListResponse<PipelineRow>> {
 }
 
 export async function executePipeline(pipelineId: number): Promise<PipelineExecuteResponse> {
-  const response = await apiClient.post<PipelineExecuteResponse>(
-    `/pipelines//execute`,
-  )
+  const response = await apiClient.post<PipelineExecuteResponse>(`/pipelines/${pipelineId}/execute`)
   return response.data
 }
 

@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, test, vi } from 'vitest'
 import JobDetailPage from './JobDetailPage'
 import { cancelJob, getJob, getJobLogs, getJobOutputs } from '../api/jobs'
 import { listJobCallbacks } from '../api/automation'
 import type { CallbackRow } from '../api/automation'
 import { downloadFile } from '../api/files'
+import { setEventSourceFactory } from '../hooks/useJobLogStream'
+import type { StreamEventSource } from '../hooks/useJobLogStream'
 import type { Job } from '../types/api'
 
 const navigate = vi.fn()
@@ -79,6 +81,22 @@ function renderPage() {
   )
 }
 
+class FakeStreamSource implements StreamEventSource {
+  onmessage: ((event: { data: unknown }) => void) | null = null
+  onerror: ((event: unknown) => void) | null = null
+  closed = false
+
+  addEventListener(): void {}
+
+  close(): void {
+    this.closed = true
+  }
+
+  emit(data: string): void {
+    this.onmessage?.({ data })
+  }
+}
+
 describe('JobDetailPage', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -87,6 +105,10 @@ describe('JobDetailPage', () => {
       next_cursor: null,
     })
     mockedListJobCallbacks.mockResolvedValue({ items: [] })
+  })
+
+  afterEach(() => {
+    setEventSourceFactory(null)
   })
 
   test('shows job details with polling and logs while running', async () => {
@@ -98,6 +120,29 @@ describe('JobDetailPage', () => {
     expect(screen.getByLabelText('状态：运行中')).toBeInTheDocument()
     expect(await screen.findByText(/job started/)).toBeInTheDocument()
     expect(mockedGetJobOutputs).not.toHaveBeenCalled()
+  })
+
+  test('prefers the SSE log stream while the job is active', async () => {
+    const sources: FakeStreamSource[] = []
+    let streamUrl = ''
+    setEventSourceFactory((url: string) => {
+      streamUrl = url
+      const source = new FakeStreamSource()
+      sources.push(source)
+      return source
+    })
+    mockedGetJob.mockResolvedValue(runningJob)
+
+    renderPage()
+    await screen.findByText('nc_to_shp')
+
+    expect(streamUrl).toBe('/api/v1/jobs/job-1/logs/stream')
+    act(() => {
+      sources[0].emit('event: log\ndata: {"type":"log","message":"streamed line"}\n\n')
+    })
+
+    expect(await screen.findByText(/streamed line/)).toBeInTheDocument()
+    expect(mockedGetJobLogs).not.toHaveBeenCalled()
   })
 
   test('shows the failure summary for failed jobs', async () => {

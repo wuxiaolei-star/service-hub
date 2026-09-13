@@ -1,6 +1,7 @@
 import {
   AppstoreOutlined,
   CloudOutlined,
+  CloudDownloadOutlined,
   FileOutlined,
   HddOutlined,
   MenuFoldOutlined,
@@ -25,6 +26,7 @@ import { queryKeys } from '../hooks/queryKeys'
 const menuItems: MenuProps['items'] = [
   { key: '/', icon: <AppstoreOutlined />, label: <Link to="/">概览</Link> },
   { key: '/plugins', icon: <CloudOutlined />, label: <Link to="/plugins">插件</Link> },
+  { key: '/registry', icon: <CloudDownloadOutlined />, label: <Link to="/registry">仓库</Link> },
   { key: '/files', icon: <FileOutlined />, label: <Link to="/files">文件</Link> },
   { key: '/jobs/new', icon: <PlusCircleOutlined />, label: <Link to="/jobs/new">新建任务</Link> },
   { key: '/jobs', icon: <HddOutlined />, label: <Link to="/jobs">任务</Link> },

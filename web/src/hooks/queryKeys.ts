@@ -17,6 +17,9 @@ export const queryKeys = {
     builds: (filters: QueryFilters = {}) => ['plugin-builds', 'list', filters] as const,
     build: (buildId: string) => ['plugin-builds', 'detail', buildId] as const,
   },
+  registry: {
+    list: () => ['registry', 'list'] as const,
+  },
   files: {
     list: (filters: QueryFilters = {}) => ['files', 'list', filters] as const,
     detail: (fileId: string) => ['files', 'detail', fileId] as const,

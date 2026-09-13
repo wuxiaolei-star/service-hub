@@ -13,6 +13,7 @@ import NewJobPage from '../pages/NewJobPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import PipelinesPage from '../pages/PipelinesPage'
 import PluginsPage from '../pages/PluginsPage'
+import RegistryPage from '../pages/RegistryPage'
 import SchedulesPage from '../pages/SchedulesPage'
 import SystemPage from '../pages/SystemPage'
 
@@ -28,6 +29,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <DashboardPage /> },
           { path: 'plugins', element: <PluginsPage /> },
+          { path: 'registry', element: <RegistryPage /> },
           { path: 'files', element: <FilesPage /> },
           { path: 'jobs/new', element: <NewJobPage /> },
           { path: 'jobs', element: <JobsPage /> },

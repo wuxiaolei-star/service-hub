@@ -14,6 +14,7 @@ import PageHeader from '../components/PageHeader'
 import StatusTag from '../components/StatusTag'
 import { queryKeys } from '../hooks/queryKeys'
 import { useJobLogs } from '../hooks/useJobLogs'
+import { useJobLogStream } from '../hooks/useJobLogStream'
 import type { JobStatus, FileRecord } from '../types/api'
 import { formatDateTime } from '../utils/format'
 import { formatDuration } from '../utils/jobTime'
@@ -54,7 +55,17 @@ export default function JobDetailPage() {
   })
 
   const isActive = job.data !== undefined && ACTIVE_STATUSES.has(job.data.status)
-  const logs = useJobLogs(jobId ?? '', isActive)
+  // Prefer the SSE log stream while the job runs; once the stream ends or
+  // degrades (exhausted), cursor polling takes over for a final full pass.
+  // Until the job status is known, polling stays parked so a healthy stream
+  // can own the log without an extra request.
+  const stream = useJobLogStream(jobId ?? '', isActive)
+  const pollEnabled = job.data !== undefined && (!isActive || stream.exhausted)
+  const logs = useJobLogs(jobId ?? '', isActive, pollEnabled)
+  const logEvents = pollEnabled && logs.events.length > 0 ? logs.events : stream.events
+  const logLoading = pollEnabled
+    ? logs.isLoading && logs.events.length === 0 && stream.events.length === 0
+    : stream.isLoading
 
   const outputs = useQuery({
     queryKey: queryKeys.jobs.outputs(jobId ?? 'none'),
@@ -187,7 +198,7 @@ export default function JobDetailPage() {
       </Card>
 
       <Card title="运行日志" style={{ marginBottom: 16 }}>
-        <JobLogViewer events={logs.events} isLoading={logs.isLoading} />
+        <JobLogViewer events={logEvents} isLoading={logLoading} />
       </Card>
 
       <Card title="Webhook 回调" style={{ marginBottom: 16 }}>
