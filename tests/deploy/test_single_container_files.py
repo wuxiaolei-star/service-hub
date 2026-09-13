@@ -33,7 +33,7 @@ def test_supervisor_runs_four_managed_processes() -> None:
     assert "user=hub-api" in config
     assert "user=conda-runner" in config
     assert "user=docker-runner" in config
-    assert config.count("umask=0002") == 4
-    assert config.count("autorestart=true") == 4
-    assert config.count("stopasgroup=true") == 4
-    assert config.count("killasgroup=true") == 4
+    assert config.count("umask=0002") == 5
+    assert config.count("autorestart=true") == 5
+    assert config.count("stopasgroup=true") == 5
+    assert config.count("killasgroup=true") == 5

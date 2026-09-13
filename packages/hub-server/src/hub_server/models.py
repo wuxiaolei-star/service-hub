@@ -55,10 +55,6 @@ class FileRecord(Base):
     owner_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utc_now
-    )
-    job_files: Mapped[list[JobFile]] = relationship(back_populates="file_record")
 
 
 class Plugin(Base):
@@ -196,6 +192,9 @@ class Job(Base):
     owner_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    pipeline_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pipeline_runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     exit_code: Mapped[int | None] = mapped_column(nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
@@ -332,6 +331,93 @@ class ApiKeyRecord(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class JobCallback(Base):
+    """Webhook delivery state machine for one Job terminal notification."""
+
+    __tablename__ = "job_callbacks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), index=True
+    )
+    url: Mapped[str] = mapped_column(String(1024))
+    secret: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    state: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    last_status_code: Mapped[int | None] = mapped_column(nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now
+    )
+
+
+class Schedule(Base):
+    """Periodic job creation rule evaluated by the scheduler process."""
+
+    __tablename__ = "schedules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    plugin_id: Mapped[str] = mapped_column(String(64))
+    version: Mapped[str] = mapped_column(String(32))
+    runtime_type: Mapped[str] = mapped_column(String(16))
+    inputs_json: Mapped[dict[str, object]] = mapped_column(JSON)
+    params_json: Mapped[dict[str, object]] = mapped_column(JSON)
+    interval_minutes: Mapped[int] = mapped_column()
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_job_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now
+    )
+
+
+class Pipeline(Base):
+    """A linear chain of job steps with $prev output mapping."""
+
+    __tablename__ = "pipelines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    steps_json: Mapped[list[object]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now
+    )
+    runs: Mapped[list[PipelineRun]] = relationship(back_populates="pipeline")
+
+
+class PipelineRun(Base):
+    """One execution of a pipeline; steps advance only on SUCCESS."""
+
+    __tablename__ = "pipeline_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pipeline_id: Mapped[int] = mapped_column(
+        ForeignKey("pipelines.id", ondelete="CASCADE"), index=True
+    )
+    state: Mapped[str] = mapped_column(String(16), default="RUNNING", index=True)
+    current_step: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now
+    )
+    pipeline: Mapped[Pipeline] = relationship(back_populates="runs")
 
 
 class AuditLogRecord(Base):
