@@ -23,6 +23,7 @@ from hub_server.routers.auth import router as auth_router
 from hub_server.routers.files import router as files_router
 from hub_server.routers.internal_runner import router as internal_runner_router
 from hub_server.routers.jobs import router as jobs_router
+from hub_server.routers.pipelines import router as pipelines_router
 from hub_server.routers.plugins import router as plugins_router
 from hub_server.routers.schedules import router as schedules_router
 from hub_server.routers.system import router as system_router
@@ -80,6 +81,7 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     app.include_router(audit_router, prefix="/api/v1")
     app.include_router(schedules_router, prefix="/api/v1")
     app.include_router(webhooks_router, prefix="/api/v1")
+    app.include_router(pipelines_router, prefix="/api/v1")
     app.include_router(files_router, prefix="/api/v1")
     app.include_router(plugins_router, prefix="/api/v1")
     app.include_router(jobs_router, prefix="/api/v1")

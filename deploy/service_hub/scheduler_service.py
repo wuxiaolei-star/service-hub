@@ -19,6 +19,18 @@ _STOP = {"requested": False}
 _TASKS: list[Callable[[object], int]] = []
 
 
+def _register_default_tasks() -> None:
+    """Import the automation services lazily so tests can run without them."""
+    from hub_server.services.pipelines import advance_runs
+    from hub_server.services.schedules import trigger_due
+    from hub_server.services.webhooks import deliver_due
+
+    if not _TASKS:
+        register_task(deliver_due)
+        register_task(trigger_due)
+        register_task(advance_runs)
+
+
 def register_task(task: Callable[[object], int]) -> None:
     """Register one sweep task; it receives a session and returns work count."""
     _TASKS.append(task)
@@ -35,6 +47,7 @@ def main(once: bool = False) -> int:
     settings = HubSettings.from_yaml(Path(os.environ["HUB_CONFIG_PATH"]))
     _engine, session_factory = create_engine_and_session_factory(settings.database.url)
     signal.signal(signal.SIGTERM, _handle_signal)
+    _register_default_tasks()
 
     _LOGGER.info("scheduler started with %s tasks", len(_TASKS))
     while True:
