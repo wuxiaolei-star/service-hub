@@ -151,3 +151,27 @@
 
 - 本地可执行项（python 全量非集成、ruff、mypy、web 全套、compose config、git diff --check）全部通过。
 - Linux AMD64 侧（双镜像构建、`test_web_console_lifecycle.py`、NC 双运行时集成、离线发布包制作与 SHA256 校验）待验收机执行；报告"未通过项"为空后分支才可进入 PR 评审合并 main。
+
+---
+
+# V2.0 认证、RBAC 与审计（分支 feature/v2-auth-rbac-audit，2026-09-13）
+
+依据：`docs/superpowers/specs/2026-09-13-auth-rbac-audit-v2.0-design.md` 与
+`docs/superpowers/plans/2026-09-13-auth-rbac-audit-v2.0.md`（提交于 feature/service-hub-web-console 分支）。
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 数据模型与迁移 | 3693462 | models.py 新增 User/Session/ApiKey/AuditLog 四模型（role CHECK 约束、sessions 级联删除与 24h 默认过期）；迁移 0003 建四表 |
+| Task 2 认证核心 | 27f5351 | services/auth.py：argon2 口令哈希、256 位 token/`hub_` 前缀 API Key 生成、SHA256 存储校验、会话/Key 生命周期与吊销；AuthSettings（mode/session_ttl_hours，extra=forbid）+ `HUB_AUTH_MODE` env 覆盖 + YAML 布尔 `off` 规范化 |
+| Task 3 角色矩阵 | 9b6cd0b | dependencies_auth.py：Cookie/Bearer 双通道解析、Actor 数据类、`require_role` 四级角色、401/403 错误、off 模式匿名直通；files/plugins/jobs/system 逐端点应用矩阵 |
+| Task 4 Auth 端点与引导 | b56cd0c | /auth/login|logout|me|change-password；首启引导 admin 写数据目录 bootstrap-admin.json（0600）+ must_change_password 标志；Cookie HttpOnly/SameSite=Lax/Secure 跟随 scheme |
+| Task 5 用户与 Key 管理 | 883a1d3 | /users CRUD（admin，停用/一次性重置口令）、/api-keys 签发（明文只显示一次）/吊销；Bearer 优先于 Cookie 的凭证解析 |
+| Task 6 审计 | fda06a1 | services/audit.py 打点 helper；覆盖登录成功/失败、登出、改密、上传/下载、安装/启停 Build、建/取消 Job、用户与 Key 管理；GET /audit-logs（admin，action/actor 过滤） |
+| Task 7 hubctl | 6898c9e | login/logout/whoami 子命令；HUB_TOKEN env 优先、~/.hubctl/credentials(0600) 兜底；401 输出重新登录提示 |
+| Task 8 Web 界面 | f13273f | 登录页、RequireAuth 路由守卫、顶栏身份+登出、用户管理/API Key（一次性明文展示）/审计页、/admin/* 路由 |
+| Task 9 文档验收 | 本次提交 | hub.yaml.example 增加 auth 节；单容器指南认证章节；README V2.0 说明；验收报告 V2.0 章节；test_auth_lifecycle 集成测试 |
+
+最终质量门（开发机）：python 非集成 563 passed；ruff/mypy 通过；compose config 通过；
+web 131 passed + typecheck/lint/build 通过。
+
+待 Linux AMD64 验收项已列入 `docs/reports/single-container-linux-amd64-acceptance.md` 第 8 节。

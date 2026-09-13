@@ -101,6 +101,8 @@ python -m pytest -m integration tests/integration/test_dual_runtime_nc_to_shp.py
 python -m pytest -m integration tests/integration/test_single_container_lifecycle.py -v
 ```
 
-V1 没有应用层认证。必须保持 Hub 只监听 `127.0.0.1`，并由 Nginx TLS、来源网段限制和
+自 V2.0 起默认启用登录认证与四角色权限（viewer/operator/publisher/admin）及审计日志；
+首次启动的初始管理员凭据在数据目录 `bootstrap-admin.json`。过渡期部署可用
+`HUB_AUTH_MODE=off` 临时关闭。V1 时代无认证的限制必须保持 Hub 只监听 `127.0.0.1`，并由 Nginx TLS、来源网段限制和
 主机防火墙保护；禁止外部访问 `/internal/v1`。容器内只有 docker-runner 进程可以访问
 Docker Socket，`hub-api` 与 `conda-runner` 被明确拒绝。

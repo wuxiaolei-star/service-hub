@@ -117,6 +117,24 @@ python -m pytest -m integration tests/integration/test_web_console_lifecycle.py 
 | `tests/deploy/test_documented_commands.py`（文档一致性，含 Web 章节） | 通过 |
 | `cd web && npm ci && npm run test:run && npm run typecheck && npm run lint && npm run build` | 通过 |
 
-## 8. 未通过项
+## 8. V2.0 认证与审计验收
+
+执行：
+
+```bash
+HUB_BOOTSTRAP_PASSWORD=<bootstrap-admin.json 中的口令> python -m pytest -m integration tests/integration/test_auth_lifecycle.py -v
+```
+
+| 项目 | 结果 |
+| --- | --- |
+| required 模式下未认证请求返回 401（health 除外） | （待填写） |
+| bootstrap-admin.json 生成且权限 0600 | （待填写） |
+| 初始 admin 登录成功、role=admin、must_change_password=true | （待填写） |
+| logout 后 token 立即失效 | （待填写） |
+| 登录成功/失败均落审计日志 | （待填写） |
+| `HUB_AUTH_MODE=off` 时行为与 V1 等价 | （待填写） |
+| hubctl login/whoami/logout 流程 | （待填写） |
+
+## 9. 未通过项
 
 （必须为空；如有未通过项，逐条记录现象、原因与修复 commit 后复验）
