@@ -49,8 +49,10 @@ def test_usage_reports_owner_storage_and_count(tmp_path: Path) -> None:
 
         created = client.post(
             "/api/v1/users",
+            headers=headers,
             json={"username": "op", "password": "long-enough-pass", "role": "operator"},
         )
+        assert created.status_code == 201, created.text
         user_id = created.json()["id"]
         op_login = client.post(
             "/api/v1/auth/login", json={"username": "op", "password": "long-enough-pass"}
@@ -78,8 +80,10 @@ def test_usage_requires_admin(tmp_path: Path) -> None:
 
         created = client.post(
             "/api/v1/users",
+            headers=headers,
             json={"username": "op2", "password": "long-enough-pass", "role": "operator"},
         )
+        assert created.status_code == 201, created.text
         user_id = created.json()["id"]
         op_login = client.post(
             "/api/v1/auth/login", json={"username": "op2", "password": "long-enough-pass"}
