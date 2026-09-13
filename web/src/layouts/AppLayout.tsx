@@ -3,11 +3,14 @@ import {
   CloudOutlined,
   FileOutlined,
   HddOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   PlusCircleOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
-import { Layout, Menu, Tag, Typography } from 'antd'
+import { Button, Layout, Menu, Tag, Typography } from 'antd'
 import type { MenuProps } from 'antd'
+import { useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 
 const menuItems: MenuProps['items'] = [
@@ -26,21 +29,40 @@ function selectedMenuKey(pathname: string) {
 
 export default function AppLayout() {
   const { pathname } = useLocation()
+  const [collapsed, setCollapsed] = useState(false)
 
   return (
     <Layout className="app-shell">
-      <Layout.Sider className="app-sider" breakpoint="lg" collapsedWidth={64} collapsible>
+      <Layout.Sider
+        className="app-sider"
+        theme="light"
+        breakpoint="lg"
+        collapsedWidth={64}
+        collapsible
+        collapsed={collapsed}
+        trigger={null}
+        onBreakpoint={setCollapsed}
+      >
         <Link className="brand" to="/" aria-label="Service Hub">
           <span className="brand-mark">S</span>
           <Typography.Text className="brand-name">Service Hub</Typography.Text>
         </Link>
-        <nav aria-label="主导航">
-          <Menu mode="inline" selectedKeys={[selectedMenuKey(pathname)]} items={menuItems} />
+        <nav id="main-navigation" aria-label="主导航">
+          <Menu theme="light" mode="inline" selectedKeys={[selectedMenuKey(pathname)]} items={menuItems} />
         </nav>
+        <Button
+          className="sider-toggle"
+          type="text"
+          aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
+          aria-controls="main-navigation"
+          aria-expanded={!collapsed}
+          icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+          onClick={() => setCollapsed((value) => !value)}
+        />
       </Layout.Sider>
       <Layout>
         <Layout.Header className="app-header">
-          <Typography.Text>服务状态</Typography.Text>
+          <Typography.Text type="secondary">服务状态</Typography.Text>
           <Tag color="success">健康状态待接入</Tag>
         </Layout.Header>
         <Layout.Content className="app-content">

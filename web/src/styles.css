@@ -35,6 +35,35 @@ button:focus-visible,
 
 .app-sider {
   border-right: 1px solid #dce8f5;
+  color: #1f2937;
+}
+
+.app-sider .ant-menu {
+  background: transparent;
+  color: #1f2937;
+}
+
+.app-sider .ant-menu-item-selected {
+  background: #dce8f5;
+}
+
+.sider-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 16px;
+  color: #64748b;
+}
+
+.ant-layout-sider-collapsed .sider-toggle {
+  right: 8px;
+}
+
+.ant-layout-sider-collapsed .brand {
+  padding: 0 18px;
+}
+
+.ant-layout-sider-collapsed .brand-name {
+  display: none;
 }
 
 .brand {
@@ -79,6 +108,7 @@ button:focus-visible,
   padding: 0 24px;
   border-bottom: 1px solid #dce8f5;
   background: #fff;
+  color: #1f2937;
 }
 
 .app-content {
@@ -88,6 +118,7 @@ button:focus-visible,
 .app-content .ant-card {
   border-color: #dce8f5;
   border-radius: 8px;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 6%);
 }
 
 @media (max-width: 991px) {
