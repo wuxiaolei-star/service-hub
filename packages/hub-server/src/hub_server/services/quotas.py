@@ -39,10 +39,10 @@ class QuotaService:
             return None
         return self._session.get(UserRecord, actor.id)
 
-    def _owner_filter(self, actor: Actor) -> ColumnElement[bool]:
+    def _owner_filter(self, actor: Actor) -> ColumnElement[bool] | None:
         if actor.kind == "user" and actor.id is not None:
             return FileRecord.owner_user_id == actor.id
-        return False
+        return None
 
     def enforce_upload(
         self, actor: Actor, incoming_bytes: int, *, exclude_file_id: int | None = None
@@ -59,7 +59,10 @@ class QuotaService:
             owner_query = self._session.query(
                 func.coalesce(func.sum(FileRecord.size_bytes), 0),
                 func.count(FileRecord.id),
-            ).filter(self._owner_filter(actor))
+            )
+            owner_condition = self._owner_filter(actor)
+            if owner_condition is not None:
+                owner_query = owner_query.filter(owner_condition)
             if exclude_file_id is not None:
                 owner_query = owner_query.filter(FileRecord.id != exclude_file_id)
             used_bytes, used_count = owner_query.one()
