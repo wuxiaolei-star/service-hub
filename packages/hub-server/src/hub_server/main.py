@@ -1,7 +1,9 @@
 """ASGI application factory for Python Service Hub."""
 
+import json
 import logging
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from alembic import command
 from hub_server.db import create_engine_and_session_factory
 from hub_server.errors import HubError
+from hub_server.routers.auth import router as auth_router
 from hub_server.routers.files import router as files_router
 from hub_server.routers.internal_runner import router as internal_runner_router
 from hub_server.routers.jobs import router as jobs_router
@@ -57,6 +60,7 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
         app.state.engine = engine
         app.state.session_factory = session_factory
         app.state.storage = LocalStorage(settings.storage.root)
+        _bootstrap_admin(settings)
         try:
             yield
         finally:
@@ -65,6 +69,7 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     app = FastAPI(title="Python Service Hub", version=settings.hub_version, lifespan=lifespan)
     app.state.settings = settings
     app.include_router(system_router, prefix="/api/v1")
+    app.include_router(auth_router, prefix="/api/v1")
     app.include_router(files_router, prefix="/api/v1")
     app.include_router(plugins_router, prefix="/api/v1")
     app.include_router(jobs_router, prefix="/api/v1")
@@ -95,6 +100,43 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
         return _error_response("UNEXPECTED_ERROR", "服务器内部错误", 500)
 
     return app
+
+
+def _bootstrap_admin(settings: HubSettings) -> None:
+    """Seed the first admin account into a protected file on first run."""
+    if settings.auth.mode != "required":
+        return
+    from hub_server.db import create_engine_and_session_factory
+    from hub_server.models import UserRecord
+    from hub_server.services.auth import hash_password
+
+    engine, session_factory = create_engine_and_session_factory(settings.database.url)
+    try:
+        with session_factory() as session:
+            if session.query(UserRecord).count() > 0:
+                return
+            password = secrets.token_urlsafe(18)
+            session.add(
+                UserRecord(
+                    username="admin",
+                    password_hash=hash_password(password),
+                    role="admin",
+                    must_change_password=True,
+                )
+            )
+            session.commit()
+    finally:
+        engine.dispose()
+
+    bootstrap_root = Path(settings.storage.root)
+    bootstrap_root.mkdir(parents=True, exist_ok=True)
+    bootstrap_file = bootstrap_root / "bootstrap-admin.json"
+    bootstrap_file.write_text(
+        json.dumps({"username": "admin", "password": password}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    bootstrap_file.chmod(0o600)
+    _LOGGER.info("初始管理员凭据已写入 %s", bootstrap_file)
 
 
 def _error_response(

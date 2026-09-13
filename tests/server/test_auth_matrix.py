@@ -42,7 +42,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             for role in ("viewer", "operator", "publisher", "admin"):
                 session.add(
                     UserRecord(
-                        username=role,
+                        username=f"u_{role}",
                         password_hash=hash_password("password-secret"),
                         role=role,
                     )
@@ -54,7 +54,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 def _token_for(client: TestClient, role: str) -> str:
     factory = client.app.state.session_factory
     with factory() as session:
-        user = session.query(UserRecord).filter(UserRecord.username == role).one()
+        user = session.query(UserRecord).filter(UserRecord.username == f"u_{role}").one()
         service = AuthService(session)
         _record, token = service.create_session(user.id)
         session.commit()
