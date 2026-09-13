@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func
+from sqlalchemy import ColumnElement, func
 from sqlalchemy.orm import Session
 
 from hub_server.dependencies_auth import Actor
@@ -39,7 +39,7 @@ class QuotaService:
             return None
         return self._session.get(UserRecord, actor.id)
 
-    def _owner_filter(self, actor: Actor) -> object:
+    def _owner_filter(self, actor: Actor) -> ColumnElement[bool]:
         if actor.kind == "user" and actor.id is not None:
             return FileRecord.owner_user_id == actor.id
         return False
