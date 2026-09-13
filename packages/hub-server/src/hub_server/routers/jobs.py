@@ -25,6 +25,7 @@ from hub_server.schemas import (
 )
 from hub_server.services.audit import record as audit
 from hub_server.services.jobs import JobService
+from hub_server.services.quotas import QuotaService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
 
@@ -48,12 +49,14 @@ def create_job(
     settings: Annotated[HubSettings, Depends(get_settings)],
 ) -> JobResponse:
     """Create a pending Job for one exact enabled runtime Build."""
+    QuotaService(session, settings.quotas).enforce_job_creation(actor)
     job = JobService(session, storage, settings).create(
         plugin_id=request.plugin_id,
         version=request.version,
         runtime_type=request.runtime_type,
         inputs=request.inputs,
         params=request.params,
+        owner_user_id=actor.id if actor.kind == "user" else None,
     )
     audit(
         session,

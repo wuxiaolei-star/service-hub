@@ -33,6 +33,7 @@ class JobService:
         runtime_type: RuntimeType | None,
         inputs: Mapping[str, object],
         params: Mapping[str, object],
+        owner_user_id: int | None = None,
     ) -> Job:
         selected_runtime: RuntimeType = runtime_type or "docker"
         build = self._resolve_enabled_build(plugin_id, version, selected_runtime)
@@ -48,6 +49,7 @@ class JobService:
             inputs_json=validated_inputs,
             timeout_seconds=manifest.execution.timeout,
             cancel_requested=False,
+            owner_user_id=owner_user_id,
         )
         try:
             self._session.add(job)

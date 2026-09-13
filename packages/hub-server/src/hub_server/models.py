@@ -193,6 +193,9 @@ class Job(Base):
     workspace_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     timeout_seconds: Mapped[int]
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     exit_code: Mapped[int | None] = mapped_column(nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)

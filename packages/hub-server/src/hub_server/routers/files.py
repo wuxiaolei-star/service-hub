@@ -17,6 +17,7 @@ from hub_server.models import FileRecord
 from hub_server.schemas import FileListResponse, FileResponse
 from hub_server.services.audit import record as audit
 from hub_server.services.files import FileService
+from hub_server.services.quotas import QuotaService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage, StreamingUpload
 
@@ -69,9 +70,16 @@ async def upload_file(
 ) -> FileResponse:
     """Parse one bounded multipart upload directly into Hub-managed storage."""
     service = _file_service(session, storage, settings)
+    quota = QuotaService(session, settings.quotas)
+    quota.enforce_upload(
+        actor, int(request.headers.get("content-length", "0") or 0)
+    )
     record = await _stream_multipart_file(
         request, service, storage, settings.uploads.max_size_bytes
     )
+    if actor.kind == "user" and actor.id is not None:
+        record.owner_user_id = actor.id
+    quota.enforce_upload(actor, record.size_bytes, exclude_file_id=record.id)
     audit(
         session,
         actor_type=actor.kind,
