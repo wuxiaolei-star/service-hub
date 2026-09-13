@@ -3,6 +3,7 @@ import { createBrowserRouter } from 'react-router-dom'
 import AppLayout from '../layouts/AppLayout'
 import DashboardPage from '../pages/DashboardPage'
 import NotFoundPage from '../pages/NotFoundPage'
+import PluginsPage from '../pages/PluginsPage'
 import SystemPage from '../pages/SystemPage'
 
 function placeholderPage(title: string) {
@@ -19,7 +20,7 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { index: true, element: <DashboardPage /> },
-      { path: 'plugins', element: placeholderPage('插件') },
+      { path: 'plugins', element: <PluginsPage /> },
       { path: 'files', element: placeholderPage('文件') },
       { path: 'jobs/new', element: placeholderPage('新建任务') },
       { path: 'jobs', element: placeholderPage('任务') },

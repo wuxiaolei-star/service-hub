@@ -20,6 +20,14 @@ function isDetailsRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isHubApiError(value: unknown): value is HubApiError {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const candidate = value as Record<string, unknown>
+  return typeof candidate.code === 'string' && typeof candidate.message === 'string'
+}
+
 function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
   if (typeof value !== 'object' || value === null) {
     return false
@@ -56,6 +64,10 @@ export function toHubApiError(reason: unknown): HubApiError {
       message: reason.message || '请求失败',
       status: reason.response.status,
     }
+  }
+
+  if (isHubApiError(reason)) {
+    return reason
   }
 
   if (reason instanceof Error) {
