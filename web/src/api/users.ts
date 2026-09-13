@@ -19,6 +19,12 @@ export interface ApiKeyRow {
   last_used_at: string | null
 }
 
+export interface UserUsage {
+  total_bytes: number
+  file_count: number
+  active_jobs: number
+}
+
 interface AuditRow {
   id: number
   at: string | null
@@ -58,6 +64,11 @@ export async function resetUserPassword(
   userId: number,
 ): Promise<{ username: string; password: string }> {
   const response = await client().post(`/users/${userId}/reset-password`)
+  return response.data
+}
+
+export async function getUserUsage(userId: number): Promise<UserUsage> {
+  const response = await client().get<UserUsage>(`/users/${userId}/usage`)
   return response.data
 }
 

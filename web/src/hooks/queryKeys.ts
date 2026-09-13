@@ -7,6 +7,7 @@ export const queryKeys = {
   system: {
     health: () => ['system', 'health'] as const,
     info: () => ['system', 'info'] as const,
+    metrics: () => ['system', 'metrics'] as const,
   },
   plugins: {
     list: (filters: QueryFilters = {}) => ['plugins', 'list', filters] as const,
@@ -23,6 +24,7 @@ export const queryKeys = {
   },
   users: {
     list: (filters: QueryFilters = {}) => ['users', 'list', filters] as const,
+    usage: (userId: number) => ['users', 'usage', userId] as const,
   },
   apiKeys: {
     list: (filters: QueryFilters = {}) => ['api-keys', 'list', filters] as const,

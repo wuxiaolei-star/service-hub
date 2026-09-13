@@ -1,9 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Card, Descriptions, Skeleton } from 'antd'
-import { getSystemInfo } from '../api/system'
+import { Alert, Card, Col, Descriptions, Row, Skeleton, Statistic } from 'antd'
+import { getMetrics, getSystemInfo, parseHubMetrics } from '../api/system'
+import { toHubApiError } from '../api/errors'
 import HubErrorAlert from '../components/HubErrorAlert'
 import PageHeader from '../components/PageHeader'
 import { queryKeys } from '../hooks/queryKeys'
+import { formatFileSize } from '../utils/format'
+
+const METRICS_POLL_INTERVAL_MS = 15_000
 
 function systemError(error: unknown) {
   return error instanceof Error
@@ -13,10 +17,50 @@ function systemError(error: unknown) {
 
 export default function SystemPage() {
   const systemInfo = useQuery({ queryKey: queryKeys.system.info(), queryFn: getSystemInfo })
+  const metrics = useQuery({
+    queryKey: queryKeys.system.metrics(),
+    queryFn: getMetrics,
+    refetchInterval: METRICS_POLL_INTERVAL_MS,
+  })
+
+  const metricsError =
+    metrics.error !== null && metrics.error !== undefined ? toHubApiError(metrics.error) : undefined
+  const metricsForbidden = metricsError?.status === 403
+  const parsedMetrics = metrics.data !== undefined ? parseHubMetrics(metrics.data) : undefined
 
   return (
     <div>
       <PageHeader title="系统信息" subtitle="当前 Service Hub 实例的只读运行信息。" />
+      {!metricsForbidden && (
+        <Card title="运行指标" style={{ marginBottom: 16 }}>
+          {metrics.isLoading && <Skeleton active paragraph={{ rows: 2 }} />}
+          {metricsError !== undefined && !metricsForbidden && (
+            <HubErrorAlert error={metricsError} onRetry={() => void metrics.refetch()} />
+          )}
+          {parsedMetrics !== undefined && (
+            <Row gutter={[16, 16]}>
+              <Col xs={12} md={8} xl={4}>
+                <Statistic title="文件总数" value={parsedMetrics['hub_files_total'] ?? 0} />
+              </Col>
+              <Col xs={12} md={8} xl={4}>
+                <Statistic
+                  title="存储字节"
+                  value={formatFileSize(parsedMetrics['hub_files_bytes_total'] ?? 0)}
+                />
+              </Col>
+              <Col xs={12} md={8} xl={4}>
+                <Statistic title="活动任务" value={parsedMetrics['hub_jobs_active'] ?? 0} />
+              </Col>
+              <Col xs={12} md={8} xl={4}>
+                <Statistic title="用户数" value={parsedMetrics['hub_users_total'] ?? 0} />
+              </Col>
+              <Col xs={12} md={8} xl={4}>
+                <Statistic title="活跃会话" value={parsedMetrics['hub_sessions_active'] ?? 0} />
+              </Col>
+            </Row>
+          )}
+        </Card>
+      )}
       <Alert
         type="warning"
         showIcon

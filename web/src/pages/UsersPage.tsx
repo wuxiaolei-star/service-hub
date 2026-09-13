@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Form, Input, Modal, Select, Space, Table, Typography } from 'antd'
+import { Button, Form, Input, Modal, Select, Space, Table, Typography } from 'antd'
 import { useState } from 'react'
-import { createUser, listUsers, resetUserPassword, disableUser } from '../api/users'
+import { createUser, getUserUsage, listUsers, resetUserPassword, disableUser } from '../api/users'
 import { toHubApiError } from '../api/errors'
 import HubErrorAlert from '../components/HubErrorAlert'
 import PageHeader from '../components/PageHeader'
 import { queryKeys } from '../hooks/queryKeys'
+import { formatFileSize } from '../utils/format'
 
 interface UserRow {
   id: number
@@ -13,6 +14,23 @@ interface UserRow {
   role: string
   is_active: boolean
   must_change_password: boolean
+}
+
+function UserUsageCell({ userId }: { userId: number }) {
+  const usage = useQuery({
+    queryKey: queryKeys.users.usage(userId),
+    queryFn: () => getUserUsage(userId),
+  })
+
+  if (usage.isLoading || usage.data === undefined) {
+    return <span>-</span>
+  }
+  return (
+    <span>
+      {formatFileSize(usage.data.total_bytes)}
+      <Typography.Text type="secondary"> · {usage.data.file_count} 个文件</Typography.Text>
+    </span>
+  )
 }
 
 export default function UsersPage() {
@@ -45,6 +63,11 @@ export default function UsersPage() {
       title: '状态',
       dataIndex: 'is_active',
       render: (value: boolean) => (value ? '启用' : '已停用'),
+    },
+    {
+      title: '用量',
+      key: 'usage',
+      render: (_: unknown, row: UserRow) => <UserUsageCell userId={row.id} />,
     },
     {
       title: '操作',
