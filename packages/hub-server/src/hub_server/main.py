@@ -24,6 +24,8 @@ from hub_server.routers.internal_runner import router as internal_runner_router
 from hub_server.routers.jobs import router as jobs_router
 from hub_server.routers.plugins import router as plugins_router
 from hub_server.routers.system import router as system_router
+from hub_server.routers.users import key_router as api_keys_router
+from hub_server.routers.users import router as users_router
 from hub_server.schemas import ErrorBody, ErrorResponse
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
@@ -70,6 +72,8 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     app.state.settings = settings
     app.include_router(system_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(users_router, prefix="/api/v1")
+    app.include_router(api_keys_router, prefix="/api/v1")
     app.include_router(files_router, prefix="/api/v1")
     app.include_router(plugins_router, prefix="/api/v1")
     app.include_router(jobs_router, prefix="/api/v1")

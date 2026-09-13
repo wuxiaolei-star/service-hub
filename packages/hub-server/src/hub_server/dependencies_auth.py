@@ -40,13 +40,12 @@ def _auth_required(message: str = "请先登录") -> HubError:
 
 
 def _extract_credential(request: Request) -> str | None:
-    cookie = request.cookies.get(SESSION_COOKIE_NAME)
-    if cookie:
-        return cookie
+    # An explicit Authorization header wins over the browser session cookie so
+    # machine clients never get shadowed by an interactive login.
     authorization = request.headers.get("authorization")
     if authorization and authorization.startswith("Bearer "):
         return authorization.removeprefix("Bearer ").strip()
-    return None
+    return request.cookies.get(SESSION_COOKIE_NAME)
 
 
 def resolve_actor(
