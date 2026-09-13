@@ -7,13 +7,17 @@ import {
   MenuUnfoldOutlined,
   PlusCircleOutlined,
   SettingOutlined,
+  UserOutlined,
+  KeyOutlined,
+  FileSearchOutlined,
 } from '@ant-design/icons'
-import { useQuery } from '@tanstack/react-query'
-import { Badge, Button, Layout, Menu, Tag, Typography } from 'antd'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Badge, Button, Layout, Menu, Space, Tag, Typography } from 'antd'
 import type { MenuProps } from 'antd'
 import { useState } from 'react'
-import { Link, Outlet, useLocation } from 'react-router-dom'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { getHealth } from '../api/system'
+import { fetchMe, logout } from '../api/auth'
 import { queryKeys } from '../hooks/queryKeys'
 
 const menuItems: MenuProps['items'] = [
@@ -23,6 +27,9 @@ const menuItems: MenuProps['items'] = [
   { key: '/jobs/new', icon: <PlusCircleOutlined />, label: <Link to="/jobs/new">新建任务</Link> },
   { key: '/jobs', icon: <HddOutlined />, label: <Link to="/jobs">任务</Link> },
   { key: '/system', icon: <SettingOutlined />, label: <Link to="/system">系统</Link> },
+  { key: '/admin/users', icon: <UserOutlined />, label: <Link to="/admin/users">用户</Link> },
+  { key: '/admin/api-keys', icon: <KeyOutlined />, label: <Link to="/admin/api-keys">API Key</Link> },
+  { key: '/admin/audit', icon: <FileSearchOutlined />, label: <Link to="/admin/audit">审计</Link> },
 ]
 
 function selectedMenuKey(pathname: string) {
@@ -33,6 +40,16 @@ function selectedMenuKey(pathname: string) {
 export default function AppLayout() {
   const { pathname } = useLocation()
   const [collapsed, setCollapsed] = useState(false)
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const me = useQuery({ queryKey: queryKeys.auth.me(), queryFn: fetchMe, retry: false })
+  const logoutMutation = useMutation({
+    mutationFn: logout,
+    onSuccess: () => {
+      queryClient.clear()
+      navigate('/login', { replace: true })
+    },
+  })
   const health = useQuery({
     queryKey: queryKeys.system.health(),
     queryFn: getHealth,
@@ -73,7 +90,21 @@ export default function AppLayout() {
       <Layout>
         <Layout.Header className="app-header">
           <Typography.Text type="secondary">服务状态</Typography.Text>
-          <Tag color={healthStatus}><Badge status={healthStatus} />{healthLabel}</Tag>
+          <Space>
+            <Tag color={healthStatus}><Badge status={healthStatus} />{healthLabel}</Tag>
+            {me.data !== undefined && (
+              <Typography.Text>
+                {me.data.username}（{me.data.role}）
+              </Typography.Text>
+            )}
+            <Button
+              size="small"
+              loading={logoutMutation.isPending}
+              onClick={() => logoutMutation.mutate()}
+            >
+              登出
+            </Button>
+          </Space>
         </Layout.Header>
         <Layout.Content className="app-content">
           <Outlet />

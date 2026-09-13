@@ -4,6 +4,17 @@ import { vi } from 'vitest'
 import App from '../App'
 import '../styles.css'
 
+vi.mock('../api/auth', () => ({
+  fetchMe: vi.fn().mockResolvedValue({
+    actor_type: 'user',
+    id: 1,
+    username: 'admin',
+    role: 'admin',
+    must_change_password: false,
+  }),
+  logout: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../api/system', () => ({
   getHealth: vi.fn().mockResolvedValue({ status: 'UP' }),
   getSystemInfo: vi.fn().mockResolvedValue({
@@ -25,6 +36,8 @@ vi.mock('../api/jobs', () => ({
 
 test('renders a pale, accessible, collapsible service navigation shell', async () => {
   render(<App />)
+
+  await screen.findByText(/admin/)
 
   const user = userEvent.setup()
   const sidebar = document.querySelector<HTMLElement>('aside.app-sider')
