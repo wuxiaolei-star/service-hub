@@ -2,6 +2,7 @@ import { Card, Typography } from 'antd'
 import { createBrowserRouter } from 'react-router-dom'
 import AppLayout from '../layouts/AppLayout'
 import DashboardPage from '../pages/DashboardPage'
+import FilesPage from '../pages/FilesPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import PluginsPage from '../pages/PluginsPage'
 import SystemPage from '../pages/SystemPage'
@@ -21,7 +22,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'plugins', element: <PluginsPage /> },
-      { path: 'files', element: placeholderPage('文件') },
+      { path: 'files', element: <FilesPage /> },
       { path: 'jobs/new', element: placeholderPage('新建任务') },
       { path: 'jobs', element: placeholderPage('任务') },
       { path: 'jobs/:jobId', element: placeholderPage('任务详情') },
