@@ -51,4 +51,20 @@
 
 提交信息：`feat(web): add plugin build management`
 
+## Task 7：文件管理页与最近文件持久化（提交 ec2d8b7）
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `web/src/hooks/useRecentFiles.ts` | 新增 | localStorage 持久化（键 `service-hub.recent-files.v1`）最近 50 条文件元数据；按 file_id 去重、损坏 JSON 与非法条目忽略、只存公开元数据（无 blob/token）；提供 recordUpload/forgetRecord/lookup |
+| `web/src/pages/FilesPage.tsx` | 新增 | 上传面板（进度/失败告警）+ 服务器最近 100 条与本地记录合并展示（标注来源）+ 按 ID 查找（查找失败保留本地记录并提示）+ 复制文件 ID + 安全下载（文件名经 `safeDownloadName`；元数据获取失败时用行内名称回退，不阻断 blob 下载） |
+| `web/src/routes/router.tsx` | 修改 | `/files` → `FilesPage` |
+| `web/src/hooks/useRecentFiles.test.ts` | 新增 | 6 条：仅存元数据且去重、50 条上限、损坏 JSON 忽略、非法条目过滤、forgetRecord、lookup |
+| `web/src/pages/FilesPage.test.tsx` | 新增 | 4 条工作流：上传进度+列表、服务器没有的 ID 从最近记录查找、查找失败保留记录、安全文件名下载 |
+
+实施要点：`URL.createObjectURL` 在 jsdom 中不存在，用 `vi.stubGlobal` 模拟；下载链路对元数据失败做了容错（先取 blob 再尽力取名字）。
+
+验证：连续 2 轮 99 tests passed；typecheck/lint/build 通过。
+
+提交信息：`feat(web): add file upload and download management`
+
 ---
