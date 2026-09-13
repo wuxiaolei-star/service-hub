@@ -14,6 +14,7 @@ def test_health_requires_all_processes_running() -> None:
                 "hub-api": "RUNNING",
                 "conda-runner": "FATAL",
                 "docker-runner": "RUNNING",
+        "cleaner": "RUNNING",
             },
             api_up=True,
             data_writable=True,
@@ -29,6 +30,7 @@ def test_health_requires_api() -> None:
                 "hub-api": "RUNNING",
                 "conda-runner": "RUNNING",
                 "docker-runner": "RUNNING",
+        "cleaner": "RUNNING",
             },
             api_up=False,
             data_writable=True,
@@ -44,6 +46,7 @@ def test_health_requires_writable_data() -> None:
                 "hub-api": "RUNNING",
                 "conda-runner": "RUNNING",
                 "docker-runner": "RUNNING",
+        "cleaner": "RUNNING",
             },
             api_up=True,
             data_writable=False,
@@ -59,6 +62,7 @@ def test_health_requires_docker_ping() -> None:
                 "hub-api": "RUNNING",
                 "conda-runner": "RUNNING",
                 "docker-runner": "RUNNING",
+        "cleaner": "RUNNING",
             },
             api_up=True,
             data_writable=True,
@@ -73,6 +77,7 @@ def test_health_accepts_all_required_dependencies() -> None:
             "hub-api": "RUNNING",
             "conda-runner": "RUNNING",
             "docker-runner": "RUNNING",
+        "cleaner": "RUNNING",
         },
         api_up=True,
         data_writable=True,
@@ -91,6 +96,7 @@ def test_main_returns_success_when_runtime_probes_are_healthy(
             "hub-api": "RUNNING",
             "conda-runner": "RUNNING",
             "docker-runner": "RUNNING",
+        "cleaner": "RUNNING",
         },
     )
     monkeypatch.setattr(healthcheck, "_api_is_up", lambda: True)
@@ -111,6 +117,7 @@ def test_main_reports_a_single_safe_failure_line(
             "hub-api": "RUNNING",
             "conda-runner": "RUNNING",
             "docker-runner": "RUNNING",
+        "cleaner": "RUNNING",
         },
     )
     monkeypatch.setattr(healthcheck, "_api_is_up", lambda: False)

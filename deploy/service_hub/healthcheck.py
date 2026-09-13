@@ -16,7 +16,7 @@ from urllib.request import urlopen
 _API_HEALTH_URL = "http://127.0.0.1:8000/api/v1/system/health"
 _DATA_ROOT = Path("/data")
 _SUPERVISOR_SOCKET = "/run/service-hub/supervisor.sock"
-_REQUIRED_PROCESSES = ("hub-api", "conda-runner", "docker-runner")
+_REQUIRED_PROCESSES = ("hub-api", "conda-runner", "docker-runner", "cleaner")
 
 
 class HealthcheckError(RuntimeError):
@@ -145,3 +145,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# V2.1: cleaner 加入必需进程列表

@@ -39,9 +39,21 @@ def upgrade() -> None:
         )
         batch.create_index("ix_file_records_owner_user_id", ["owner_user_id"])
 
+    with op.batch_alter_table("jobs") as batch:
+        batch.add_column(sa.Column("owner_user_id", sa.Integer(), nullable=True))
+        batch.create_foreign_key(
+            "fk_jobs_owner_user", "users", ["owner_user_id"], ["id"],
+            ondelete="SET NULL",
+        )
+        batch.create_index("ix_jobs_owner_user_id", ["owner_user_id"])
+
 
 def downgrade() -> None:
     """Remove quota overrides and file ownership."""
+    with op.batch_alter_table("jobs") as batch:
+        batch.drop_index("ix_jobs_owner_user_id")
+        batch.drop_column("owner_user_id")
+
     with op.batch_alter_table("file_records") as batch:
         batch.drop_index("ix_file_records_owner_user_id")
         batch.drop_column("owner_user_id")

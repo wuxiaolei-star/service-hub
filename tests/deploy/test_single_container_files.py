@@ -23,7 +23,7 @@ def test_runtime_image_keeps_the_docker_job_data_group_compatible() -> None:
     assert "groupadd --system --gid 65532 hub-data" in dockerfile
 
 
-def test_supervisor_runs_three_explicit_users() -> None:
+def test_supervisor_runs_four_managed_processes() -> None:
     """Each persistent process has a distinct, explicit least-privilege user."""
     config = Path("deploy/service_hub/supervisord.conf").read_text(encoding="utf-8")
 
@@ -33,7 +33,7 @@ def test_supervisor_runs_three_explicit_users() -> None:
     assert "user=hub-api" in config
     assert "user=conda-runner" in config
     assert "user=docker-runner" in config
-    assert config.count("umask=0002") == 3
-    assert config.count("autorestart=true") == 3
-    assert config.count("stopasgroup=true") == 3
-    assert config.count("killasgroup=true") == 3
+    assert config.count("umask=0002") == 4
+    assert config.count("autorestart=true") == 4
+    assert config.count("stopasgroup=true") == 4
+    assert config.count("killasgroup=true") == 4
