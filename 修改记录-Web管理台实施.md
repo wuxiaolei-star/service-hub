@@ -194,3 +194,21 @@ web 131 passed + typecheck/lint/build 通过。
 Task 6/7 由两个并行子智能体实施（文件集不相交，主会话统一验收提交）。
 最终质量门：python 非集成 599 passed；web 139 passed + typecheck/lint/build；mypy strict 63 文件无问题。
 服务说明：`docs/service-docs/服务说明-V2.1.md`。
+
+---
+
+# V2.2 自动化闭环（2026-09-13，spec/plan 6bf3551）
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 模型/迁移/scheduler | bb91a61+ee0f593 | 迁移 0005（job_callbacks/schedules/pipelines/pipeline_runs + jobs.pipeline_run_id）；supervisord 第五进程 scheduler；FileRecord 列丢失事故修复 |
+| Task 3 定时任务 | 5eeef3c | /schedules CRUD（operator+/delete admin）+ trigger_due（逐条独立 commit、失败 denied 不推进） |
+| Task 2+6 Webhook+Web | 08f09b9 | services/webhooks.py（HMAC 签名、3 次退避、EXHAUSTED）+ GET /jobs/{key}/callbacks；Web 定时任务页/管道页/回调卡/菜单路由 |
+| Task 4 管道 | 4bef6d9 | /pipelines CRUD+execute+runs；start_run/advance_runs（$prev 替换、失败即停、审计） |
+| Task 5 接线 | 8583075+b16b9f1 | main.py 挂载三 router；POST /jobs 可选 callback 登记；scheduler 注册 deliver_due/trigger_due/advance_runs |
+| Task 7 文档 | 87ee255 后续 | 指南自动化章节；README；验收报告 V2.2 节；集成 test_automation_lifecycle.py；服务说明-V2.2.md |
+
+实施方式：Task 2/3/4/6 由四个并行子智能体完成（Task 2 因并发超限重发一次；
+Task 3/4/6 主会话独立验收后提交）；主会话负责 Task 1/5/7。
+质量门：python 非集成 256+ passed；web 153 passed + typecheck/lint/build；mypy strict 69 文件无问题。
+服务说明：`docs/service-docs/服务说明-V2.2.md`。

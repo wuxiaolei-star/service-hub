@@ -155,6 +155,24 @@ HUB_BOOTSTRAP_PASSWORD=<口令> python -m pytest -m integration tests/integratio
 | `hubctl backup create` 生成备份且超出份数被修剪 | （待填写） |
 | Web 用户页用量列与系统页指标卡渲染 | （待填写） |
 
-## 10. 未通过项
+## 10. V2.2 自动化闭环验收
+
+执行：
+
+```bash
+HUB_BOOTSTRAP_PASSWORD=<口令> python -m pytest -m integration tests/integration/test_automation_lifecycle.py -v
+```
+
+| 项目 | 结果 |
+| --- | --- |
+| scheduler 为第五个受管进程且 RUNNING | （待填写） |
+| 创建带 callback 的 Job → 终态后收到签名 POST（本地 stub 校验 HMAC） | （待填写） |
+| 回调失败退避重试 3 次后 EXHAUSTED | （待填写） |
+| 定时任务到点自动创建 Job 且 next_run_at 推进 | （待填写） |
+| 两步管道 execute 后自动步进，$prev 替换为实际 file_id | （待填写） |
+| 管道步骤失败整条 FAILED 且不再步进 | （待填写） |
+| Web 定时任务/管道/回调卡片渲染正常 | （待填写） |
+
+## 11. 未通过项
 
 （必须为空；如有未通过项，逐条记录现象、原因与修复 commit 后复验）
