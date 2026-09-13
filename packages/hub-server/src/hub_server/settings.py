@@ -53,6 +53,23 @@ class AuthSettings(StrictSettingsModel):
         return value
 
 
+class QuotasSettings(StrictSettingsModel):
+    """Global storage and concurrency quota defaults (per-user override in DB)."""
+
+    enabled: bool = True
+    max_total_bytes: int = Field(default=1024**4, gt=0)
+    max_file_count: int = Field(default=10000, gt=0)
+    max_concurrent_jobs: int = Field(default=8, gt=0)
+
+
+class RetentionSettings(StrictSettingsModel):
+    """File lifecycle and backup retention configuration."""
+
+    input_ttl_hours: int = Field(default=720, gt=0)
+    sweep_interval_minutes: int = Field(default=30, gt=0)
+    backup_keep: int = Field(default=3, gt=0)
+
+
 def _native_architecture() -> Literal["amd64", "arm64"]:
     machine = platform.machine().lower()
     if machine in {"amd64", "x86_64"}:
@@ -69,6 +86,8 @@ class HubSettings(StrictSettingsModel):
     uploads: UploadSettings
     runner: RunnerSettings
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    quotas: QuotasSettings = Field(default_factory=QuotasSettings)
+    retention: RetentionSettings = Field(default_factory=RetentionSettings)
     hub_version: str = "0.1.0"
     platform_os: Literal["linux"] = "linux"
     platform_arch: Literal["amd64", "arm64"] = Field(default_factory=_native_architecture)

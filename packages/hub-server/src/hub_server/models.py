@@ -52,6 +52,9 @@ class FileRecord(Base):
     size_bytes: Mapped[int]
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(16), default="AVAILABLE")
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now
     )
@@ -269,6 +272,9 @@ class UserRecord(Base):
     role: Mapped[str] = mapped_column(String(16), default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    quota_total_bytes: Mapped[int | None] = mapped_column(nullable=True)
+    quota_file_count: Mapped[int | None] = mapped_column(nullable=True)
+    quota_concurrent_jobs: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now
     )
