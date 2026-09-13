@@ -87,12 +87,20 @@ class PluginBuildListResponse(BaseModel):
     items: list[PluginBuildResponse]
 
 
+class JobCallbackRequest(BaseModel):
+    """Optional terminal-state webhook registration for one Job."""
+
+    url: str = Field(min_length=1, max_length=1024)
+    secret: str | None = Field(default=None, max_length=255)
+
+
 class JobCreateRequest(BaseModel):
     plugin_id: str
     version: str
     runtime_type: RuntimeType | None = None
     inputs: dict[str, object]
     params: dict[str, object] = Field(default_factory=dict)
+    callback: JobCallbackRequest | None = None
 
 
 class JobResponse(BaseModel):

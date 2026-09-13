@@ -26,6 +26,7 @@ from hub_server.schemas import (
 from hub_server.services.audit import record as audit
 from hub_server.services.jobs import JobService
 from hub_server.services.quotas import QuotaService
+from hub_server.services.webhooks import enqueue_callback
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
 
@@ -58,6 +59,13 @@ def create_job(
         params=request.params,
         owner_user_id=actor.id if actor.kind == "user" else None,
     )
+    if request.callback is not None:
+        enqueue_callback(
+            session,
+            job.id,
+            request.callback.url,
+            request.callback.secret,
+        )
     audit(
         session,
         actor_type=actor.kind,
