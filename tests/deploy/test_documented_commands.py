@@ -56,3 +56,53 @@ def test_legacy_guides_are_marked_historical() -> None:
         assert "旧拓扑" in head, path
         assert "不再作为部署入口" in head, path
         assert "单容器部署与脚本插件使用" in head, path
+
+
+WEB_GUIDE = Path("docs/guides/Web管理台构建部署与使用.md")
+
+
+def test_readme_names_both_images_and_web_port() -> None:
+    """The README entry must teach the backend/web pair and the 8080 console port."""
+    readme = README.read_text("utf-8")
+    assert "python-service-hub-web:1.0.0-linux-amd64" in readme
+    assert "127.0.0.1:8080" in readme
+    assert "[Web管理台构建部署与使用]" in readme
+
+
+def test_web_guide_documents_unified_frontend_backend_workflow() -> None:
+    """The Web guide must cover dual-image build/import, Compose, and the console flow."""
+    guide = WEB_GUIDE.read_text("utf-8")
+    assert "python-service-hub:1.0.0-linux-amd64" in guide
+    assert "python-service-hub-web:1.0.0-linux-amd64" in guide
+    assert "HUB_HOST_DATA_DIR" in guide
+    assert "127.0.0.1:8080" in guide
+    assert "127.0.0.1:8000" in guide
+    assert "docker compose up -d" in guide
+    assert "docker save" in guide
+    assert "docker load" in guide
+    assert "/internal/v1" in guide
+    assert "docker compose config --services" in guide
+    assert "docker compose restart" in guide
+    assert "/api/v1" in guide
+
+
+def test_web_guide_covers_plugin_file_and_job_workflow() -> None:
+    """Operators must be able to install plugins, upload files, and run Jobs."""
+    guide = WEB_GUIDE.read_text("utf-8")
+    assert "hubctl plugin install" in guide
+    assert "hubctl job run" in guide
+    assert "Web" in guide
+    assert "新建任务" in guide
+    assert "插件" in guide
+    assert "文件" in guide
+    assert "任务" in guide
+    assert "日志" in guide
+    assert "取消" in guide
+    assert "下载" in guide
+
+
+def test_single_container_guide_cross_links_web_guide() -> None:
+    """The backend guide must point console operators at the Web guide."""
+    guide = SINGLE_CONTAINER_GUIDE.read_text("utf-8")
+    assert "[Web管理台构建部署与使用]" in guide
+    assert "service-hub-web" in guide

@@ -33,6 +33,7 @@ packages/hub-server          FastAPI、SQLite、文件和生命周期 API
 packages/hub-publisher       通用 .pypkg 构建库与 hub-plugin 命令
 packages/nc-to-shp-plugin    NC 转 Shapefile 示例插件
 templates/                   conda/docker 两种最小脚本插件模板
+web/                         React 管理台 SPA、Nginx 配置与 Web 镜像
 deploy/service_hub           单容器 bootstrap、supervisord、healthcheck
 deploy/release               离线发布包制作与安装/启停脚本
 deploy/nginx                 Nginx 边界配置
@@ -49,16 +50,19 @@ bind source，因此不能使用 `./data` 等相对路径。
 cd /srv/python-service-hub
 sudo install -d -m 0750 /srv/service-hub-data
 sudo docker build -t python-service-hub:1.0.0-linux-amd64 .
+sudo docker build -t python-service-hub-web:1.0.0-linux-amd64 web
 sudo HUB_HOST_DATA_DIR=/srv/service-hub-data docker compose up -d
 curl -fsS http://127.0.0.1:8000/api/v1/system/health
 ```
 
-期望健康响应为 `{"status":"UP"}`。离线交付时改用
-`deploy/release/build-release.sh` 制作发布包，在目标机执行包内 `install.sh` 和
-`start.sh`。
+后端监听 `127.0.0.1:8000`，Web 管理台监听 `127.0.0.1:8080`（浏览器直接访问）。期望
+健康响应为 `{"status":"UP"}`。离线交付时改用 `deploy/release/build-release.sh` 制作
+发布包（已包含两个镜像），在目标机执行包内 `install.sh` 和 `start.sh`。
 
 部署、运维、hubctl 使用、hub-plugin 构建脚本插件、备份迁移和常见错误的完整手册见
-[单容器部署与脚本插件使用](docs/guides/单容器部署与脚本插件使用.md)。
+[单容器部署与脚本插件使用](docs/guides/单容器部署与脚本插件使用.md)；Web 管理台的
+构建、部署与浏览器操作流程见
+[Web管理台构建部署与使用](docs/guides/Web管理台构建部署与使用.md)。
 
 ## 插件发布与运行
 

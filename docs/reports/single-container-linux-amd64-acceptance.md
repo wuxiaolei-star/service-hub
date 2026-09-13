@@ -85,7 +85,28 @@ sudo ./status.sh
 | `start.sh` 后单容器 healthy | （待填写） |
 | 发布包 `dist/service-hub-1.0.0-linux-amd64.tar.gz` SHA256 | （待填写） |
 
-## 6. 非集成质量门（已在开发机验证，2026-09-12）
+## 6. Web 管理台（service-hub-web）验收
+
+执行：
+
+```bash
+python -m pytest -m integration tests/integration/test_web_console_lifecycle.py -v
+```
+
+| 项目 | 结果 |
+| --- | --- |
+| Web 镜像 `python-service-hub-web:1.0.0-linux-amd64` SHA256 | （待填写：`docker image inspect -f '{{.Id}}'`） |
+| `docker compose config --services` 仅含 `service-hub`、`service-hub-web` | （待填写） |
+| `http://127.0.0.1:8080/` 返回 200 text/html | （待填写） |
+| SPA 刷新 `/jobs/nonexistent` 返回 200 | （待填写） |
+| 经 Nginx 代理的 `/api/v1/system/health` 返回 UP | （待填写） |
+| `/internal/v1/*` 返回 404 | （待填写） |
+| Web 容器无 /data 与 Docker Socket 挂载 | （待填写） |
+| `docker compose restart` 后数据持久化（文件元数据仍 200） | （待填写） |
+| 后端直连 `127.0.0.1:8000` 与代理 `127.0.0.1:8080` 健康均 UP | （待填写） |
+| `status.sh` 同时输出 hub health 与 web health（8080） | （待填写） |
+
+## 7. 非集成质量门（已在开发机验证，2026-09-13）
 
 | 项目 | 结果 |
 | --- | --- |
@@ -93,8 +114,9 @@ sudo ./status.sh
 | `python -m ruff check .` | 通过 |
 | `python -m mypy packages` | 通过 |
 | `HUB_HOST_DATA_DIR=/srv/service-hub-data docker compose config --quiet` | 通过 |
-| `tests/deploy/test_documented_commands.py`（文档一致性） | 通过 |
+| `tests/deploy/test_documented_commands.py`（文档一致性，含 Web 章节） | 通过 |
+| `cd web && npm ci && npm run test:run && npm run typecheck && npm run lint && npm run build` | 通过 |
 
-## 7. 未通过项
+## 8. 未通过项
 
 （必须为空；如有未通过项，逐条记录现象、原因与修复 commit 后复验）
