@@ -38,5 +38,14 @@ export const queryKeys = {
     logs: (jobId: string, cursor: number, limit: number) =>
       ['jobs', 'logs', jobId, { cursor, limit }] as const,
     outputs: (jobId: string) => ['jobs', 'outputs', jobId] as const,
+    callbacks: (jobKey: string) => ['jobs', 'callbacks', jobKey] as const,
+  },
+  schedules: {
+    list: (filters: QueryFilters = {}) => ['schedules', 'list', filters] as const,
+  },
+  pipelines: {
+    all: () => ['pipelines'] as const,
+    list: (filters: QueryFilters = {}) => ['pipelines', 'list', filters] as const,
+    runs: (pipelineId: number) => ['pipelines', 'runs', pipelineId] as const,
   },
 }

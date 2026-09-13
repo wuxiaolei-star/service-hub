@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Alert, Button, Card, Descriptions, Popconfirm, Space, Table } from 'antd'
+import { Alert, Button, Card, Descriptions, Popconfirm, Space, Table, Tag } from 'antd'
+import type { ColumnsType } from 'antd/es/table'
 import { downloadFile } from '../api/files'
+import { listJobCallbacks } from '../api/automation'
+import type { CallbackRow } from '../api/automation'
 import { toHubApiError } from '../api/errors'
 import { cancelJob, getJob, getJobOutputs } from '../api/jobs'
 import EmptyState from '../components/EmptyState'
@@ -22,6 +25,13 @@ const ACTIVE_STATUSES: ReadonlySet<JobStatus> = new Set([
   'RUNNING',
   'CANCEL_REQUESTED',
 ])
+
+const CALLBACK_STATE_COLORS: Record<CallbackRow['state'], string> = {
+  PENDING: 'default',
+  SUCCEEDED: 'success',
+  FAILED: 'warning',
+  EXHAUSTED: 'error',
+}
 
 interface OutputRow {
   key: string
@@ -52,6 +62,12 @@ export default function JobDetailPage() {
     enabled: jobId !== undefined && job.data?.status === 'SUCCESS',
   })
 
+  const callbacks = useQuery({
+    queryKey: queryKeys.jobs.callbacks(jobId ?? 'none'),
+    queryFn: () => listJobCallbacks(jobId as string),
+    enabled: jobId !== undefined,
+  })
+
   const cancel = useMutation({
     mutationFn: () => cancelJob(jobId as string),
     onSuccess: () => {
@@ -73,6 +89,32 @@ export default function JobDetailPage() {
     key: record.file_id,
     record,
   }))
+
+  const callbackRows: CallbackRow[] = callbacks.data?.items ?? []
+  const callbacksError =
+    callbacks.error !== null && callbacks.error !== undefined
+      ? toHubApiError(callbacks.error)
+      : null
+  const callbacksMissing =
+    callbackRows.length === 0 &&
+    (callbacks.isSuccess || (callbacksError !== null && callbacksError.status === 404))
+
+  const callbackColumns: ColumnsType<CallbackRow> = [
+    { title: 'URL', dataIndex: 'url', ellipsis: true },
+    {
+      title: '状态',
+      dataIndex: 'state',
+      render: (state: CallbackRow['state']) => (
+        <Tag color={CALLBACK_STATE_COLORS[state]}>{state}</Tag>
+      ),
+    },
+    { title: '尝试次数', dataIndex: 'attempts' },
+    {
+      title: '最近状态码',
+      dataIndex: 'last_status_code',
+      render: (value: number | null) => (value === null ? '-' : value),
+    },
+  ]
 
   if (job.isLoading) {
     return (
@@ -146,6 +188,25 @@ export default function JobDetailPage() {
 
       <Card title="运行日志" style={{ marginBottom: 16 }}>
         <JobLogViewer events={logs.events} isLoading={logs.isLoading} />
+      </Card>
+
+      <Card title="Webhook 回调" style={{ marginBottom: 16 }}>
+        {callbackRows.length > 0 ? (
+          <Table
+            rowKey="id"
+            loading={callbacks.isLoading}
+            pagination={false}
+            dataSource={callbackRows}
+            columns={callbackColumns}
+            size="small"
+          />
+        ) : callbacksMissing ? (
+          <EmptyState description="无回调注册" />
+        ) : callbacksError !== null ? (
+          <HubErrorAlert error={callbacksError} onRetry={() => void callbacks.refetch()} />
+        ) : (
+          <EmptyState description="加载中…" />
+        )}
       </Card>
 
       <Card title="输出文件">

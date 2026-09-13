@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, test, vi } from 'vitest'
 import JobDetailPage from './JobDetailPage'
 import { cancelJob, getJob, getJobLogs, getJobOutputs } from '../api/jobs'
+import { listJobCallbacks } from '../api/automation'
+import type { CallbackRow } from '../api/automation'
 import { downloadFile } from '../api/files'
 import type { Job } from '../types/api'
 
@@ -21,12 +23,14 @@ vi.mock('../api/jobs', () => ({
   getJobLogs: vi.fn(),
   getJobOutputs: vi.fn(),
 }))
+vi.mock('../api/automation', () => ({ listJobCallbacks: vi.fn() }))
 vi.mock('../api/files', () => ({ downloadFile: vi.fn() }))
 
 const mockedGetJob = vi.mocked(getJob)
 const mockedCancelJob = vi.mocked(cancelJob)
 const mockedGetJobLogs = vi.mocked(getJobLogs)
 const mockedGetJobOutputs = vi.mocked(getJobOutputs)
+const mockedListJobCallbacks = vi.mocked(listJobCallbacks)
 const mockedDownloadFile = vi.mocked(downloadFile)
 
 const runningJob: Job = {
@@ -44,6 +48,16 @@ const runningJob: Job = {
 }
 
 const failedJob: Job = { ...runningJob, status: 'FAILED', error_summary: '插件执行失败' }
+
+const callbackRow: CallbackRow = {
+  id: 1,
+  url: 'https://example.com/hooks/done',
+  state: 'EXHAUSTED',
+  attempts: 5,
+  last_status_code: 500,
+  last_error: 'HTTP 500',
+  next_attempt_at: null,
+}
 
 const outputRecord = {
   file_id: 'file_out',
@@ -72,6 +86,7 @@ describe('JobDetailPage', () => {
       items: [{ type: 'log', level: 'INFO', message: 'job started' }],
       next_cursor: null,
     })
+    mockedListJobCallbacks.mockResolvedValue({ items: [] })
   })
 
   test('shows job details with polling and logs while running', async () => {
@@ -132,5 +147,40 @@ describe('JobDetailPage', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url')
     anchorClick.mockRestore()
     vi.unstubAllGlobals()
+  }, 15000)
+
+  test('shows webhook callbacks with state tags', async () => {
+    mockedGetJob.mockResolvedValue(runningJob)
+    mockedListJobCallbacks.mockResolvedValue({ items: [callbackRow] })
+
+    renderPage()
+
+    expect(await screen.findByText('Webhook 回调')).toBeInTheDocument()
+    expect(await screen.findByText('https://example.com/hooks/done')).toBeInTheDocument()
+    expect(screen.getByText('EXHAUSTED')).toBeInTheDocument()
+    expect(screen.getByText('5')).toBeInTheDocument()
+    expect(screen.getByText('500')).toBeInTheDocument()
+    expect(mockedListJobCallbacks).toHaveBeenCalledWith('job-1')
+  }, 15000)
+
+  test('shows a no-callbacks placeholder when the endpoint returns 404', async () => {
+    mockedGetJob.mockResolvedValue(runningJob)
+    mockedListJobCallbacks.mockRejectedValue({
+      code: 'NOT_FOUND',
+      message: 'no callbacks',
+      status: 404,
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('无回调注册')).toBeInTheDocument()
+  }, 15000)
+
+  test('shows a no-callbacks placeholder when the endpoint returns empty items', async () => {
+    mockedGetJob.mockResolvedValue(runningJob)
+
+    renderPage()
+
+    expect(await screen.findByText('无回调注册')).toBeInTheDocument()
   }, 15000)
 })

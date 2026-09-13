@@ -11,7 +11,9 @@ import JobDetailPage from '../pages/JobDetailPage'
 import JobsPage from '../pages/JobsPage'
 import NewJobPage from '../pages/NewJobPage'
 import NotFoundPage from '../pages/NotFoundPage'
+import PipelinesPage from '../pages/PipelinesPage'
 import PluginsPage from '../pages/PluginsPage'
+import SchedulesPage from '../pages/SchedulesPage'
 import SystemPage from '../pages/SystemPage'
 
 export const router = createBrowserRouter([
@@ -30,6 +32,8 @@ export const router = createBrowserRouter([
           { path: 'jobs/new', element: <NewJobPage /> },
           { path: 'jobs', element: <JobsPage /> },
           { path: 'jobs/:jobId', element: <JobDetailPage /> },
+          { path: 'schedules', element: <SchedulesPage /> },
+          { path: 'pipelines', element: <PipelinesPage /> },
           { path: 'system', element: <SystemPage /> },
           { path: 'admin/users', element: <UsersPage /> },
           { path: 'admin/api-keys', element: <ApiKeysPage /> },
