@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from hub_server.main import create_app
 from hub_server.models import FileRecord
 from hub_server.settings import (
+    AuthSettings,
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
@@ -30,6 +31,7 @@ def client(tmp_path: Path) -> TestClient:
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
         runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
+    auth=AuthSettings(mode="off"),
     )
     with TestClient(create_app(settings)) as test_client:
         yield test_client
@@ -181,6 +183,7 @@ def test_form_parser_error_after_file_write_uses_validation_error_and_cleans_upl
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
         runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
+    auth=AuthSettings(mode="off"),
     )
     original_write = MultipartParser.write
 
@@ -365,6 +368,7 @@ def test_unexpected_errors_use_stable_error_shape(tmp_path: Path) -> None:
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=10),
         runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
+    auth=AuthSettings(mode="off"),
     )
     app = create_app(settings)
 

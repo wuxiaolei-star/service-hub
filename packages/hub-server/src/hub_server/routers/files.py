@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import FileResponse as StreamingFileResponse
 
 from hub_server.dependencies import get_session, get_settings, get_storage
+from hub_server.dependencies_auth import require_role
 from hub_server.errors import HubError
 from hub_server.models import FileRecord
 from hub_server.schemas import FileListResponse, FileResponse
@@ -18,7 +19,9 @@ from hub_server.services.files import FileService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage, StreamingUpload
 
-router = APIRouter(prefix="/files", tags=["files"])
+router = APIRouter(
+    prefix="/files", tags=["files"], dependencies=[Depends(require_role("viewer"))]
+)
 
 _MAX_MULTIPART_HEADER_COUNT = 8
 _MAX_MULTIPART_HEADER_SIZE_BYTES = 4224
@@ -50,7 +53,12 @@ def _file_service(session: Session, storage: LocalStorage, settings: HubSettings
     return FileService(session, storage, max_size_bytes=settings.uploads.max_size_bytes)
 
 
-@router.post("", response_model=FileResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=FileResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("operator"))],
+)
 async def upload_file(
     request: Request,
     session: Annotated[Session, Depends(get_session)],
@@ -178,7 +186,11 @@ def _validation_error() -> HubError:
     return HubError(code="REQUEST_VALIDATION_ERROR", message="请求参数无效", status_code=422)
 
 
-@router.get("/{file_key}/download", response_class=StreamingFileResponse)
+@router.get(
+    "/{file_key}/download",
+    response_class=StreamingFileResponse,
+    dependencies=[Depends(require_role("operator"))],
+)
 def download_file(
     file_key: str,
     session: Annotated[Session, Depends(get_session)],

@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from hub_server.main import create_app
 from hub_server.settings import (
+    AuthSettings,
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
@@ -30,6 +31,7 @@ def session(tmp_path: Path) -> Iterator[Session]:
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
         runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
+    auth=AuthSettings(mode="off"),
     )
     app = create_app(settings)
     with TestClient(app), app.state.session_factory() as database_session:

@@ -14,6 +14,7 @@ from hub_server.repositories import HubRepository
 from hub_server.services.archives import VerifiedPluginPackage
 from hub_server.services.plugins import PluginService
 from hub_server.settings import (
+    AuthSettings,
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
@@ -34,6 +35,7 @@ def _settings(tmp_path: Path) -> HubSettings:
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
         runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
+        auth=AuthSettings(mode="off"),
         platform_os="linux",
         platform_arch="amd64",
     )

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from hub_server.dependencies import get_session, get_settings, get_storage
+from hub_server.dependencies_auth import require_role
 from hub_server.errors import HubError
 from hub_server.models import Job, Plugin, PluginBuild, PluginVersion
 from hub_server.schemas import (
@@ -26,13 +27,14 @@ from hub_server.services.plugins import PluginService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
 
-router = APIRouter(tags=["plugins"])
+router = APIRouter(tags=["plugins"], dependencies=[Depends(require_role("viewer"))])
 
 
 @router.post(
     "/plugins/install",
     response_model=PluginBuildResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_role("publisher"))],
 )
 async def install_plugin(
     package: Annotated[UploadFile, File(alias="file")],
@@ -129,7 +131,11 @@ def get_build(
     return _build_response(_find_build(session, build_key))
 
 
-@router.post("/plugin-builds/{build_key}/enable", response_model=PluginBuildResponse)
+@router.post(
+    "/plugin-builds/{build_key}/enable",
+    response_model=PluginBuildResponse,
+    dependencies=[Depends(require_role("publisher"))],
+)
 def enable_build(
     build_key: str,
     session: Annotated[Session, Depends(get_session)],
@@ -148,7 +154,11 @@ def enable_build(
     return _build_response(build)
 
 
-@router.post("/plugin-builds/{build_key}/disable", response_model=PluginBuildResponse)
+@router.post(
+    "/plugin-builds/{build_key}/disable",
+    response_model=PluginBuildResponse,
+    dependencies=[Depends(require_role("publisher"))],
+)
 def disable_build(
     build_key: str,
     session: Annotated[Session, Depends(get_session)],

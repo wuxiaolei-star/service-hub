@@ -2,8 +2,9 @@
 
 import sys
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from hub_server.dependencies_auth import require_role
 from hub_server.schemas import HealthResponse, PlatformResponse, SystemInfoResponse
 from hub_server.settings import HubSettings
 
@@ -15,7 +16,11 @@ def get_health() -> HealthResponse:
     return HealthResponse(status="UP")
 
 
-@router.get("/info", response_model=SystemInfoResponse)
+@router.get(
+    "/info",
+    response_model=SystemInfoResponse,
+    dependencies=[Depends(require_role("viewer"))],
+)
 def get_info(request: Request) -> SystemInfoResponse:
     settings: HubSettings = request.app.state.settings
     return SystemInfoResponse(

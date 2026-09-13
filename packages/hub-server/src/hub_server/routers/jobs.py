@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hub_server.dependencies import get_session, get_settings, get_storage
+from hub_server.dependencies_auth import require_role
 from hub_server.models import FileRecord, Job
 from hub_server.routers.files import _file_response
 from hub_server.schemas import (
@@ -26,10 +27,17 @@ from hub_server.services.jobs import JobService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
 
-router = APIRouter(prefix="/jobs", tags=["jobs"])
+router = APIRouter(
+    prefix="/jobs", tags=["jobs"], dependencies=[Depends(require_role("viewer"))]
+)
 
 
-@router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=JobResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("operator"))],
+)
 def create_job(
     request: JobCreateRequest,
     session: Annotated[Session, Depends(get_session)],
@@ -70,7 +78,12 @@ def get_job(
     return _job_response(job)
 
 
-@router.post("/{job_key}/cancel", response_model=JobCancelResponse, status_code=202)
+@router.post(
+    "/{job_key}/cancel",
+    response_model=JobCancelResponse,
+    status_code=202,
+    dependencies=[Depends(require_role("operator"))],
+)
 def cancel_job(
     job_key: str,
     session: Annotated[Session, Depends(get_session)],

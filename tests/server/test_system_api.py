@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from hub_server.main import create_app
 from hub_server.settings import (
+    AuthSettings,
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
@@ -21,6 +22,7 @@ def settings() -> HubSettings:
         database=DatabaseSettings(url="sqlite:////var/lib/hub/db/hub.db"),
         uploads=UploadSettings(max_size_bytes=1024),
         runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
+        auth=AuthSettings(mode="off"),
         platform_os="linux",
         platform_arch="amd64",
     )

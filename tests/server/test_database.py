@@ -10,6 +10,7 @@ from hub_server.db import create_engine_and_session_factory
 from hub_server.main import create_app
 from hub_server.models import FileRecord
 from hub_server.settings import (
+    AuthSettings,
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
@@ -31,6 +32,7 @@ def settings(tmp_path: Path) -> HubSettings:
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
         runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
+    auth=AuthSettings(mode="off"),
     )
 
 

@@ -11,6 +11,7 @@ from hub_publisher.project import PluginProject
 from hub_server.main import create_app
 from hub_server.models import Environment, Plugin, PluginBuild, PluginVersion
 from hub_server.settings import (
+    AuthSettings,
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
@@ -28,6 +29,7 @@ def client(tmp_path: Path) -> TestClient:
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
         runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
+    auth=AuthSettings(mode="off"),
     )
     with TestClient(create_app(settings)) as test_client:
         yield test_client
