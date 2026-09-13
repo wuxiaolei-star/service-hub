@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import subprocess
 import sys
 import time
 import zipfile
@@ -36,6 +37,8 @@ def test_amd64_conda_and_docker_nc_jobs_are_semantically_equal(tmp_path: Path) -
     assert conda_package.is_file(), f"missing Conda package: {conda_package}"
     assert docker_package.is_file(), f"missing Docker package: {docker_package}"
 
+    _assert_single_container_deployment()
+
     base_url = os.environ.get("HUB_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
     with httpx.Client(
         base_url=base_url,
@@ -55,6 +58,57 @@ def test_amd64_conda_and_docker_nc_jobs_are_semantically_equal(tmp_path: Path) -
     _assert_expected_archive(docker_output)
     differences = _compare_archives(conda_output, docker_output)
     assert differences == []
+
+
+def _compose(*arguments: str) -> str:
+    """Run a Compose command against the repository deployment and return stdout."""
+    environment = dict(os.environ)
+    environment.setdefault("HUB_HOST_DATA_DIR", "/srv/service-hub-data")
+    result = subprocess.run(
+        ["docker", "compose", "--project-directory", str(REPOSITORY_ROOT), *arguments],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+def _container_health_state() -> str:
+    container_id = _compose("ps", "-q", "service-hub").strip()
+    assert container_id, "service-hub container is not running"
+    inspect = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.Health.Status}}", container_id],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return inspect.stdout.strip()
+
+
+def _wait_for_container_health(timeout_seconds: float = 120.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            if _container_health_state() == "healthy":
+                return
+        except subprocess.CalledProcessError:
+            pass
+        time.sleep(2)
+    raise AssertionError("service-hub container did not become healthy")
+
+
+def _assert_single_container_deployment() -> None:
+    """Preflight: one Compose service, healthy container, and restart recovery."""
+    services = {
+        line.strip()
+        for line in _compose("config", "--services").splitlines()
+        if line.strip()
+    }
+    assert services == {"service-hub"}, f"expected only service-hub: {sorted(services)}"
+    _wait_for_container_health()
+    _compose("restart", "service-hub")
+    _wait_for_container_health()
 
 
 def _compare_archives(left: Path, right: Path) -> list[str]:
