@@ -214,6 +214,33 @@ def _cmd_whoami(_args: argparse.Namespace, transport: Transport) -> object:
     return transport.request_json("GET", f"{_API_PREFIX}/auth/me", None)
 
 
+def _cmd_backup_create(_args: argparse.Namespace, transport: Transport) -> object:
+    return transport.request_json("POST", f"{_API_PREFIX}/system/backup", None)
+
+
+def _cmd_backup_restore(args: argparse.Namespace, _transport: Transport) -> object:
+    for step in _backup_restore_steps(args.file):
+        print(step)
+    return None
+
+
+def _backup_restore_steps(archive: Path) -> list[str]:
+    """Build the manual restore checklist for one backup archive."""
+    return [
+        "备份恢复步骤清单（hubctl 不执行远程操作，请在宿主机按顺序手动执行）：",
+        f"1. 确认备份包存在：{archive}",
+        "2. 停止 compose 服务：docker compose stop service-hub service-hub-web",
+        "3. 解包指定 tar.gz 到数据目录（HUB_HOST_DATA_DIR，即 settings.storage.root）："
+        f"tar -xzf {archive.name} -C <数据目录>",
+        "4. 恢复 SQLite 数据文件：移除旧的 hub.db（连同 hub.db-wal、hub.db-shm），"
+        "把备份包内根目录的 hub.db 放回数据目录",
+        "5. 修正权限：chown -R <容器内运行用户>:<组> <数据目录>，确保 hub.db 与各数据目录可读写",
+        "6. 重启 compose 服务：docker compose up -d service-hub service-hub-web",
+        "7. 验证服务：GET /api/v1/system/health 返回 UP，并用 hubctl whoami 确认认证正常",
+        "警告：严禁执行 docker compose down -v，它会删除数据卷，导致备份之外的数据永久丢失",
+    ]
+
+
 def main(argv: Sequence[str] | None = None, transport: Transport | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -300,6 +327,18 @@ def _build_parser() -> argparse.ArgumentParser:
     job_download.add_argument("job_id")
     job_download.add_argument("--output", type=Path, required=True)
     job_download.set_defaults(handler=_cmd_job_download)
+
+    backup = subcommands.add_parser("backup", help="manage system backups")
+    backup_subcommands = backup.add_subparsers(dest="backup_command", required=True)
+    backup_create = backup_subcommands.add_parser(
+        "create", help="trigger a server-side backup archive"
+    )
+    backup_create.set_defaults(handler=_cmd_backup_create)
+    backup_restore = backup_subcommands.add_parser(
+        "restore", help="print the manual restore checklist for a backup archive"
+    )
+    backup_restore.add_argument("--file", type=Path, required=True, help="path to backup tar.gz")
+    backup_restore.set_defaults(handler=_cmd_backup_restore)
 
     return parser
 
