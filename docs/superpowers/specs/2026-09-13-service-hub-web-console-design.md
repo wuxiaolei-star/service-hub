@@ -24,7 +24,9 @@ Web Console V1 的目标是提供简洁的中文管理界面，使操作者可�
 7. 取消任务并下载输出；
 8. 查看系统信息和无认证部署提示。
 
-V1 不修改插件协议、Job Runtime Protocol、Runner Event Protocol 或现有 REST API 语义。统计信息优先由前端基于已有列表计算，不为界面引入不必要的新接口。
+V1 不修改插件协议、Job Runtime Protocol 或 Runner Event Protocol。为支持完整管理台，
+后端只增加插件详情/Build 列表/文件列表三个只读接口，并为 Job 响应补充已有数据库时间字段；
+不改变现有写接口语义。统计信息由前端基于已有列表计算，不增加独立统计接口。
 
 ## 3. 设计原则
 
@@ -134,8 +136,10 @@ web/
 - `POST /api/v1/plugins/install`
 - `GET /api/v1/plugins`
 - `GET /api/v1/plugins/{plugin_id}`
+- `GET /api/v1/plugin-builds?plugin_id={plugin_id}`
 - `GET /api/v1/plugin-builds/{build_id}`
 - `POST /api/v1/plugin-builds/{build_id}/enable`
+- `POST /api/v1/plugin-builds/{build_id}/disable`
 
 ### 7.3 文件管理 `/files`
 
@@ -143,10 +147,10 @@ web/
 
 使用：
 
+- `GET /api/v1/files`
 - `POST /api/v1/files`
 - `GET /api/v1/files/{file_id}`
 - `GET /api/v1/files/{file_id}/download`
-- `DELETE /api/v1/files/{file_id}`（仅接口存在时开放）
 
 ### 7.4 新建任务 `/jobs/new`
 
@@ -165,6 +169,9 @@ web/
 - `GET /api/v1/jobs`
 - `GET /api/v1/jobs/{job_id}`
 - `POST /api/v1/jobs/{job_id}/cancel`
+
+`JobResponse` 在现有字段之外返回 `created_at`、`started_at` 和 `finished_at`；耗时由前端
+根据这些字段计算，不写回后端。
 
 ### 7.6 任务详情 `/jobs/{jobId}`
 
@@ -189,7 +196,19 @@ web/
 
 ## 8. 核心交互流程
 
-### 8.1 插件安装
+### 8.1 管理台只读 API 补充
+
+后端新增以下响应：
+
+- `GET /api/v1/plugins/{plugin_id}`：插件基础信息、版本列表、每个版本的 Manifest；
+- `GET /api/v1/plugin-builds?plugin_id=...`：最多 100 个 Build，可按插件 ID 筛选；
+- `GET /api/v1/files`：最近 100 个可用文件；
+- 所有 `JobResponse`：补充三个 ISO 8601 UTC 时间字段。
+
+这些接口只读取已有数据库记录，不读取任意宿主文件路径，不返回 package path、workspace
+path、Runner Token 或其他内部字段。
+
+### 8.2 插件安装
 
 ```mermaid
 sequenceDiagram
@@ -207,7 +226,7 @@ sequenceDiagram
     Web->>Hub: POST /plugin-builds/{build_id}/enable
 ```
 
-### 8.2 Job 执行
+### 8.3 Job 执行
 
 ```mermaid
 sequenceDiagram
