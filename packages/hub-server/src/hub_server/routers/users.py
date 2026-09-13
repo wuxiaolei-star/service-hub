@@ -9,12 +9,14 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from hub_server.dependencies import get_session
+from hub_server.dependencies import get_session, get_settings
 from hub_server.dependencies_auth import require_role
 from hub_server.errors import HubError
 from hub_server.models import ApiKeyRecord, UserRecord
 from hub_server.services.audit import record as audit
 from hub_server.services.auth import AuthService, hash_password
+from hub_server.services.quotas import QuotaService
+from hub_server.settings import HubSettings
 
 router = APIRouter(
     prefix="/users", tags=["users"], dependencies=[Depends(require_role("admin"))]
@@ -88,6 +90,17 @@ def create_user(
     )
     session.commit()
     return _user_response(user)
+
+
+@router.get("/{user_id}/usage")
+def user_usage(
+    user_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
+) -> dict[str, int]:
+    """Return per-user storage and job usage for the admin console."""
+    _get_user(session, user_id)
+    return QuotaService(session, settings.quotas).usage(user_id)
 
 
 @router.post("/{user_id}/disable")

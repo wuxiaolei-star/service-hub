@@ -84,6 +84,30 @@ class QuotaService:
         if global_bytes is not None and global_bytes + incoming_bytes > global_limit:
             raise _quota_exceeded("global_bytes", global_bytes, global_limit)
 
+    def usage(self, user_id: int) -> dict[str, int]:
+        """Summarize one user's storage, file count, and active jobs."""
+        used_bytes, file_count = (
+            self._session.query(
+                func.coalesce(func.sum(FileRecord.size_bytes), 0),
+                func.count(FileRecord.id),
+            )
+            .filter(FileRecord.owner_user_id == user_id)
+            .one()
+        )
+        active_jobs = (
+            self._session.query(func.count(Job.id))
+            .filter(
+                Job.owner_user_id == user_id,
+                Job.status.in_(ACTIVE_JOB_STATUSES),
+            )
+            .scalar()
+        )
+        return {
+            "total_bytes": int(used_bytes or 0),
+            "file_count": int(file_count or 0),
+            "active_jobs": int(active_jobs or 0),
+        }
+
     def enforce_job_creation(self, actor: Actor) -> None:
         """Reject job creation beyond the user's concurrent-job limit."""
         if self._is_exempt(actor):
