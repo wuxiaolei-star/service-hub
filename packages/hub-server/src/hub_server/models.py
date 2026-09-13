@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hub_server.db import Base
@@ -17,6 +26,13 @@ def _utc_now() -> datetime:
 
 def _public_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
+
+
+_SESSION_TTL = timedelta(hours=24)
+
+
+def _session_expiry() -> datetime:
+    return datetime.now(UTC) + _SESSION_TTL
 
 
 class FileRecord(Base):
@@ -234,3 +250,96 @@ class RunnerOperation(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     plugin_build: Mapped[PluginBuild] = relationship(back_populates="operations")
+
+
+class UserRecord(Base):
+    """A human operator that can authenticate against the Hub."""
+
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('viewer', 'operator', 'publisher', 'admin')",
+            name="ck_users_role",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(16), default="viewer")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now
+    )
+    sessions: Mapped[list[SessionRecord]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class SessionRecord(Base):
+    """A revocable bearer-token session issued by the authentication layer."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_session_expiry
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user: Mapped[UserRecord] = relationship(back_populates="sessions")
+
+
+class ApiKeyRecord(Base):
+    """A machine account credential for business systems and hubctl."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    key_prefix: Mapped[str] = mapped_column(String(16), index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(16), default="operator")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class AuditLogRecord(Base):
+    """One audited operation performed against the Hub."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, index=True
+    )
+    actor_type: Mapped[str] = mapped_column(String(16))
+    actor_id: Mapped[int | None] = mapped_column(nullable=True)
+    actor_name: Mapped[str] = mapped_column(String(128))
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    resource_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    detail: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result: Mapped[str] = mapped_column(String(16), default="ok")
