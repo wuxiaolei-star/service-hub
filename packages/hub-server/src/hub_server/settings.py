@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 
 class StrictSettingsModel(BaseModel):
@@ -38,6 +38,21 @@ class RunnerSettings(StrictSettingsModel):
     poll_interval_seconds: int = Field(default=2, gt=0)
 
 
+class AuthSettings(StrictSettingsModel):
+    """Public API authentication configuration."""
+
+    mode: Literal["required", "off"] = "required"
+    session_ttl_hours: int = Field(default=24, gt=0)
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_yaml_boolean(cls, value: object) -> object:
+        """YAML 1.1 parses bare `on`/`off` as booleans; accept both spellings."""
+        if isinstance(value, bool):
+            return "required" if value else "off"
+        return value
+
+
 def _native_architecture() -> Literal["amd64", "arm64"]:
     machine = platform.machine().lower()
     if machine in {"amd64", "x86_64"}:
@@ -53,6 +68,7 @@ class HubSettings(StrictSettingsModel):
     database: DatabaseSettings
     uploads: UploadSettings
     runner: RunnerSettings
+    auth: AuthSettings = Field(default_factory=AuthSettings)
     hub_version: str = "0.1.0"
     platform_os: Literal["linux"] = "linux"
     platform_arch: Literal["amd64", "arm64"] = Field(default_factory=_native_architecture)
@@ -64,4 +80,6 @@ class HubSettings(StrictSettingsModel):
             raise ValueError("Hub 配置根节点必须是对象")
         if token := os.environ.get("HUB_RUNNER_TOKEN"):
             value["runner"] = {**value.get("runner", {}), "shared_token": token}
+        if mode := os.environ.get("HUB_AUTH_MODE"):
+            value["auth"] = {**value.get("auth", {}), "mode": mode}
         return cls.model_validate(value)
