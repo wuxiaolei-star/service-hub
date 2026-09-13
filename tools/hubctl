@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import http.client
 import json
 import os
@@ -33,7 +34,8 @@ class HubApiError(Exception):
 
 
 class HttpTransport:
-    def __init__(self, base_url: str, timeout: float = 60.0) -> None:
+    def __init__(self, base_url: str, timeout: float = 60.0, token: str | None = None) -> None:
+        self.token = token
         parsed = urlparse(base_url)
         scheme = parsed.scheme or "http"
         if scheme not in {"http", "https"}:
@@ -49,6 +51,8 @@ class HttpTransport:
     def request_json(self, method: str, path: str, body: object | None) -> object:
         encoded = None if body is None else json.dumps(body).encode("utf-8")
         headers = {"Accept": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         if encoded is not None:
             headers["Content-Type"] = "application/json"
             headers["Content-Length"] = str(len(encoded))
@@ -156,13 +160,79 @@ class HttpTransport:
         raise HubApiError(f"HTTP_{response.status}", response.reason)
 
 
+def _credentials_path() -> Path:
+    return Path.home() / ".hubctl" / "credentials"
+
+
+def _load_token() -> str | None:
+    token = os.environ.get("HUB_TOKEN")
+    if token:
+        return token
+    credentials = _credentials_path()
+    if credentials.is_file():
+        try:
+            payload = json.loads(credentials.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if isinstance(payload, dict) and isinstance(payload.get("token"), str):
+            return str(payload["token"])
+    return None
+
+
+def _save_token(token: str) -> None:
+    credentials = _credentials_path()
+    credentials.parent.mkdir(parents=True, exist_ok=True)
+    credentials.write_text(json.dumps({"token": token}), encoding="utf-8")
+    credentials.chmod(0o600)
+
+
+def _forget_token() -> None:
+    try:
+        _credentials_path().unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _cmd_login(args: argparse.Namespace, transport: Transport) -> object:
+    username = args.username or input("用户名: ")
+    password = getpass.getpass("口令: ")
+    result = transport.request_json(
+        "POST", f"{_API_PREFIX}/auth/login", {"username": username, "password": password}
+    )
+    if isinstance(result, dict) and isinstance(result.get("token"), str):
+        _save_token(str(result["token"]))
+    return result
+
+
+def _cmd_logout(_args: argparse.Namespace, transport: Transport) -> object:
+    result = transport.request_json("POST", f"{_API_PREFIX}/auth/logout", None)
+    _forget_token()
+    return result
+
+
+def _cmd_whoami(_args: argparse.Namespace, transport: Transport) -> object:
+    return transport.request_json("GET", f"{_API_PREFIX}/auth/me", None)
+
+
 def main(argv: Sequence[str] | None = None, transport: Transport | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    client = transport or HttpTransport(os.environ.get("HUB_URL", _DEFAULT_HUB_URL))
+    token = _load_token()
+    if transport is None:
+        transport = HttpTransport(
+            os.environ.get("HUB_URL", _DEFAULT_HUB_URL), token=token
+        )
+    elif hasattr(transport, "token"):
+        transport.token = token
     try:
-        result = _dispatch(args, client)
-    except (HubApiError, ValueError, OSError, json.JSONDecodeError) as error:
+        result = _dispatch(args, transport)
+    except HubApiError as error:
+        if error.code == "AUTH_REQUIRED":
+            print("凭证失效，请重新登录或检查 HUB_TOKEN", file=sys.stderr)
+            return 1
+        _print_error(error)
+        return 1
+    except (ValueError, OSError, json.JSONDecodeError) as error:
         _print_error(error)
         return 1
     if result is not None:
@@ -176,6 +246,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     health = subcommands.add_parser("health", help="check Hub health")
     health.set_defaults(handler=_cmd_health)
+
+    login = subcommands.add_parser("login", help="authenticate and store credentials")
+    login.add_argument("--username", default=None)
+    login.set_defaults(handler=_cmd_login)
+    logout = subcommands.add_parser("logout", help="revoke the stored credential")
+    logout.set_defaults(handler=_cmd_logout)
+    whoami = subcommands.add_parser("whoami", help="show the authenticated identity")
+    whoami.set_defaults(handler=_cmd_whoami)
 
     plugin = subcommands.add_parser("plugin", help="manage plugins")
     plugin_subcommands = plugin.add_subparsers(dest="plugin_command", required=True)
