@@ -561,7 +561,7 @@ def test_unified_service_starts_the_docker_runner_with_one_socket_mount() -> Non
     supervisor = Path("deploy/service_hub/supervisord.conf").read_text("utf-8")
 
     service = model["services"]["service-hub"]
-    assert set(model["services"]) == {"service-hub"}
+    assert set(model["services"]) == {"service-hub", "service-hub-web"}
     assert service["image"] == "python-service-hub:1.0.0-linux-amd64"
     assert service["volumes"].count("/var/run/docker.sock:/var/run/docker.sock") == 1
     assert "[program:docker-runner]" in supervisor

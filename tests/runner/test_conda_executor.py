@@ -465,7 +465,7 @@ def test_unified_service_starts_the_conda_runner() -> None:
     supervisor = Path("deploy/service_hub/supervisord.conf").read_text("utf-8")
 
     service = model["services"]["service-hub"]
-    assert set(model["services"]) == {"service-hub"}
+    assert set(model["services"]) == {"service-hub", "service-hub-web"}
     assert service["image"] == "python-service-hub:1.0.0-linux-amd64"
     assert service["volumes"].count("/var/run/docker.sock:/var/run/docker.sock") == 1
     assert "[program:conda-runner]" in supervisor
