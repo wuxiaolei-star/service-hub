@@ -125,6 +125,55 @@ class FileListResponse(BaseModel):
     items: list[FileResponse]
 
 
+class ServicePort(BaseModel):
+    """One host-loopback port mapping approved for a service container."""
+
+    host: int = Field(ge=1, le=65535)
+    container: int = Field(ge=1, le=65535)
+
+
+class ServiceMount(BaseModel):
+    """One admin-supplied bind mount forwarded only to service-manager."""
+
+    source: str = Field(min_length=1, max_length=1024)
+    target: str = Field(min_length=1, max_length=1024)
+    read_only: bool = False
+
+
+class ServiceCreateRequest(BaseModel):
+    """Configuration for a managed service; accepted from administrators only."""
+
+    name: str = Field(min_length=1, max_length=63)
+    image: str = Field(min_length=1, max_length=255)
+    ports: list[ServicePort] = Field(default_factory=list, max_length=32)
+    env: dict[str, str] = Field(default_factory=dict)
+    mounts: list[ServiceMount] = Field(default_factory=list, max_length=32)
+    command: list[str] | None = Field(default=None, max_length=64)
+    user_label: str = Field(default="65532:65532", min_length=1, max_length=64)
+
+
+class ServiceRuntimeResponse(BaseModel):
+    """Live state sourced from service-manager rather than persisted input."""
+
+    state: str | None = None
+    health: str | None = None
+    ports: dict[str, object] | None = None
+
+
+class ServiceResponse(BaseModel):
+    """Public service state, deliberately excluding environment and mount secrets."""
+
+    name: str
+    image: str
+    container_name: str
+    desired_state: str
+    runtime: ServiceRuntimeResponse | None
+
+
+class ServiceListResponse(BaseModel):
+    items: list[ServiceResponse]
+
+
 class JobCancelResponse(BaseModel):
     job_id: str
     status: JobStatus
