@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  DeploymentUnitOutlined,
   CloudOutlined,
   CloudDownloadOutlined,
   FileOutlined,
@@ -32,6 +33,7 @@ const menuItems: MenuProps['items'] = [
   { key: '/jobs', icon: <HddOutlined />, label: <Link to="/jobs">任务</Link> },
   { key: '/schedules', icon: <ScheduleOutlined />, label: <Link to="/schedules">定时任务</Link> },
   { key: '/pipelines', icon: <PartitionOutlined />, label: <Link to="/pipelines">管道</Link> },
+  { key: '/services', icon: <DeploymentUnitOutlined />, label: <Link to="/services">服务</Link> },
   { key: '/system', icon: <SettingOutlined />, label: <Link to="/system">系统</Link> },
   { key: '/admin/users', icon: <UserOutlined />, label: <Link to="/admin/users">用户</Link> },
   { key: '/admin/api-keys', icon: <KeyOutlined />, label: <Link to="/admin/api-keys">API Key</Link> },

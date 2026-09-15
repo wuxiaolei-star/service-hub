@@ -15,6 +15,7 @@ import PipelinesPage from '../pages/PipelinesPage'
 import PluginsPage from '../pages/PluginsPage'
 import RegistryPage from '../pages/RegistryPage'
 import SchedulesPage from '../pages/SchedulesPage'
+import ServicesPage from '../pages/ServicesPage'
 import SystemPage from '../pages/SystemPage'
 
 export const router = createBrowserRouter([
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
           { path: 'jobs', element: <JobsPage /> },
           { path: 'jobs/:jobId', element: <JobDetailPage /> },
           { path: 'schedules', element: <SchedulesPage /> },
+          { path: 'services', element: <ServicesPage /> },
           { path: 'pipelines', element: <PipelinesPage /> },
           { path: 'system', element: <SystemPage /> },
           { path: 'admin/users', element: <UsersPage /> },

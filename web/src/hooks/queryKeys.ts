@@ -51,4 +51,8 @@ export const queryKeys = {
     list: (filters: QueryFilters = {}) => ['pipelines', 'list', filters] as const,
     runs: (pipelineId: number) => ['pipelines', 'runs', pipelineId] as const,
   },
+  services: {
+    list: (filters: QueryFilters = {}) => ['services', 'list', filters] as const,
+    logs: (name: string, tail: number) => ['services', 'logs', name, { tail }] as const,
+  },
 }

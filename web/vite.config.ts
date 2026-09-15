@@ -10,6 +10,9 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       setupFiles: './src/test/setup.ts',
       globals: true,
+      // antd forms + jsdom are CPU-bound; a fully parallel run on a shared or
+      // Windows dev box can starve individual files well past the 5s default.
+      testTimeout: 20_000,
     },
     server: {
       proxy: {
