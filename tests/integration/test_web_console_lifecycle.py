@@ -60,6 +60,12 @@ def test_web_console_serves_spa_and_enforces_boundaries(tmp_path: Path) -> None:
 
     compose_model = yaml.safe_load((REPOSITORY_ROOT / "compose.yaml").read_text("utf-8"))
     assert set(compose_model["services"]) == {"service-hub", "service-hub-web"}
+    # V3.0 keeps the Docker Socket and the data directory inside the backend only.
+    assert (
+        "/var/run/docker.sock:/var/run/docker.sock"
+        in compose_model["services"]["service-hub"]["volumes"]
+    )
+    assert not compose_model["services"]["service-hub-web"].get("volumes")
 
     project_name = f"hub-web-{uuid.uuid4().hex}"
     backend_port = _available_local_port()
@@ -135,6 +141,67 @@ def test_web_console_serves_spa_and_enforces_boundaries(tmp_path: Path) -> None:
         ).stdout
         assert "/data" not in web_mounts
         assert "docker.sock" not in web_mounts
+
+        # V3.0: the long-running service manager must be up, and only the two socket
+        # consumers may hold the Docker socket GID inside the backend container.
+        manager_status = subprocess.run(
+            _compose_command(
+                project_name,
+                "exec",
+                "-T",
+                "service-hub",
+                "supervisorctl",
+                "-c",
+                "/etc/service-hub/supervisord.conf",
+                "status",
+                compose_file=compose_file,
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "service-manager" in manager_status
+        assert "RUNNING" in manager_status
+
+        socket_gid = subprocess.run(
+            _compose_command(
+                project_name,
+                "exec",
+                "-T",
+                "service-hub",
+                "stat",
+                "-c",
+                "%g",
+                "/var/run/docker.sock",
+                compose_file=compose_file,
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        def _supplementary_groups(account: str) -> set[str]:
+            raw = subprocess.run(
+                _compose_command(
+                    project_name,
+                    "exec",
+                    "-T",
+                    "service-hub",
+                    "id",
+                    "-G",
+                    account,
+                    compose_file=compose_file,
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            return set(raw.split())
+
+        assert socket_gid in _supplementary_groups("docker-runner")
+        assert socket_gid in _supplementary_groups("service-mgr")
+        assert socket_gid not in _supplementary_groups("hub-api")
+        assert socket_gid not in _supplementary_groups("conda-runner")
 
         uploaded = httpx.post(
             f"{base}/api/v1/files",

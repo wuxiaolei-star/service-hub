@@ -163,6 +163,37 @@ def test_service_hub_and_docker_plugin_share_a_fixed_non_root_data_uid() -> None
     assert "USER 65532:65532" in plugin_dockerfile
 
 
+def test_image_ships_the_long_running_service_manager() -> None:
+    """V3.0 can only deploy services if the manager process exists inside the image."""
+    dockerfile = Path("Dockerfile").read_text("utf-8")
+    supervisord = Path("deploy/service_hub/supervisord.conf").read_text("utf-8")
+
+    assert "service-mgr" in dockerfile
+    assert "[program:service-manager]" in supervisord
+    assert "user=service-mgr" in supervisord
+    assert "deploy.service_hub.service_manager_service" in supervisord
+
+
+def test_only_the_docker_socket_consumers_join_the_socket_group() -> None:
+    """The API and conda runner must never gain Docker access through the socket group."""
+    entrypoint = Path("docker-entrypoint.sh").read_text("utf-8")
+
+    granted = {
+        line.split()[-1] for line in entrypoint.splitlines() if line.startswith("usermod -aG")
+    }
+
+    assert granted == {"docker-runner", "service-mgr"}
+
+
+def test_web_console_never_receives_the_data_directory_or_the_docker_socket() -> None:
+    """The production topology keeps /data and docker.sock inside the backend service."""
+    model = yaml.safe_load(Path("compose.yaml").read_text("utf-8"))
+
+    backend_volumes = model["services"]["service-hub"]["volumes"]
+    assert "/var/run/docker.sock:/var/run/docker.sock" in backend_volumes
+    assert not model["services"]["service-hub-web"].get("volumes")
+
+
 def test_disposable_smoke_compose_uses_the_single_service_topology(tmp_path: Path) -> None:
     """The release smoke stack mirrors the production backend/web topology."""
     repository_root = Path("/workspace/python-service-hub")

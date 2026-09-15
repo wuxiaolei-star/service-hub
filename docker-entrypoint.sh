@@ -29,7 +29,11 @@ if [ -z "$socket_group" ]; then
     socket_group=docker-socket
     groupadd --gid "$socket_gid" "$socket_group"
 fi
+# Only the two socket consumers join the Docker socket group: docker-runner for
+# one-shot plugin Jobs and service-manager (V3.0) for long-running services.
+# hub-api and conda-runner are deliberately left out.
 usermod -aG "$socket_group" docker-runner
+usermod -aG "$socket_group" service-mgr
 
 if [ ! -f "$permissions_marker" ]; then
     mkdir -p \
