@@ -62,6 +62,9 @@ curl -fsS http://127.0.0.1:8000/api/v1/system/health
 健康响应为 `{"status":"UP"}`。离线交付时改用 `deploy/release/build-release.sh` 制作
 发布包（已包含两个镜像），在目标机执行包内 `install.sh` 和 `start.sh`。
 
+**自建服务器试用的逐项实施清单（含前置校验、冒烟测试、边界验证与已知限制）见
+[服务器部署实施清单](docs/guides/服务器部署实施清单.md)。**
+
 部署、运维、hubctl 使用、hub-plugin 构建脚本插件、备份迁移和常见错误的完整手册见
 [单容器部署与脚本插件使用](docs/guides/单容器部署与脚本插件使用.md)；Web 管理台的
 构建、部署与浏览器操作流程见
