@@ -33,7 +33,13 @@ class _HookRecorder(http.server.BaseHTTPRequestHandler):
 
 @pytest.mark.integration
 def test_v2_automation_lifecycle() -> None:  # pragma: no cover - Linux AMD64 only
-    """Callback signature, schedule trigger, and pipeline stepping on the deployed instance."""
+    """Callback signature, schedule trigger, and pipeline stepping on the deployed instance.
+
+    The callback recorder listens on the deployment host's loopback, which the outbound
+    webhook guard refuses by default. The instance under test must therefore opt in with
+    ``webhooks.allow_private_networks: true`` in ``config/hub.yaml``; a job creation that
+    answers ``422 WEBHOOK_URL_FORBIDDEN`` means that switch is missing.
+    """
     if sys.platform != "linux" or platform.machine().lower() not in {"x86_64", "amd64"}:
         pytest.skip("automation lifecycle requires a native Linux AMD64 Docker host")
     base_url = os.environ.get("HUB_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
@@ -75,7 +81,10 @@ def test_v2_automation_lifecycle() -> None:  # pragma: no cover - Linux AMD64 on
                 },
             },
         )
-        assert created.status_code == 201
+        assert created.status_code == 201, (
+            f"job creation failed ({created.status_code} {created.text}); the deployment needs "
+            "webhooks.allow_private_networks: true for this loopback callback target"
+        )
         job_id = created.json()["job_id"]
 
         pipeline = client.post(

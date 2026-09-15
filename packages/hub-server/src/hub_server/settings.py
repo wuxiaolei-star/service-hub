@@ -65,6 +65,32 @@ class AuthSettings(StrictSettingsModel):
         return self
 
 
+class WebhooksSettings(StrictSettingsModel):
+    """Outbound webhook delivery policy and its SSRF guard.
+
+    Deny-by-default: a callback must target a public host unless the deployment
+    explicitly opts into private networks. The Hub API and the service manager both
+    listen on loopback, so an unconstrained callback URL is a direct path to
+    internal-only endpoints. ``allowed_hosts`` narrows the set of permitted hosts
+    on top of the address guard; it never widens it.
+    """
+
+    allow_private_networks: bool = False
+    allowed_hosts: list[str] = Field(default_factory=list)
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def _normalize_allowed_hosts(cls, value: list[str]) -> list[str]:
+        """Compare hosts case-insensitively and without a trailing root dot."""
+        normalized: list[str] = []
+        for entry in value:
+            host = entry.strip().lower().rstrip(".")
+            if not host or host.startswith(".") or "/" in host:
+                raise ValueError(f"allowed_hosts entry is not a host name: {entry!r}")
+            normalized.append(host)
+        return normalized
+
+
 class QuotasSettings(StrictSettingsModel):
     """Global storage and concurrency quota defaults (per-user override in DB)."""
 
@@ -100,6 +126,7 @@ class HubSettings(StrictSettingsModel):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     quotas: QuotasSettings = Field(default_factory=QuotasSettings)
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
+    webhooks: WebhooksSettings = Field(default_factory=WebhooksSettings)
     hub_version: str = "0.1.0"
     platform_os: Literal["linux"] = "linux"
     platform_arch: Literal["amd64", "arm64"] = Field(default_factory=_native_architecture)

@@ -12,8 +12,14 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from hub_server.errors import WebhookUrlForbiddenError
 from hub_server.models import Job, JobCallback
 from hub_server.services.audit import record as audit
+from hub_server.services.webhook_guard import (
+    ensure_delivery_target_allowed,
+    normalize_webhook_url,
+)
+from hub_server.settings import WebhooksSettings
 
 TERMINAL_JOB_STATUSES: tuple[str, ...] = ("SUCCESS", "FAILED", "CANCELLED", "TIMED_OUT")
 RETRYABLE_STATES: tuple[str, ...] = ("PENDING", "FAILED")
@@ -27,23 +33,39 @@ def enqueue_callback(
     job_id: int,
     url: str,
     secret: str | None = None,
+    *,
+    policy: WebhooksSettings | None = None,
 ) -> JobCallback:
-    """Register one PENDING callback for a Job; the caller owns the commit."""
-    callback = JobCallback(job_id=job_id, url=url, secret=secret, state="PENDING")
+    """Register one PENDING callback for a Job; the caller owns the commit.
+
+    The URL passes the SSRF guard here, so a forbidden target fails the enclosing
+    request instead of being persisted and dialed later by the scheduler.
+    """
+    callback = JobCallback(
+        job_id=job_id,
+        url=normalize_webhook_url(url, policy),
+        secret=secret,
+        state="PENDING",
+    )
     session.add(callback)
     session.flush()
     return callback
 
 
-def deliver_due(session: Session, now: datetime | None = None) -> int:
+def deliver_due(
+    session: Session,
+    now: datetime | None = None,
+    *,
+    policy: WebhooksSettings | None = None,
+) -> int:
     """Deliver every due callback whose Job reached a terminal status.
 
     A callback is due when its state is PENDING or FAILED and its optional
     next_attempt_at has passed. Each delivery posts one JSON body describing the
     Job outcome: a 2xx response marks the callback SUCCEEDED while any transport
-    failure or non-2xx response increments attempts, schedules a linear backoff
-    (next_attempt_at = now + 60s * attempts) and moves the callback to EXHAUSTED
-    once three attempts have been made. Every delivery writes one
+    failure, non-2xx response, or SSRF-guard refusal increments attempts, schedules
+    a linear backoff (next_attempt_at = now + 60s * attempts) and moves the callback
+    to EXHAUSTED once three attempts have been made. Every delivery writes one
     "webhook.deliver" audit entry attributed to the system scheduler. Commits
     once and returns the number of processed callbacks.
     """
@@ -60,13 +82,19 @@ def deliver_due(session: Session, now: datetime | None = None) -> int:
     ).all()
     processed = 0
     for callback, job in rows:
-        _deliver_one(session, callback, job, current)
+        _deliver_one(session, callback, job, current, policy)
         processed += 1
     session.commit()
     return processed
 
 
-def _deliver_one(session: Session, callback: JobCallback, job: Job, now: datetime) -> None:
+def _deliver_one(
+    session: Session,
+    callback: JobCallback,
+    job: Job,
+    now: datetime,
+    policy: WebhooksSettings | None,
+) -> None:
     """Attempt one delivery and advance the callback state machine."""
     body = json.dumps(
         {
@@ -85,18 +113,24 @@ def _deliver_one(session: Session, callback: JobCallback, job: Job, now: datetim
     error: str | None = None
     result = "ok"
     try:
-        status_code = _post_json(callback.url, body, headers)
-        if not 200 <= status_code < 300:
-            error = f"HTTP {status_code}"
+        ensure_delivery_target_allowed(callback.url, policy)
+    except WebhookUrlForbiddenError as refusal:
+        error = refusal.message
+        result = "denied"
+    else:
+        try:
+            status_code = _post_json(callback.url, body, headers)
+            if not 200 <= status_code < 300:
+                error = f"HTTP {status_code}"
+                result = "denied"
+        except urllib.error.HTTPError as http_error:
+            status_code = http_error.code
+            error = f"HTTP {http_error.code}"
             result = "denied"
-    except urllib.error.HTTPError as http_error:
-        status_code = http_error.code
-        error = f"HTTP {http_error.code}"
-        result = "denied"
-    except Exception as transport_error:  # any transport failure must be retried
-        status_code = None
-        error = str(transport_error) or type(transport_error).__name__
-        result = "denied"
+        except Exception as transport_error:  # any transport failure must be retried
+            status_code = None
+            error = str(transport_error) or type(transport_error).__name__
+            result = "denied"
 
     callback.last_status_code = status_code
     callback.last_error = error

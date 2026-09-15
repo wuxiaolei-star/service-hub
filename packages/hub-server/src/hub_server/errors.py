@@ -35,3 +35,14 @@ class UploadTooLargeError(HubError):
             status_code=413,
             details={"max_size_bytes": max_size_bytes},
         )
+
+
+class WebhookUrlForbiddenError(HubError):
+    """An outbound webhook target was refused by the SSRF guard."""
+
+    def __init__(self, *, reason: str) -> None:
+        super().__init__(
+            code="WEBHOOK_URL_FORBIDDEN",
+            message=f"回调地址被拒绝: {reason}",
+            status_code=422,
+        )

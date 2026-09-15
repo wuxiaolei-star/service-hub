@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from hub_server.errors import WebhookUrlForbiddenError
 from hub_server.main import create_app
 from hub_server.models import AuditLogRecord, Job, JobCallback, PluginBuild
 from hub_server.services import webhooks
@@ -226,3 +227,44 @@ def test_deliver_due_covers_every_terminal_status(
     callback = session.query(JobCallback).one()
     assert callback.state == "SUCCEEDED"
     assert json.loads(calls[0][1])["status"] == status
+
+
+def test_enqueue_callback_rejects_a_forbidden_target(
+    environment: tuple[Session, TestClient],
+) -> None:
+    """A refused callback must not be persisted for the scheduler to dial later."""
+    session, client = environment
+    job = _seed_job(session, client)
+
+    with pytest.raises(WebhookUrlForbiddenError):
+        enqueue_callback(session, job.id, "http://169.254.169.254/latest/meta-data/")
+
+    session.rollback()
+    assert session.query(JobCallback).count() == 0
+
+
+def test_deliver_due_never_dials_a_forbidden_target(
+    environment: tuple[Session, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stored callback that predates the guard is audited, never requested."""
+    session, client = environment
+    job = _seed_job(session, client)
+    session.add(JobCallback(job_id=job.id, url="http://127.0.0.1:8001/health", state="PENDING"))
+    session.commit()
+    calls: list[tuple[str, bytes, dict[str, str]]] = []
+    monkeypatch.setattr(webhooks, "_post_json", _spy_post(calls, status_code=200))
+    start = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    assert deliver_due(session, now=start) == 1
+    assert deliver_due(session, now=start + timedelta(seconds=60)) == 1
+    assert deliver_due(session, now=start + timedelta(seconds=180)) == 1
+
+    callback = session.query(JobCallback).one()
+    assert callback.state == "EXHAUSTED"
+    assert callback.attempts == 3
+    assert callback.last_status_code is None
+    assert "公网地址" in (callback.last_error or "")
+    assert calls == []
+    entries = session.query(AuditLogRecord).filter_by(action="webhook.deliver").all()
+    assert len(entries) == 3
+    assert all(entry.result == "denied" for entry in entries)

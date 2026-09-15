@@ -9,3 +9,6 @@ uploads:
 runner:
   shared_token: replace-with-a-random-high-entropy-token
   poll_interval_seconds: 2
+webhooks:
+  allow_private_networks: false
+  allowed_hosts: []

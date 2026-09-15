@@ -21,3 +21,6 @@ retention:
   input_ttl_hours: 720             # 未被引用的输入文件保留期（30 天）
   sweep_interval_minutes: 30       # cleaner 清理循环间隔
   backup_keep: 3                   # 备份保留份数
+webhooks:
+  allow_private_networks: false    # true=允许回调打到内网/回环（默认拒绝，防 SSRF）
+  allowed_hosts: []                # 额外收紧：非空时只允许这些主机，如 ["hooks.example.com", "*.corp.example"]

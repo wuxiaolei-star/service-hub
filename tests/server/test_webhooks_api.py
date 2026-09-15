@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from hub_server.main import create_app
-from hub_server.models import Job, PluginBuild, UserRecord
+from hub_server.models import Job, JobCallback, PluginBuild, UserRecord
 from hub_server.routers.webhooks import router as webhooks_router
 from hub_server.services.auth import AuthService, hash_password
 from hub_server.services.webhooks import enqueue_callback
@@ -21,7 +21,7 @@ from hub_server.settings import (
     UploadSettings,
 )
 
-from tests.server.test_jobs_api import _seed_build
+from tests.server.test_jobs_api import _seed_build, _upload_nc
 
 
 def _settings(tmp_path: Path) -> HubSettings:
@@ -146,3 +146,63 @@ def test_callbacks_allow_viewer_role(tmp_path: Path) -> None:
 
         assert response.status_code == 200, response.text
         assert response.json()["items"] == []
+
+
+def test_create_job_rejects_a_forbidden_callback_target(tmp_path: Path) -> None:
+    """Registering a callback on an internal address must not create the Job."""
+    with _client(tmp_path) as client:
+        headers = _admin_headers(client)
+        client.headers.update(headers)  # the shared upload helper relies on defaults
+        _seed_build(client, runtime_type="docker")
+        file_id = _upload_nc(client)
+
+        response = client.post(
+            "/api/v1/jobs",
+            headers=headers,
+            json={
+                "plugin_id": "nc_to_shp",
+                "version": "1.0.0",
+                "runtime_type": "docker",
+                "inputs": {"source_nc": file_id},
+                "params": {},
+                "callback": {"url": "http://169.254.169.254/latest/meta-data/"},
+            },
+        )
+
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "WEBHOOK_URL_FORBIDDEN"
+        factory = client.app.state.session_factory
+        with factory() as session:
+            assert session.query(Job).count() == 0
+            assert session.query(JobCallback).count() == 0
+
+
+def test_create_job_registers_a_public_callback(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        headers = _admin_headers(client)
+        client.headers.update(headers)  # the shared upload helper relies on defaults
+        _seed_build(client, runtime_type="docker")
+        file_id = _upload_nc(client)
+
+        response = client.post(
+            "/api/v1/jobs",
+            headers=headers,
+            json={
+                "plugin_id": "nc_to_shp",
+                "version": "1.0.0",
+                "runtime_type": "docker",
+                "inputs": {"source_nc": file_id},
+                "params": {},
+                "callback": {
+                    "url": "  https://hooks.example.test/done  ",
+                    "secret": "top-secret",
+                },
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        factory = client.app.state.session_factory
+        with factory() as session:
+            callback = session.query(JobCallback).one()
+            assert callback.url == "https://hooks.example.test/done"
+            assert callback.state == "PENDING"

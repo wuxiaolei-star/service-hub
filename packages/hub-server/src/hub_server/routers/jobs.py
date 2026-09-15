@@ -26,6 +26,7 @@ from hub_server.schemas import (
 from hub_server.services.audit import record as audit
 from hub_server.services.jobs import JobService
 from hub_server.services.quotas import QuotaService
+from hub_server.services.webhook_guard import normalize_webhook_url
 from hub_server.services.webhooks import enqueue_callback
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
@@ -50,6 +51,11 @@ def create_job(
     settings: Annotated[HubSettings, Depends(get_settings)],
 ) -> JobResponse:
     """Create a pending Job for one exact enabled runtime Build."""
+    if request.callback is not None:
+        # JobService.create commits on its own, so a callback rejected after it would
+        # leave an orphan PENDING Job queued for a runner. Validate the target first;
+        # enqueue_callback re-validates when it persists the row.
+        normalize_webhook_url(request.callback.url, settings.webhooks)
     QuotaService(session, settings.quotas).enforce_job_creation(actor)
     job = JobService(session, storage, settings).create(
         plugin_id=request.plugin_id,
@@ -65,6 +71,7 @@ def create_job(
             job.id,
             request.callback.url,
             request.callback.secret,
+            policy=settings.webhooks,
         )
     audit(
         session,
