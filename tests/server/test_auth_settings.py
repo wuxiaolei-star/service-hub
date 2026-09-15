@@ -10,6 +10,20 @@ def test_auth_settings_defaults_to_required_mode() -> None:
     assert settings.session_ttl_hours == 24
 
 
+def test_auth_settings_defaults_throttle_the_fifth_failure() -> None:
+    """Losing these defaults would let the login endpoint be brute forced."""
+    settings = AuthSettings()
+    assert settings.login_failure_threshold == 5
+    assert settings.login_lockout_base_seconds == 30
+    assert settings.login_lockout_max_seconds == 900
+
+
+def test_auth_settings_reject_a_ceiling_below_the_first_lock() -> None:
+    """A ceiling under the base delay would shorten later locks instead of capping them."""
+    with pytest.raises(ValueError):
+        AuthSettings(login_lockout_base_seconds=60, login_lockout_max_seconds=30)
+
+
 def test_auth_settings_rejects_unknown_mode() -> None:
     with pytest.raises(ValueError):
         AuthSettings(mode="open")

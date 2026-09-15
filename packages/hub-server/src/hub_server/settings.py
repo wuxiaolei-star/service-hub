@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 class StrictSettingsModel(BaseModel):
@@ -43,6 +43,9 @@ class AuthSettings(StrictSettingsModel):
 
     mode: Literal["required", "off"] = "required"
     session_ttl_hours: int = Field(default=24, gt=0)
+    login_failure_threshold: int = Field(default=5, gt=0)
+    login_lockout_base_seconds: int = Field(default=30, gt=0)
+    login_lockout_max_seconds: int = Field(default=900, gt=0)
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -51,6 +54,15 @@ class AuthSettings(StrictSettingsModel):
         if isinstance(value, bool):
             return "required" if value else "off"
         return value
+
+    @model_validator(mode="after")
+    def _lockout_ceiling_covers_the_first_lock(self) -> Self:
+        """A ceiling below the base delay would shorten later locks, not cap them."""
+        if self.login_lockout_max_seconds < self.login_lockout_base_seconds:
+            raise ValueError(
+                "login_lockout_max_seconds must not be below login_lockout_base_seconds"
+            )
+        return self
 
 
 class QuotasSettings(StrictSettingsModel):

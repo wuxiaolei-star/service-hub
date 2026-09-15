@@ -12,6 +12,7 @@ from hub_server.dependencies import get_session, get_settings
 from hub_server.dependencies_auth import (
     SESSION_COOKIE_NAME,
     Actor,
+    actor_ip,
     require_role,
 )
 from hub_server.errors import HubError
@@ -23,6 +24,7 @@ from hub_server.services.auth import (
     sha256_hex,
     verify_password,
 )
+from hub_server.services.login_throttle import LoginThrottle, lockout_error
 from hub_server.settings import HubSettings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -38,10 +40,6 @@ class LoginRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str = Field(min_length=MIN_PASSWORD_LENGTH)
-
-
-def _client_ip(request: Request) -> str | None:
-    return request.client.host if request.client is not None else None
 
 
 def _set_session_cookie(
@@ -66,6 +64,11 @@ def login(
     settings: Annotated[HubSettings, Depends(get_settings)],
 ) -> dict[str, object]:
     """Verify credentials and issue a session cookie plus bearer token."""
+    client_address = actor_ip(request)
+    throttle = LoginThrottle(session, settings.auth)
+    # Reject a backed-off identity before touching credentials: the check keys
+    # on the submitted name, so it cannot leak whether the account exists.
+    throttle.check(body.username, client_address)
     user = (
         session.query(UserRecord)
         .filter(UserRecord.username == body.username)
@@ -76,16 +79,29 @@ def login(
         or not user.is_active
         or not verify_password(body.password, user.password_hash)
     ):
+        lock = throttle.register_failure(body.username, client_address)
         audit(
             session,
             actor_type="anonymous" if user is None else "user",
             actor_id=user.id if user else None,
             actor_name=body.username,
             action="auth.login_failed",
-            ip=_client_ip(request),
+            ip=client_address,
             result="denied",
         )
+        if lock is not None:
+            audit(
+                session,
+                actor_type="anonymous" if user is None else "user",
+                actor_id=user.id if user else None,
+                actor_name=body.username,
+                action="auth.login_locked",
+                ip=client_address,
+                result="denied",
+            )
         session.commit()
+        if lock is not None:
+            raise lockout_error(lock)
         raise HubError(
             code="INVALID_CREDENTIALS",
             message="用户名或口令错误",
@@ -93,8 +109,9 @@ def login(
         )
 
     service = AuthService(session, session_ttl_hours=settings.auth.session_ttl_hours)
+    throttle.reset(body.username, client_address)
     _record, token = service.create_session(
-        user.id, ip=_client_ip(request), user_agent=request.headers.get("user-agent")
+        user.id, ip=client_address, user_agent=request.headers.get("user-agent")
     )
     audit(
         session,
@@ -102,7 +119,7 @@ def login(
         actor_id=user.id,
         actor_name=user.username,
         action="auth.login",
-        ip=_client_ip(request),
+        ip=client_address,
     )
     session.commit()
     _set_session_cookie(response, token, settings, request.url.scheme == "https")
@@ -142,7 +159,7 @@ def logout(
             actor_id=actor.id,
             actor_name=actor.name,
             action="auth.logout",
-            ip=_client_ip(request),
+            ip=actor_ip(request),
         )
         session.commit()
     response.delete_cookie(SESSION_COOKIE_NAME)

@@ -337,6 +337,31 @@ class ApiKeyRecord(Base):
     )
 
 
+class LoginAttemptRecord(Base):
+    """Failed-login counter for one (username, source address) pair.
+
+    Rows exist only while an identity is accumulating failures; a successful
+    login deletes its own row. ``ip`` stores a placeholder instead of NULL so
+    the unique constraint keeps working for callers without a client address.
+    """
+
+    __tablename__ = "login_attempts"
+    __table_args__ = (
+        UniqueConstraint("username", "ip", name="uq_login_attempts_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    ip: Mapped[str] = mapped_column(String(64))
+    failure_count: Mapped[int] = mapped_column(default=0)
+    last_failure_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class JobCallback(Base):
     """Webhook delivery state machine for one Job terminal notification."""
 

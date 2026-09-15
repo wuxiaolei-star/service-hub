@@ -162,7 +162,14 @@ def _error_response(
 ) -> JSONResponse:
     """Serialize one client-safe failure envelope."""
     payload = ErrorResponse(error=ErrorBody(code=code, message=message, details=details))
-    return JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
+    response = JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
+    # Throttled login responses must tell a well-behaved client when to retry,
+    # so the wait is a header rather than something to parse out of the body.
+    if status_code == 429 and details is not None:
+        retry_after = details.get("retry_after_seconds")
+        if isinstance(retry_after, int) and retry_after > 0:
+            response.headers["Retry-After"] = str(retry_after)
+    return response
 
 
 def _http_error_code_and_message(status_code: int) -> tuple[str, str]:

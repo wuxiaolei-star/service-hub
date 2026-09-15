@@ -16,6 +16,8 @@ from hub_server.settings import HubSettings
 
 SESSION_COOKIE_NAME = "hub_session"
 API_KEY_PREFIX = "hub_"
+# IPv4, IPv6, and host:port peer strings all fit well inside the audit column.
+_MAX_ADDRESS_LENGTH = 64
 
 ROLE_ORDER: dict[str, int] = {
     "viewer": 0,
@@ -80,7 +82,19 @@ def resolve_actor(
 
 
 def actor_ip(request: Request) -> str | None:
-    """Best-effort client address for audit rows."""
+    """Best-effort real client address for audit rows and login throttling.
+
+    The console reaches the API through the Nginx proxy, which appends the
+    address it accepted to ``X-Forwarded-For``; the final entry is therefore the
+    hop that actually connected to us, and an earlier forged entry cannot
+    displace it. Requests without the header (hubctl, local curl) fall back to
+    the socket peer.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        candidate = forwarded.rsplit(",", 1)[-1].strip()
+        if candidate and len(candidate) <= _MAX_ADDRESS_LENGTH:
+            return candidate
     return request.client.host if request.client is not None else None
 
 
