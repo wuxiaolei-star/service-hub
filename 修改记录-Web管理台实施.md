@@ -229,3 +229,53 @@ Task 3/4/6 主会话独立验收后提交）；主会话负责 Task 1/5/7。
 质量门：python 非集成 273 passed；web 166 passed + typecheck/lint/build；mypy strict 71 文件无问题。
 分片/断点续传上传延后至 backlog（秒传已覆盖主要痛点）。
 服务说明：`docs/service-docs/服务说明-V2.3.md`。
+
+---
+
+# V3.0 长期运行 Docker 服务（2026-09-15，spec/plan 见 docs/superpowers）
+
+目标：在不改变既有一次性 Job / Runner 协议的前提下，让管理员在 Hub 内部署和运维常驻
+服务容器；Hub API 仍然不接触 Docker Socket。
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 服务 API 与内部客户端 | d0ec88f + 06cb4a1 | 迁移 0006 `service_defs`；`routers/services.py`（列表/日志 viewer，创建/更新/启停/删除 admin，写操作审计、失败回写 STOPPED）；`services/service_manager.py` 回环 httpx 客户端（令牌鉴权、404/5xx→统一 Hub 错误、502 SERVICE_MANAGER_UNAVAILABLE） |
+| Task 2 service-manager 与安全闭环 | 9c6bbfa | `deploy/service_hub/service_manager_service.py`（127.0.0.1:8001、Bearers 令牌、`hub-svc-<name>`、端口强制 127.0.0.1、替换同名容器、`unless-stopped`、非 root 65532）；supervisord 增 `service-manager` 进程（user=service-mgr）；Dockerfile 增 `service-mgr` 账号 |
+| Task 3 Web 服务页 | 本次（前端 2 组提交） | `ServicesPage.tsx`（列表/部署弹窗/端口映射多行/环境变量与挂载文本解析+前端校验/生命周期按钮随实际状态/删除仅 admin+Popconfirm/日志 tail 弹窗/502 文案）；`api/services.ts`；`queryKeys.services`；路由与侧边栏「服务」；`ServicesPage.test.tsx` 9 条 |
+| 修复：manager 无法访问 Docker Socket | 本次 | `docker-entrypoint.sh` 原先只把 `docker-runner` 加入 Socket 组，`service-mgr` 未加入，导致真机上 manager 调用 Docker 必然权限失败；现改为只授权两个 Socket 消费者（`docker-runner` + `service-mgr`），并以测试锁定该集合 |
+| Task 4 V3 验收与运维文档 | 本次（文档提交） | `docs/service-docs/服务说明-V3.0.md`；`docs/service-docs/V3.0-部署验收清单.md`（终态清单 + 端到端步骤 + 9 类失败排查 + 门禁命令）；README 架构图/目录/入口与 V3.0 版本说明；`test_container_smoke.py` 增镜像内 manager、Socket 组归属、Web 无挂载断言；`test_web_console_lifecycle.py` 增 compose 边界 + 容器内 manager RUNNING + Socket GID 归属断言；`test_documented_commands.py` 增 V3 文档一致性断言 |
+
+实施要点：
+
+- `useMutation({ mutationFn: updateService })` 是真实缺陷：react-query 按 `(variables, context)`
+  调用，而 `updateService` 是 `(name, request)` 双参数，直接透传会把整个请求体塞进 name。
+  已改为显式包装（同时消除 typecheck 报错）。
+- 前端全量 vitest 在本机并行时出现 7 个「Test timed out」假失败（单文件运行全绿，属资源争用）：
+  在 `vite.config.ts` 设 `testTimeout: 20_000`，并让交互测试用 `userEvent.setup({ delay: null })`。
+- `docker-entrypoint.sh` 的 Socket 组授权集合用测试锁定为 `{docker-runner, service-mgr}`，
+  防止后续误把 `hub-api`/`conda-runner` 拉入。
+- 顺手修复 `alembic/versions/0005_automation.py` 两处 E501（换行，无语义变化）。
+- Linux AMD64 真机项（镜像构建、两个集成测试、发布包）仍需验收机执行并回填报告。
+
+## 开发机质量门（V3.0）
+
+- `python -m pytest -m "not integration"`：705 passed、3 skipped（7 deselected，246s）
+- `python -m ruff check .`：All checks passed
+- `python -m mypy packages`：Success，73 文件无问题
+- `web`：vitest 全量 27 个测试文件通过；typecheck / lint / build 通过
+- `HUB_HOST_DATA_DIR=/srv/service-hub-data docker compose config --quiet`：通过（本机无运行中
+  的 Docker daemon，`compose config` 不需要 daemon）
+
+## V3.0 提交序列
+
+| 提交 | 说明 |
+| --- | --- |
+| d0ec88f | 服务定义模型与 service-manager 骨架 |
+| 9c6bbfa | service-manager Docker 执行器 |
+| 06cb4a1 | 长期服务 API、manager 客户端与审计 |
+| 376eb87 | Web 服务页 + 9 条工作流测试 + vitest 超时配置 |
+| fdd9b46 | 修复 socket 组授权（补充 service-mgr）与边界测试 |
+| c18f5dc | 修复 0005 迁移两处 E501 |
+| 本次 | V3.0 服务说明与部署验收清单、README、文档一致性测试 |
+
+Linux 侧待验收项同样列入 `docs/service-docs/V3.0-部署验收清单.md` 第 1 节。

@@ -106,3 +106,40 @@ def test_single_container_guide_cross_links_web_guide() -> None:
     guide = SINGLE_CONTAINER_GUIDE.read_text("utf-8")
     assert "[Web管理台构建部署与使用]" in guide
     assert "service-hub-web" in guide
+
+
+V3_SERVICE_DOC = Path("docs/service-docs/服务说明-V3.0.md")
+V3_ACCEPTANCE_CHECKLIST = Path("docs/service-docs/V3.0-部署验收清单.md")
+
+
+def test_readme_links_the_v3_long_running_service_documentation() -> None:
+    """The README must route console operators to the V3 service docs and the page."""
+    readme = README.read_text("utf-8")
+
+    assert "[服务说明-V3.0]" in readme
+    assert "[V3.0-部署验收清单]" in readme
+    assert "/services" in readme
+    assert "service-manager" in readme
+
+
+def test_v3_documents_cover_the_operational_flow_and_the_socket_boundary() -> None:
+    """An operator must find the deploy/port/log/stop/delete flow and the isolation rule."""
+    service_doc = V3_SERVICE_DOC.read_text("utf-8")
+    checklist = V3_ACCEPTANCE_CHECKLIST.read_text("utf-8")
+
+    assert "/api/v1/services" in service_doc
+    assert "service-manager" in service_doc
+    assert "hub-svc-<name>" in service_doc
+    assert "V3.0-部署验收清单" in service_doc
+
+    for keyword in (
+        "nginxdemos/hello",
+        "127.0.0.1",
+        "/api/v1/services",
+        "service-manager 不可用",
+        "hub-svc-",
+        "失败排查",
+        "服务说明-V3.0",
+        "单容器部署与脚本插件使用",
+    ):
+        assert keyword in checklist, keyword

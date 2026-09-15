@@ -18,11 +18,14 @@ conda Runner 和 Docker Runner 三个降权进程，同时支持两种显式运�
 业务系统 → Nginx → 127.0.0.1:8000 → service-hub 容器
                                       ├─ hub-api（无 Docker Socket）
                                       ├─ conda-runner（无 Docker Socket）
-                                      └─ docker-runner（唯一访问 Docker Socket）
+                                      ├─ docker-runner（访问 Docker Socket：一次性插件 Job）
+                                      └─ service-manager（访问 Docker Socket：V3.0 长期服务）
+浏览器 → 127.0.0.1:8080 → service-hub-web 容器（SPA + 反代，无 /data、无 Docker Socket）
 ```
 
-只有一个长期运行服务 `service-hub`，发布宿主机回环端口 `127.0.0.1:8000`；宿主机数据
-目录 `HUB_HOST_DATA_DIR`（默认 `/srv/service-hub-data`）bind 到容器内 `/data`。
+Compose 部署两个长期运行服务：`service-hub` 发布宿主机回环端口 `127.0.0.1:8000`，
+`service-hub-web` 发布 `127.0.0.1:8080`（浏览器直接访问）。宿主机数据目录
+`HUB_HOST_DATA_DIR`（默认 `/srv/service-hub-data`）bind 到后端容器内 `/data`。
 项目主要目录：
 
 ```text
@@ -62,7 +65,10 @@ curl -fsS http://127.0.0.1:8000/api/v1/system/health
 部署、运维、hubctl 使用、hub-plugin 构建脚本插件、备份迁移和常见错误的完整手册见
 [单容器部署与脚本插件使用](docs/guides/单容器部署与脚本插件使用.md)；Web 管理台的
 构建、部署与浏览器操作流程见
-[Web管理台构建部署与使用](docs/guides/Web管理台构建部署与使用.md)。
+[Web管理台构建部署与使用](docs/guides/Web管理台构建部署与使用.md)；长期运行 Docker
+服务的版本说明与真机验收步骤见
+[服务说明-V3.0](docs/service-docs/服务说明-V3.0.md) 与
+[V3.0-部署验收清单](docs/service-docs/V3.0-部署验收清单.md)。
 
 ## 插件发布与运行
 
@@ -109,6 +115,10 @@ python -m pytest -m integration tests/integration/test_single_container_lifecycl
 Job 终态 Webhook 签名回调（自动重试）、周期定时任务、线性管道
 （上一步输出自动作为下一步输入，失败即停）。V2.3 提供插件仓库
 （`/registry` 页面 + `hubctl registry sync` 多机同步）、上传秒传查重与
-SSE 实时任务日志。V1 时代无认证的限制必须保持 Hub 只监听 `127.0.0.1`，并由 Nginx TLS、来源网段限制和
-主机防火墙保护；禁止外部访问 `/internal/v1`。容器内只有 docker-runner 进程可以访问
-Docker Socket，`hub-api` 与 `conda-runner` 被明确拒绝。
+SSE 实时任务日志。V3.0 新增**长期运行 Docker 服务**：管理员可在 `/services` 页面部署
+常驻容器（端口固定绑 `127.0.0.1`、容器名 `hub-svc-<name>`），执行启动/停止/重启/删除
+并查看日志；Hub API 不接触 Docker Socket，期望状态经内部令牌转发给同容器内的
+`service-manager` 子进程执行。V1 时代无认证的限制必须保持 Hub 只监听 `127.0.0.1`，并由 Nginx TLS、来源网段限制和
+主机防火墙保护；禁止外部访问 `/internal/v1`。容器内可以访问 Docker Socket 的只有
+`docker-runner`（一次性插件 Job）与 `service-manager`（长期服务）两个进程，
+`hub-api` 与 `conda-runner` 被明确拒绝。
