@@ -118,7 +118,10 @@ Job 终态 Webhook 签名回调（自动重试）、周期定时任务、线性�
 SSE 实时任务日志。V3.0 新增**长期运行 Docker 服务**：管理员可在 `/services` 页面部署
 常驻容器（端口固定绑 `127.0.0.1`、容器名 `hub-svc-<name>`），执行启动/停止/重启/删除
 并查看日志；Hub API 不接触 Docker Socket，期望状态经内部令牌转发给同容器内的
-`service-manager` 子进程执行。V1 时代无认证的限制必须保持 Hub 只监听 `127.0.0.1`，并由 Nginx TLS、来源网段限制和
+`service-manager` 子进程执行。V3.0 同时加固了部署边界：服务容器必须使用非 root 的
+`uid:gid`、端口限 1024–65535 且避开 Hub 自身监听、挂载来源必须位于宿主机数据目录之下、
+镜像必须本地已存在；登录端点也加入失败限流（超阈值返回 `429` 与 `Retry-After`）。
+V1 时代无认证的限制必须保持 Hub 只监听 `127.0.0.1`，并由 Nginx TLS、来源网段限制和
 主机防火墙保护；禁止外部访问 `/internal/v1`。容器内可以访问 Docker Socket 的只有
 `docker-runner`（一次性插件 Job）与 `service-manager`（长期服务）两个进程，
 `hub-api` 与 `conda-runner` 被明确拒绝。
