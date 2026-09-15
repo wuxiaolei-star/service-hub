@@ -12,26 +12,47 @@ from pathlib import Path
 
 from hub_server.db import create_engine_and_session_factory
 from hub_server.settings import HubSettings
+from hub_server.storage import LocalStorage
+from sqlalchemy.orm import Session
 
 _LOGGER = logging.getLogger("hub.scheduler")
 _STOP = {"requested": False}
 
-_TASKS: list[Callable[[object], int]] = []
+_TASKS: list[Callable[[Session], int]] = []
 
 
-def _register_default_tasks() -> None:
-    """Import the automation services lazily so tests can run without them."""
+def _register_default_tasks(settings: HubSettings) -> None:
+    """Bind storage, settings, and the webhook policy into session-only sweep tasks.
+
+    The automation services need more than a session: schedule triggering and
+    pipeline advancement create Jobs (storage + settings) and callback delivery
+    needs the outbound SSRF policy. Adapters keep ``register_task`` signatures
+    honest, so a mismatch surfaces here instead of as a swallowed TypeError in
+    every sweep.
+    """
     from hub_server.services.pipelines import advance_runs
     from hub_server.services.schedules import trigger_due
     from hub_server.services.webhooks import deliver_due
 
-    if not _TASKS:
-        register_task(deliver_due)
-        register_task(trigger_due)
-        register_task(advance_runs)
+    if _TASKS:
+        return
+    storage = LocalStorage(Path(settings.storage.root))
+
+    def deliver_callbacks(session: Session) -> int:
+        return deliver_due(session, policy=settings.webhooks)
+
+    def trigger_schedules(session: Session) -> int:
+        return trigger_due(session, storage, settings)
+
+    def advance_pipelines(session: Session) -> int:
+        return advance_runs(session, storage, settings)
+
+    register_task(deliver_callbacks)
+    register_task(trigger_schedules)
+    register_task(advance_pipelines)
 
 
-def register_task(task: Callable[[object], int]) -> None:
+def register_task(task: Callable[[Session], int]) -> None:
     """Register one sweep task; it receives a session and returns work count."""
     _TASKS.append(task)
 
@@ -47,7 +68,7 @@ def main(once: bool = False) -> int:
     settings = HubSettings.from_yaml(Path(os.environ["HUB_CONFIG_PATH"]))
     _engine, session_factory = create_engine_and_session_factory(settings.database.url)
     signal.signal(signal.SIGTERM, _handle_signal)
-    _register_default_tasks()
+    _register_default_tasks(settings)
 
     _LOGGER.info("scheduler started with %s tasks", len(_TASKS))
     while True:
