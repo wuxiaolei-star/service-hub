@@ -37,27 +37,32 @@ class FileService:
         """Create one unguessable external identifier for an in-progress upload."""
         return f"file_{uuid4().hex}"
 
+    def install_upload_metadata(
+        self,
+        file_key: str,
+        filename: str,
+        content_type: str | None,
+        stored: StoredUpload,
+        *,
+        owner_user_id: int | None = None,
+    ) -> FileRecord:
+        """Add metadata for an installed payload and leave the transaction open.
+
+        Flushing rather than committing hands the caller the decision: it can
+        verify quotas against the row it just wrote and roll the whole upload
+        back while the payload on disk is still the only side effect.
+        """
+        record = self._new_record(file_key, filename, content_type, stored, owner_user_id)
+        self._session.add(record)
+        self._session.flush()
+        return record
+
     def store_installed_upload(
         self, file_key: str, filename: str, content_type: str | None, stored: StoredUpload
     ) -> FileRecord:
         """Commit metadata after a streaming upload atomically reaches storage."""
-        safe_filename = Path(filename).name or "upload.bin"
-        extension = Path(safe_filename).suffix.lower() or None
-        record = FileRecord(
-            file_key=file_key,
-            scope="UPLOAD",
-            role="INPUT",
-            logical_name=safe_filename,
-            original_filename=safe_filename,
-            relative_path=stored.relative_path,
-            extension=extension,
-            mime_type=content_type,
-            size_bytes=stored.size_bytes,
-            sha256=stored.sha256,
-            status="AVAILABLE",
-        )
         try:
-            self._session.add(record)
+            record = self.install_upload_metadata(file_key, filename, content_type, stored)
             self._session.commit()
         except Exception as error:
             _LOGGER.exception("Unable to save Hub file metadata")
@@ -72,6 +77,32 @@ class FileService:
                     _LOGGER.exception("Unable to compensate failed Hub file metadata write")
             raise self._unexpected_error("保存文件元数据失败") from error
         return record
+
+    @staticmethod
+    def _new_record(
+        file_key: str,
+        filename: str,
+        content_type: str | None,
+        stored: StoredUpload,
+        owner_user_id: int | None,
+    ) -> FileRecord:
+        """Build one available-upload row from installed payload metadata."""
+        safe_filename = Path(filename).name or "upload.bin"
+        extension = Path(safe_filename).suffix.lower() or None
+        return FileRecord(
+            file_key=file_key,
+            scope="UPLOAD",
+            role="INPUT",
+            logical_name=safe_filename,
+            original_filename=safe_filename,
+            relative_path=stored.relative_path,
+            extension=extension,
+            mime_type=content_type,
+            size_bytes=stored.size_bytes,
+            sha256=stored.sha256,
+            status="AVAILABLE",
+            owner_user_id=owner_user_id,
+        )
 
     def open_available(self, file_key: str) -> tuple[FileRecord, Path]:
         """Return an available record together with its safe on-disk payload path."""

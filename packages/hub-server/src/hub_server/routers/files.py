@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 from fastapi import APIRouter, Depends, Path, Request, status
 from python_multipart.exceptions import FormParserError
@@ -15,14 +16,16 @@ from starlette.responses import FileResponse as StreamingFileResponse
 
 from hub_server.dependencies import get_session, get_settings, get_storage
 from hub_server.dependencies_auth import Actor, actor_ip, get_actor, require_role
-from hub_server.errors import HubError
+from hub_server.errors import HubError, UploadTooLargeError
 from hub_server.models import FileRecord
 from hub_server.schemas import FileListResponse, FileResponse
 from hub_server.services.audit import record as audit
 from hub_server.services.files import FileService
-from hub_server.services.quotas import QuotaService
+from hub_server.services.quotas import QuotaService, UploadCap
 from hub_server.settings import HubSettings
-from hub_server.storage import LocalStorage, StreamingUpload
+from hub_server.storage import LocalStorage, StoredUpload, StreamingUpload
+
+_LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/files", tags=["files"], dependencies=[Depends(require_role("viewer"))]
@@ -30,6 +33,20 @@ router = APIRouter(
 
 _MAX_MULTIPART_HEADER_COUNT = 8
 _MAX_MULTIPART_HEADER_SIZE_BYTES = 4224
+# The bytes of a multipart body that are not file content are bounded by the
+# parser's own header limits, so a declared body larger than the file cap plus
+# this slack cannot describe an acceptable upload. The slack only ever makes the
+# declared-size rejection more conservative; the stream cap stays authoritative.
+_MAX_MULTIPART_ENVELOPE_BYTES = 16 * 1024
+
+
+class _StreamedUpload(NamedTuple):
+    """One payload installed on disk, waiting for its metadata transaction."""
+
+    file_key: str
+    filename: str
+    mime_type: str | None
+    stored: StoredUpload
 
 
 def _file_response(record: FileRecord) -> FileResponse:
@@ -58,6 +75,30 @@ def _file_service(session: Session, storage: LocalStorage, settings: HubSettings
     return FileService(session, storage, max_size_bytes=settings.uploads.max_size_bytes)
 
 
+def _declared_content_length(request: Request) -> int | None:
+    """Return the declared body size when the client sent a usable one.
+
+    A chunked upload declares nothing, so the header is an optimisation only:
+    the quota cap applied to the stream is what actually bounds the payload.
+    """
+    raw = request.headers.get("content-length")
+    if raw is None:
+        return None
+    try:
+        declared = int(raw)
+    except ValueError:
+        return None
+    return declared if declared >= 0 else None
+
+
+def _discard_installed_upload(storage: LocalStorage, file_key: str) -> None:
+    """Best-effort removal so a rejected upload keeps neither record nor payload."""
+    try:
+        storage.remove_upload(file_key)
+    except HubError:
+        _LOGGER.exception("Unable to remove the payload of a rejected upload")
+
+
 @router.post(
     "",
     response_model=FileResponse,
@@ -74,26 +115,42 @@ async def upload_file(
     """Parse one bounded multipart upload directly into Hub-managed storage."""
     service = _file_service(session, storage, settings)
     quota = QuotaService(session, settings.quotas)
-    quota.enforce_upload(
-        actor, int(request.headers.get("content-length", "0") or 0)
-    )
-    record = await _stream_multipart_file(
-        request, service, storage, settings.uploads.max_size_bytes
-    )
-    if actor.kind == "user" and actor.id is not None:
-        record.owner_user_id = actor.id
-    quota.enforce_upload(actor, record.size_bytes, exclude_file_id=record.id)
-    audit(
-        session,
-        actor_type=actor.kind,
-        actor_id=actor.id,
-        actor_name=actor.name,
-        action="file.upload",
-        resource_type="file",
-        resource_id=record.file_key,
-        ip=actor_ip(request),
-    )
-    session.commit()
+    cap = quota.upload_cap(actor, upload_max_bytes=settings.uploads.max_size_bytes)
+    if cap.max_bytes <= 0:
+        raise cap.error()
+    declared = _declared_content_length(request)
+    if declared is not None and declared > cap.max_bytes + _MAX_MULTIPART_ENVELOPE_BYTES:
+        raise cap.error()
+
+    streamed = await _stream_multipart_file(request, service, storage, cap)
+    try:
+        record = service.install_upload_metadata(
+            streamed.file_key,
+            streamed.filename,
+            streamed.mime_type,
+            streamed.stored,
+            owner_user_id=actor.id if actor.kind == "user" else None,
+        )
+        # Authoritative check. It runs after the row is flushed, so this
+        # connection already holds the write lock, and before the commit, so a
+        # concurrent upload cannot slip past it and a rejection leaves neither
+        # metadata nor payload behind.
+        quota.enforce_upload(actor, record.size_bytes, exclude_file_id=record.id)
+        audit(
+            session,
+            actor_type=actor.kind,
+            actor_id=actor.id,
+            actor_name=actor.name,
+            action="file.upload",
+            resource_type="file",
+            resource_id=record.file_key,
+            ip=actor_ip(request),
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        _discard_installed_upload(storage, streamed.file_key)
+        raise
     return _file_response(record)
 
 
@@ -112,8 +169,8 @@ def list_files(
 
 
 async def _stream_multipart_file(
-    request: Request, service: FileService, storage: LocalStorage, max_size_bytes: int
-) -> FileRecord:
+    request: Request, service: FileService, storage: LocalStorage, cap: UploadCap
+) -> _StreamedUpload:
     """Bound raw multipart bytes before they can enter a framework temporary file."""
     content_type, options = parse_options_header(request.headers.get("content-type"))
     boundary = options.get(b"boundary")
@@ -159,7 +216,7 @@ async def _stream_multipart_file(
         filename = file_name.decode("latin-1")
         part_content_type = headers.get(b"content-type")
         mime_type = part_content_type.decode("latin-1") if part_content_type is not None else None
-        upload = storage.begin_upload(file_key, max_size_bytes=max_size_bytes)
+        upload = storage.begin_upload(file_key, max_size_bytes=cap.max_bytes)
         current_is_file = True
 
     def on_part_data(data: bytes, start: int, end: int) -> None:
@@ -196,12 +253,17 @@ async def _stream_multipart_file(
         if not complete or upload is None or filename is None:
             raise _validation_error()
         stored = upload.finish()
-        return service.store_installed_upload(file_key, filename, mime_type, stored)
+        return _StreamedUpload(file_key, filename, mime_type, stored)
     except Exception as error:
         if upload is not None:
             upload.abort()
         if isinstance(error, (FormParserError, UnicodeDecodeError)):
             raise _validation_error() from error
+        # When the cap came from a quota rather than the upload limit, the
+        # stream stopped early because the account ran out of room, not because
+        # the file was too big for the Hub.
+        if isinstance(error, UploadTooLargeError) and cap.quota is not None:
+            raise cap.error() from error
         raise
 
 
