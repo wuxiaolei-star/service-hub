@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Annotated, Protocol
 
@@ -16,6 +17,7 @@ from hub_server.models import ServiceDef
 from hub_server.schemas import (
     ServiceCreateRequest,
     ServiceListResponse,
+    ServiceMount,
     ServiceResponse,
     ServiceRuntimeResponse,
 )
@@ -28,6 +30,33 @@ router = APIRouter(
 )
 
 _SERVICE_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _require_mounts_below_host_data_root(mounts: list[ServiceMount]) -> None:
+    """Allow bind mounts only below the Hub-managed host data directory.
+
+    This is the architectural boundary of V3.0: a managed service container may
+    read and write Hub data, but never arbitrary host paths such as `/etc` or
+    the Docker socket. The service-manager re-validates the same rule so the
+    two layers must agree before any container is created.
+    """
+    if not mounts:
+        return
+    root = os.environ.get("HUB_DOCKER_HOST_DATA_ROOT", "").rstrip("/")
+    if not root:
+        raise HubError(
+            code="SERVICE_MOUNT_FORBIDDEN",
+            message="未配置宿主机数据目录时拒绝服务挂载",
+            status_code=422,
+        )
+    prefix = root + "/"
+    for mount in mounts:
+        if not mount.source.startswith(prefix) or mount.source == root:
+            raise HubError(
+                code="SERVICE_MOUNT_FORBIDDEN",
+                message=f"挂载来源必须位于宿主机数据目录 {root} 之内",
+                status_code=422,
+            )
 
 
 class _Manager(Protocol):
@@ -70,6 +99,7 @@ def create_service(
 ) -> ServiceResponse:
     """Persist and deploy one admin-authorized service definition."""
     _require_valid_name(request.name)
+    _require_mounts_below_host_data_root(request.mounts)
     if session.query(ServiceDef).filter_by(name=request.name).one_or_none() is not None:
         raise HubError(code="SERVICE_NAME_TAKEN", message="服务名称已存在", status_code=409)
     definition = _new_definition(request)
@@ -103,6 +133,7 @@ def update_service(
     _require_valid_name(name)
     if request.name != name:
         raise HubError(code="SERVICE_NAME_IMMUTABLE", message="服务名称不能修改", status_code=422)
+    _require_mounts_below_host_data_root(request.mounts)
     definition = _get_definition(session, name)
     _apply_definition(definition, request)
     session.flush()

@@ -72,9 +72,13 @@ def _settings(tmp_path: Path) -> HubSettings:
     )
 
 
+HOST_DATA_ROOT = "/srv/hub-data"
+
+
 def _client(tmp_path: Path, manager: FakeManager, monkeypatch: Any) -> TestClient:
     import hub_server.routers.services as services
 
+    monkeypatch.setenv("HUB_DOCKER_HOST_DATA_ROOT", HOST_DATA_ROOT)
     monkeypatch.setattr(services, "get_service_manager", lambda _settings: manager)
     return TestClient(create_app(_settings(tmp_path)))
 
@@ -109,7 +113,9 @@ def _payload(**overrides: object) -> dict[str, object]:
         "image": "nginxdemos/hello:plain-text",
         "ports": [{"host": 18081, "container": 80}],
         "env": {"MODE": "test"},
-        "mounts": [{"source": "/srv/hub", "target": "/data", "read_only": True}],
+        "mounts": [
+            {"source": f"{HOST_DATA_ROOT}/hello", "target": "/data", "read_only": True}
+        ],
         "command": ["nginx", "-g", "daemon off;"],
     }
     payload.update(overrides)
@@ -185,3 +191,70 @@ def test_logs_forwards_bounded_tail(tmp_path: Path, monkeypatch: Any) -> None:
         assert response.status_code == 200
         assert response.text == "service ready\n"
         assert ("logs", {"name": "hello", "tail": 42}) in manager.calls
+
+
+def test_create_rejects_mounts_outside_the_host_data_root(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A service must never be able to bind-mount arbitrary host paths."""
+    manager = FakeManager()
+    with _client(tmp_path, manager, monkeypatch) as client:
+        response = client.post(
+            "/api/v1/services",
+            headers=_admin_headers(client),
+            json=_payload(
+                mounts=[{"source": "/var/run/docker.sock", "target": "/sock"}],
+            ),
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "SERVICE_MOUNT_FORBIDDEN"
+        assert manager.calls == []
+
+
+def test_create_rejects_reserved_and_privileged_host_ports(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    manager = FakeManager()
+    with _client(tmp_path, manager, monkeypatch) as client:
+        admin = _admin_headers(client)
+        for host_port in (80, 8000, 8001, 8080):
+            response = client.post(
+                "/api/v1/services",
+                headers=admin,
+                json=_payload(ports=[{"host": host_port, "container": 80}]),
+            )
+            assert response.status_code == 422, host_port
+        assert manager.calls == []
+
+
+def test_create_rejects_root_user_labels(tmp_path: Path, monkeypatch: Any) -> None:
+    manager = FakeManager()
+    with _client(tmp_path, manager, monkeypatch) as client:
+        admin = _admin_headers(client)
+        for user_label in ("0:0", "0:1000", "root:root"):
+            response = client.post(
+                "/api/v1/services",
+                headers=admin,
+                json=_payload(user_label=user_label),
+            )
+            assert response.status_code == 422, user_label
+        assert manager.calls == []
+
+
+def test_update_rejects_mounts_outside_the_host_data_root(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    manager = FakeManager()
+    with _client(tmp_path, manager, monkeypatch) as client:
+        admin = _admin_headers(client)
+        assert client.post("/api/v1/services", headers=admin, json=_payload()).status_code == 201
+
+        response = client.put(
+            "/api/v1/services/hello",
+            headers=admin,
+            json=_payload(mounts=[{"source": "/etc", "target": "/etc", "read_only": True}]),
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "SERVICE_MOUNT_FORBIDDEN"

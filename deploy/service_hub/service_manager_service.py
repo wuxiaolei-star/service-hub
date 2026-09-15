@@ -3,12 +3,18 @@
 V3.0: this is the only process besides docker-runner that touches the Docker
 Socket. It listens on 127.0.0.1:8001 inside the container, authenticates with
 the shared runner token, and executes the desired state that hub-api forwards.
+
+Every deploy request is re-validated here (non-root user, unreserved host
+ports, host-data-root mount allowlist, image present locally) so the container
+boundary holds even if a future caller bypasses the public API validation.
 """
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
+import re
 import sys
 from typing import Annotated, Any
 
@@ -18,6 +24,13 @@ from pydantic import BaseModel, Field
 _LOGGER = logging.getLogger("hub.service-manager")
 
 _PORT = int(os.environ.get("HUB_SERVICE_MANAGER_PORT", "8001"))
+
+# Mirrors hub_server.schemas: unprivileged host ports that never collide with
+# the Hub's own loopback listeners (hub-api 8000, this manager 8001, web 8080).
+_HOST_PORT_MIN = 1024
+_HOST_PORT_MAX = 65535
+_RESERVED_HOST_PORTS = frozenset({8000, 8001, 8080})
+_NON_ROOT_USER_PATTERN = re.compile(r"^[1-9]\d{0,9}:[1-9]\d{0,9}$")
 
 
 class DeployRequest(BaseModel):
@@ -34,9 +47,13 @@ app = FastAPI(title="Hub Service Manager", docs_url=None, redoc_url=None)
 
 
 def _require_runner_token(request: Request) -> None:
-    authorization = request.headers.get("authorization")
+    authorization = request.headers.get("authorization") or ""
     expected = os.environ.get("HUB_RUNNER_TOKEN", "")
-    if not expected or authorization != f"Bearer {expected}":
+    # Constant-time comparison, matching hub_server's internal_runner policy:
+    # this token authorizes Docker operations, so never leak match progress.
+    if not expected or not hmac.compare_digest(
+        authorization.encode(), f"Bearer {expected}".encode()
+    ):
         raise HTTPException(status_code=401, detail="invalid runner token")
 
 
@@ -72,6 +89,54 @@ def _to_docker_volumes(mounts: list[dict[str, object]]) -> dict[str, dict[str, s
     return volumes
 
 
+def _validate_deploy_spec(spec: DeployRequest) -> None:
+    """Re-enforce the public API contract before any Docker call is made.
+
+    These checks mirror hub_server.schemas and routers.services so the Hub's
+    boundary rules hold even for callers that speak to the manager directly.
+    """
+    if _NON_ROOT_USER_PATTERN.fullmatch(spec.user_label) is None:
+        raise HTTPException(status_code=422, detail="SERVICE_USER_FORBIDDEN")
+    for mapping in spec.ports:
+        host = mapping.get("host")
+        if (
+            not isinstance(host, int)
+            or not _HOST_PORT_MIN <= host <= _HOST_PORT_MAX
+            or host in _RESERVED_HOST_PORTS
+        ):
+            raise HTTPException(status_code=422, detail="SERVICE_PORT_FORBIDDEN")
+    _validate_mounts(spec.mounts)
+
+
+def _validate_mounts(mounts: list[dict[str, object]]) -> None:
+    """Bind mounts may only target directories below the Hub host data root."""
+    root = os.environ.get("HUB_DOCKER_HOST_DATA_ROOT", "").rstrip("/")
+    for mount in mounts:
+        source = str(mount["source"])
+        if (
+            not root
+            or not source.startswith(root + "/")
+            or source == root
+            or ".." in source.split("/")
+        ):
+            raise HTTPException(status_code=422, detail="SERVICE_MOUNT_FORBIDDEN")
+
+
+def _require_local_image(client: Any, image: str) -> None:
+    """Deploy only images already present on the host; never implicitly pull.
+
+    The offline deployment model requires operators to import images before
+    use, so an unknown image is a configuration error rather than a trigger
+    for a network fetch.
+    """
+    from docker.errors import ImageNotFound
+
+    try:
+        client.images.get(image)
+    except ImageNotFound as exc:
+        raise HTTPException(status_code=422, detail="SERVICE_IMAGE_MISSING") from exc
+
+
 def _get_container(client: Any, container_name: str) -> Any:
     try:
         return client.containers.get(container_name)
@@ -89,6 +154,8 @@ def deploy(
     spec: DeployRequest, _: Annotated[None, Depends(_require_runner_token)]
 ) -> dict[str, object]:
     client = _docker_client()
+    _validate_deploy_spec(spec)
+    _require_local_image(client, spec.image)
     container_name = _container_name(spec.name)
     try:
         existing = client.containers.get(container_name)

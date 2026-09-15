@@ -1,9 +1,10 @@
 """Request and response schemas exposed by Hub HTTP endpoints."""
 
+import re
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from python_hub_contracts import (
     JobResult,
     JobRuntimeSpec,
@@ -125,11 +126,27 @@ class FileListResponse(BaseModel):
     items: list[FileResponse]
 
 
+# Service host ports must stay unprivileged and never collide with the Hub's
+# own loopback listeners (hub-api 8000, service-manager 8001, web console 8080).
+_SERVICE_HOST_PORT_MIN = 1024
+_RESERVED_SERVICE_HOST_PORTS = frozenset({8000, 8001, 8080})
+# Service containers always run as an explicit non-root "uid:gid" pair.
+_SERVICE_USER_LABEL_PATTERN = re.compile(r"^[1-9]\d{0,9}:[1-9]\d{0,9}$")
+
+
 class ServicePort(BaseModel):
     """One host-loopback port mapping approved for a service container."""
 
-    host: int = Field(ge=1, le=65535)
+    host: int = Field(ge=_SERVICE_HOST_PORT_MIN, le=65535)
     container: int = Field(ge=1, le=65535)
+
+    @field_validator("host")
+    @classmethod
+    def host_must_not_be_reserved(cls, value: int) -> int:
+        """Keep managed services away from the Hub's own published ports."""
+        if value in _RESERVED_SERVICE_HOST_PORTS:
+            raise ValueError("host port is reserved for the Service Hub itself")
+        return value
 
 
 class ServiceMount(BaseModel):
@@ -138,6 +155,14 @@ class ServiceMount(BaseModel):
     source: str = Field(min_length=1, max_length=1024)
     target: str = Field(min_length=1, max_length=1024)
     read_only: bool = False
+
+    @field_validator("source", "target")
+    @classmethod
+    def path_must_be_absolute_without_parent_segments(cls, value: str) -> str:
+        """Reject relative paths, drive letters, and any `..` escape segment."""
+        if not value.startswith("/") or ".." in value.split("/"):
+            raise ValueError("mount paths must be absolute without parent segments")
+        return value
 
 
 class ServiceCreateRequest(BaseModel):
@@ -150,6 +175,14 @@ class ServiceCreateRequest(BaseModel):
     mounts: list[ServiceMount] = Field(default_factory=list, max_length=32)
     command: list[str] | None = Field(default=None, max_length=64)
     user_label: str = Field(default="65532:65532", min_length=1, max_length=64)
+
+    @field_validator("user_label")
+    @classmethod
+    def user_label_must_be_a_non_root_pair(cls, value: str) -> str:
+        """Service containers may never request uid 0 or named users."""
+        if _SERVICE_USER_LABEL_PATTERN.fullmatch(value) is None:
+            raise ValueError("user_label must be a non-root numeric uid:gid pair")
+        return value
 
 
 class ServiceRuntimeResponse(BaseModel):

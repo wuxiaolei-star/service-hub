@@ -5,13 +5,28 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from docker.errors import NotFound
+from docker.errors import ImageNotFound, NotFound
 from fastapi.testclient import TestClient
 
 from deploy.service_hub import service_manager_service as service_manager
 
 TOKEN = "test-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
+HOST_DATA_ROOT = "/srv/hub-data"
+
+
+class FakeImages:
+    """Stands in for the ``client.images`` collection of docker-py."""
+
+    def __init__(self, missing: set[str] | None = None) -> None:
+        self._missing = missing if missing is not None else set()
+        self.get_calls: list[str] = []
+
+    def get(self, image: str) -> str:
+        self.get_calls.append(image)
+        if image in self._missing:
+            raise ImageNotFound(f"image {image} not found")
+        return image
 
 
 class FakeContainer:
@@ -49,11 +64,12 @@ class FakeContainer:
 
 
 class FakeDockerClient:
-    """Minimal docker-py client double exposing client.containers.get/run."""
+    """Minimal docker-py client double exposing client.containers and images."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, missing_images: set[str] | None = None) -> None:
         self._by_name: dict[str, FakeContainer] = {}
         self.run_calls: list[dict[str, Any]] = []
+        self.images = FakeImages(missing_images)
         self.containers = SimpleNamespaceLike(self)
 
     def add(self, container: FakeContainer) -> None:
@@ -88,6 +104,7 @@ class SimpleNamespaceLike:
 @pytest.fixture()
 def fake_client(monkeypatch: pytest.MonkeyPatch) -> FakeDockerClient:
     monkeypatch.setenv("HUB_RUNNER_TOKEN", TOKEN)
+    monkeypatch.setenv("HUB_DOCKER_HOST_DATA_ROOT", HOST_DATA_ROOT)
     fake = FakeDockerClient()
     monkeypatch.setattr(service_manager, "_docker_client", lambda: fake)
     return fake
@@ -145,11 +162,15 @@ def test_deploy_converts_request_to_docker_py_format(
         json={
             "name": "web",
             "image": "ghcr.io/example/web:2.0",
-            "ports": [{"host": 8081, "container": 80}],
+            "ports": [{"host": 18081, "container": 80}],
             "env": {"HUB_ENV": "prod"},
             "mounts": [
-                {"source": "/srv/hub/web", "target": "/data", "read_only": True},
-                {"source": "/srv/cache", "target": "/cache", "read_only": False},
+                {"source": f"{HOST_DATA_ROOT}/web", "target": "/data", "read_only": True},
+                {
+                    "source": f"{HOST_DATA_ROOT}/cache",
+                    "target": "/cache",
+                    "read_only": False,
+                },
             ],
             "command": ["gunicorn", "-b", "0.0.0.0:80"],
             "user_label": "1000:1000",
@@ -163,15 +184,16 @@ def test_deploy_converts_request_to_docker_py_format(
     assert call["image"] == "ghcr.io/example/web:2.0"
     assert call["name"] == "hub-svc-web"
     assert call["detach"] is True
-    assert call["ports"] == {"127.0.0.1:8081": 80}
+    assert call["ports"] == {"127.0.0.1:18081": 80}
     assert call["environment"] == {"HUB_ENV": "prod"}
     assert call["volumes"] == {
-        "/srv/hub/web": {"bind": "/data", "mode": "ro"},
-        "/srv/cache": {"bind": "/cache", "mode": "rw"},
+        f"{HOST_DATA_ROOT}/web": {"bind": "/data", "mode": "ro"},
+        f"{HOST_DATA_ROOT}/cache": {"bind": "/cache", "mode": "rw"},
     }
     assert call["command"] == ["gunicorn", "-b", "0.0.0.0:80"]
     assert call["user"] == "1000:1000"
     assert call["restart_policy"] == {"Name": "unless-stopped"}
+    assert fake_client.images.get_calls == ["ghcr.io/example/web:2.0"]
 
 
 def test_deploy_replaces_existing_container(
@@ -199,6 +221,130 @@ def test_deploy_defaults_are_forwarded(api: TestClient, fake_client: FakeDockerC
     assert call["volumes"] == {}
     assert call["command"] is None
     assert call["user"] == "65532:65532"
+
+
+@pytest.mark.parametrize(
+    "user_label",
+    ["0:0", "0:1000", "1000:0", "root:root", "1000", "abc:1000"],
+)
+def test_deploy_rejects_root_or_non_numeric_user_label(
+    api: TestClient, fake_client: FakeDockerClient, user_label: str
+) -> None:
+    response = api.post(
+        "/deploy",
+        headers=AUTH,
+        json={"name": "web", "image": "img:1", "user_label": user_label},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "SERVICE_USER_FORBIDDEN"
+    assert fake_client.run_calls == []
+
+
+@pytest.mark.parametrize("host_port", [22, 80, 443, 8000, 8001, 8080, 70000])
+def test_deploy_rejects_privileged_or_reserved_host_ports(
+    api: TestClient, fake_client: FakeDockerClient, host_port: int
+) -> None:
+    response = api.post(
+        "/deploy",
+        headers=AUTH,
+        json={
+            "name": "web",
+            "image": "img:1",
+            "ports": [{"host": host_port, "container": 80}],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "SERVICE_PORT_FORBIDDEN"
+    assert fake_client.run_calls == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "/etc",
+        "/var/run/docker.sock",
+        "/root",
+        f"{HOST_DATA_ROOT}-sibling/escape",
+        f"{HOST_DATA_ROOT}/../etc",
+    ],
+)
+def test_deploy_rejects_mounts_outside_the_host_data_root(
+    api: TestClient, fake_client: FakeDockerClient, source: str
+) -> None:
+    response = api.post(
+        "/deploy",
+        headers=AUTH,
+        json={
+            "name": "web",
+            "image": "img:1",
+            "mounts": [{"source": source, "target": "/data", "read_only": True}],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "SERVICE_MOUNT_FORBIDDEN"
+    assert fake_client.run_calls == []
+
+
+def test_deploy_rejects_mounting_the_host_data_root_itself(
+    api: TestClient, fake_client: FakeDockerClient
+) -> None:
+    response = api.post(
+        "/deploy",
+        headers=AUTH,
+        json={
+            "name": "web",
+            "image": "img:1",
+            "mounts": [{"source": HOST_DATA_ROOT, "target": "/data", "read_only": True}],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "SERVICE_MOUNT_FORBIDDEN"
+    assert fake_client.run_calls == []
+
+
+def test_deploy_rejects_mounts_when_the_data_root_is_unset(
+    api: TestClient, fake_client: FakeDockerClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("HUB_DOCKER_HOST_DATA_ROOT")
+
+    response = api.post(
+        "/deploy",
+        headers=AUTH,
+        json={
+            "name": "web",
+            "image": "img:1",
+            "mounts": [{"source": "/srv/anything", "target": "/data"}],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "SERVICE_MOUNT_FORBIDDEN"
+    assert fake_client.run_calls == []
+
+
+def test_deploy_rejects_images_missing_from_the_local_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", TOKEN)
+    monkeypatch.setenv("HUB_DOCKER_HOST_DATA_ROOT", HOST_DATA_ROOT)
+    fake = FakeDockerClient(missing_images={"ghcr.io/evil/pulled:latest"})
+    monkeypatch.setattr(service_manager, "_docker_client", lambda: fake)
+    client = TestClient(service_manager.app)
+
+    response = client.post(
+        "/deploy",
+        headers=AUTH,
+        json={"name": "web", "image": "ghcr.io/evil/pulled:latest"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "SERVICE_IMAGE_MISSING"
+    assert fake.images.get_calls == ["ghcr.io/evil/pulled:latest"]
+    assert fake.run_calls == []
 
 
 def test_stop_stops_container_and_reports_state(
