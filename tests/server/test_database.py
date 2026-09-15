@@ -94,6 +94,24 @@ def test_sqlite_engine_enables_foreign_keys(tmp_path: Path) -> None:
         engine.dispose()
 
 
+def test_sqlite_engine_enables_wal_and_busy_timeout(tmp_path: Path) -> None:
+    """Concurrent Hub processes share the database without lock failures.
+
+    WAL lets the cleaner, scheduler, and runners write while hub-api reads,
+    and the busy timeout makes competing writers wait instead of raising
+    "database is locked" on the first collision.
+    """
+    engine, _ = create_engine_and_session_factory(
+        f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"
+    )
+    try:
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
+            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 30000
+    finally:
+        engine.dispose()
+
+
 def test_file_record_rejects_duplicate_file_keys(session: Session) -> None:
     """A duplicate external file key is rejected instead of corrupting lookup state."""
     common = {
