@@ -63,11 +63,7 @@ class ServiceManagerClient:
         if response.status_code >= 500:
             raise _manager_unavailable()
         if response.status_code >= 400:
-            raise HubError(
-                code="SERVICE_MANAGER_REJECTED",
-                message="服务管理器拒绝请求",
-                status_code=502,
-            )
+            raise _manager_rejection(response)
         try:
             body = response.json()
         except ValueError as exc:
@@ -75,6 +71,37 @@ class ServiceManagerClient:
         if not isinstance(body, dict):
             raise _manager_unavailable()
         return {str(key): value for key, value in body.items()}
+
+
+def _manager_rejection(response: httpx.Response) -> HubError:
+    """Relay a refusal the manager made about the request, not about the Hub.
+
+    The manager answers 4xx for input it will not act on and names the rule in
+    ``detail`` (``SERVICE_IMAGE_MISSING`` and friends). Reporting that as a 502
+    "manager unavailable" told the caller the Hub was broken and threw the reason
+    away, so the operator could not tell a bad image from a dead process. When the
+    body carries no recognisable reason the old 502 is the honest answer.
+    """
+    reason = ""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        candidate = payload.get("detail")
+        if isinstance(candidate, str) and candidate:
+            reason = candidate
+    if not reason:
+        return HubError(
+            code="SERVICE_MANAGER_REJECTED",
+            message="服务管理器拒绝请求",
+            status_code=502,
+        )
+    return HubError(
+        code=reason,
+        message=f"服务管理器拒绝了该请求: {reason}",
+        status_code=422,
+    )
 
 
 def get_service_manager(settings: HubSettings) -> ServiceManagerClient:
