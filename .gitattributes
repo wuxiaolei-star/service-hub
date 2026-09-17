@@ -1,1 +1,10 @@
-deploy/release/*.sh text eol=lf
+# Files that are executed inside Linux containers, or shipped to a Linux host, must keep
+# LF endings no matter what core.autocrlf is set to on the machine that checks them out.
+#
+# A CRLF docker-entrypoint.sh is fatal: the kernel resolves the interpreter as
+# "/bin/sh\r", tini reports "exec ... failed: No such file or directory", and the
+# container restart-loops with exit code 127 while the image itself looks correct.
+# tools/hubctl and deploy/release/*.sh fail the same way once they reach a Linux host.
+*.sh          text eol=lf
+tools/hubctl  text eol=lf
+Dockerfile    text eol=lf
