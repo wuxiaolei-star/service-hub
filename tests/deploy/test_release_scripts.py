@@ -1,4 +1,5 @@
 import hashlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -115,10 +116,21 @@ def test_release_scripts_are_safe_and_idempotent() -> None:
         assert "chmod 666" not in source
 
 
-def test_release_shell_scripts_are_checked_out_with_lf_endings() -> None:
+def test_everything_linux_executes_is_pinned_to_lf_endings() -> None:
+    """core.autocrlf must not be able to write CRLF into a file Linux has to execute.
+
+    A CRLF ``docker-entrypoint.sh`` makes the kernel resolve the shebang as
+    ``/bin/sh\\r``, so tini fails the exec with "No such file or directory" and the
+    container restart-loops with exit 127 while the image contents look correct.
+    The release scripts and tools/hubctl break the same way on any Linux host, so
+    the rule has to cover every shell script rather than one directory.
+    """
     attributes = Path(".gitattributes").read_text(encoding="utf-8")
 
-    assert "deploy/release/*.sh text eol=lf" in attributes
+    for pattern in ("*.sh", "tools/hubctl", "Dockerfile"):
+        assert re.search(
+            rf"^{re.escape(pattern)}\s+text\s+eol=lf\s*$", attributes, re.MULTILINE
+        ), f"{pattern} must be pinned to LF endings"
 
 
 def test_build_release_creates_amd64_offline_bundle_with_hubctl() -> None:
