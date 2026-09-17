@@ -64,3 +64,10 @@ def test_nginx_config_routes_safely() -> None:
     assert "proxy_read_timeout 3700s" in config
     assert "proxy_send_timeout 3700s" in config
     assert "location = /web-health" in config
+    # The Web container is reached through a published port, so the peer it sees is the
+    # Docker gateway. It must restore the client address before injecting
+    # X-Forwarded-For upstream, otherwise hub-api reads the gateway from the rightmost
+    # entry and both audit rows and login throttling lose the real source address.
+    assert "set_real_ip_from 172.16.0.0/12" in config
+    assert "real_ip_header X-Forwarded-For" in config
+    assert "real_ip_recursive on" in config
