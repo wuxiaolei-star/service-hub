@@ -188,6 +188,7 @@ def me(
 @router.post("/change-password")
 def change_password(
     body: ChangePasswordRequest,
+    request: Request,
     actor: Annotated[Actor, Depends(require_role("viewer"))],
     session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, object]:
@@ -215,7 +216,7 @@ def change_password(
         action="auth.change_password",
         resource_type="user",
         resource_id=str(actor.id),
-        ip=None,
+        ip=actor_ip(request),
     )
     session.commit()
     return {"username": user.username, "must_change_password": False}

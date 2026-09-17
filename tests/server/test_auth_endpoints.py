@@ -144,6 +144,41 @@ def test_change_password_rejects_weak_new_password(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_change_password_audit_row_carries_the_client_address(client: TestClient) -> None:
+    """A rotation must be attributable to a source address.
+
+    Every other auth endpoint resolves the caller through ``actor_ip``; a
+    hardcoded ``None`` here produced audit rows nobody could attribute, which
+    only surfaced once the console was reached through the real edge proxy.
+    The header also carries a forged leading entry, so the assertion pins the
+    rightmost-hop rule at the same time.
+    """
+    credentials = _read_bootstrap(client)
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": credentials["username"], "password": credentials["password"]},
+    )
+    headers = {
+        "Authorization": f"Bearer {login.json()['token']}",
+        "X-Forwarded-For": "198.51.100.7, 203.0.113.9",
+    }
+
+    changed = client.post(
+        "/api/v1/auth/change-password",
+        json={"old_password": credentials["password"], "new_password": "brand-new-passw0rd"},
+        headers=headers,
+    )
+    assert changed.status_code == 200
+
+    entries = client.get(
+        "/api/v1/audit-logs",
+        params={"action": "auth.change_password", "limit": 5},
+        headers=headers,
+    ).json()["items"]
+    assert entries, "the rotation should have produced an audit row"
+    assert entries[0]["ip"] == "203.0.113.9"
+
+
 def test_bootstrap_writes_file_only_when_users_are_empty(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))):
         bootstrap_file = tmp_path / "data" / "bootstrap-admin.json"
