@@ -184,7 +184,10 @@ def test_deploy_converts_request_to_docker_py_format(
     assert call["image"] == "ghcr.io/example/web:2.0"
     assert call["name"] == "hub-svc-web"
     assert call["detach"] is True
-    assert call["ports"] == {"127.0.0.1:18081": 80}
+    # docker-py keys this by container port and takes (host_ip, host_port) as the
+    # value. A fake client only records the kwarg, so an inverted mapping or a
+    # "127.0.0.1:HOST" key looks fine here and only fails against a real daemon.
+    assert call["ports"] == {"80/tcp": ("127.0.0.1", 18081)}
     assert call["environment"] == {"HUB_ENV": "prod"}
     assert call["volumes"] == {
         f"{HOST_DATA_ROOT}/web": {"bind": "/data", "mode": "ro"},

@@ -75,9 +75,16 @@ def _container_name(name: str) -> str:
     return f"hub-svc-{name}"
 
 
-def _to_docker_ports(ports: list[dict[str, int]]) -> dict[str, int]:
-    """Convert API port mappings to docker-py's ``{"127.0.0.1:HOST": CONTAINER}`` format."""
-    return {f"127.0.0.1:{mapping['host']}": mapping["container"] for mapping in ports}
+def _to_docker_ports(ports: list[dict[str, int]]) -> dict[str, tuple[str, int]]:
+    """Convert API port mappings to docker-py's ``{CONTAINER/tcp: (HOST_IP, PORT)}`` form.
+
+    docker-py keys the mapping by the *container* port and takes the host side as
+    the value. A ``"127.0.0.1:HOST"`` key instead travels to the daemon as a bare
+    port string, which it rejects with ``400 ... invalid port``, so no managed
+    service could ever be created. The tuple value is also what pins the published
+    port to loopback, which is what the deployment model requires.
+    """
+    return {f"{mapping['container']}/tcp": ("127.0.0.1", mapping["host"]) for mapping in ports}
 
 
 def _to_docker_volumes(mounts: list[dict[str, object]]) -> dict[str, dict[str, str]]:
