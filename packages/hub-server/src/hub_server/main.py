@@ -121,7 +121,16 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
 
 
 def _bootstrap_admin(settings: HubSettings) -> None:
-    """Seed the first admin account into a protected file on first run."""
+    """Seed the first admin account and persist its one-time credential.
+
+    The credential file is written *before* the account is committed. On a fresh
+    container the data root is created by Docker as ``root:root``, so a hub-api
+    that cannot write there would otherwise commit an admin row whose password
+    nobody can read -- and every later start would skip seeding because a user
+    already exists, losing the credential for good. Failing before the commit
+    keeps this idempotent: fix the directory permissions, restart, and the
+    credential is written and the account seeded.
+    """
     if settings.auth.mode != "required":
         return
     from hub_server.db import create_engine_and_session_factory
@@ -134,6 +143,22 @@ def _bootstrap_admin(settings: HubSettings) -> None:
             if session.query(UserRecord).count() > 0:
                 return
             password = secrets.token_urlsafe(18)
+            bootstrap_file = Path(settings.storage.root) / "bootstrap-admin.json"
+            try:
+                bootstrap_file.parent.mkdir(parents=True, exist_ok=True)
+                bootstrap_file.write_text(
+                    json.dumps({"username": "admin", "password": password}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                bootstrap_file.chmod(0o600)
+            except OSError:
+                _LOGGER.error(
+                    "cannot persist the bootstrap admin credential to %s; skipping admin "
+                    "creation, so a restart after fixing that directory seeds it again",
+                    bootstrap_file,
+                    exc_info=True,
+                )
+                return
             session.add(
                 UserRecord(
                     username="admin",
@@ -143,18 +168,9 @@ def _bootstrap_admin(settings: HubSettings) -> None:
                 )
             )
             session.commit()
+            _LOGGER.info("初始管理员凭据已写入 %s", bootstrap_file)
     finally:
         engine.dispose()
-
-    bootstrap_root = Path(settings.storage.root)
-    bootstrap_root.mkdir(parents=True, exist_ok=True)
-    bootstrap_file = bootstrap_root / "bootstrap-admin.json"
-    bootstrap_file.write_text(
-        json.dumps({"username": "admin", "password": password}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    bootstrap_file.chmod(0o600)
-    _LOGGER.info("初始管理员凭据已写入 %s", bootstrap_file)
 
 
 def _error_response(

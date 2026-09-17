@@ -40,3 +40,15 @@ def test_entrypoint_shell_uses_the_safe_runtime_token_and_gid_guards() -> None:
     assert "read-runtime-token" in entrypoint
     assert "check-socket-gid" in entrypoint
     assert ". /run/service-hub/runtime.env" not in entrypoint
+
+
+def test_entrypoint_grants_the_data_root_to_the_shared_group() -> None:
+    """hub-api seeds the admin credential at the data root, which Docker owns as root.
+
+    Without group write access there, a fresh deployment cannot write the credential
+    and therefore never seeds a usable admin account.
+    """
+    entrypoint = Path("docker-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert 'chgrp hub-data "$data_root"' in entrypoint
+    assert 'chmod 2775 "$data_root"' in entrypoint

@@ -44,6 +44,13 @@ if [ ! -f "$permissions_marker" ]; then
         "$data_root/logs" \
         "$data_root/environments"
 
+    # hub-api writes the one-time admin credential to the data root, which Docker
+    # creates as root:root. Without group write access there the credential cannot
+    # be written at all, and a fresh deployment ends up with no usable admin
+    # account. The setgid bit keeps the group on files the runtime creates here.
+    chgrp hub-data "$data_root"
+    chmod 2775 "$data_root"
+
     chown -R hub-api:hub-data \
         "$data_root/db" \
         "$data_root/files" \
