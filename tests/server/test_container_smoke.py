@@ -163,25 +163,32 @@ def test_service_hub_and_docker_plugin_share_a_fixed_non_root_data_uid() -> None
     assert "USER 65532:65532" in plugin_dockerfile
 
 
-def test_plugin_dockerfile_bootstraps_pip_before_installing() -> None:
-    """The GDAL base image has no pip and Ubuntu 24 marks its Python as externally managed.
+def test_plugin_dockerfile_installs_into_an_isolated_venv() -> None:
+    """The GDAL base image cannot accept pip installs into its system interpreter.
 
-    Without this the first `python3 -m pip install` fails outright, so the plugin image
-    can never be built on a fresh machine — a defect that only surfaces at build time.
+    Three independent reasons, all verified against the real image:
+      1. it ships neither ``pip`` nor ``ensurepip``;
+      2. Ubuntu 24.04 marks the interpreter externally managed (PEP 668);
+      3. an apt-owned ``numpy 1.26.4`` sits in /usr/lib/python3/dist-packages and pip
+         refuses to uninstall it ("RECORD file not found"), which breaks numpy 2.1.3.
+    A ``--system-site-packages`` venv sidesteps all three: pip owns what it installs,
+    the distro numpy is shadowed rather than removed, and ``osgeo`` stays importable.
     """
     plugin_dockerfile = Path("packages/nc-to-shp-plugin/docker/Dockerfile").read_text("utf-8")
 
     assert plugin_dockerfile.startswith("FROM ghcr.io/osgeo/gdal:")
-    assert "apt-get install" in plugin_dockerfile
-    assert "python3-pip" in plugin_dockerfile
-    # PEP 668: Ubuntu 24.04 refuses plain `pip install` into the system interpreter.
-    # Every pip invocation in this file must carry the escape hatch.
-    pip_lines = [
-        line for line in plugin_dockerfile.splitlines() if "python3 -m pip install" in line
-    ]
-    assert pip_lines, "expected at least one pip install step"
-    for line in pip_lines:
-        assert "--break-system-packages" in line, line
+    assert "python3-venv" in plugin_dockerfile
+    assert "python3 -m venv --system-site-packages /opt/venv" in plugin_dockerfile
+
+    # pip must only ever be invoked through the venv, never through the system
+    # interpreter — the latter is what the base image cannot support.
+    assert "python3 -m pip install" not in plugin_dockerfile
+    assert "/opt/venv/bin/python -m pip install" in plugin_dockerfile
+
+    # The Job container runs as an unprivileged uid on a read-only rootfs, so the
+    # interpreter it execs has to survive a permission sweep.
+    assert "chmod -R a=rX /plugin /opt/venv" in plugin_dockerfile
+    assert 'ENTRYPOINT ["/opt/venv/bin/python", "-m", "hub_runner"]' in plugin_dockerfile
 
 
 def test_image_ships_the_long_running_service_manager() -> None:
