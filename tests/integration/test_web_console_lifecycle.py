@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import json
 import platform
 import subprocess
 import sys
@@ -211,13 +211,30 @@ def test_web_console_serves_spa_and_enforces_boundaries(tmp_path: Path) -> None:
         assert socket_gid not in _supplementary_groups("hub-api")
         assert socket_gid not in _supplementary_groups("conda-runner")
 
-        # V2 auth is mandatory, so the console's own proxy must carry a token through.
-        username = os.environ.get("HUB_BOOTSTRAP_USERNAME", "admin")
-        password = os.environ.get("HUB_BOOTSTRAP_PASSWORD")
-        assert password, "set HUB_BOOTSTRAP_PASSWORD to exercise the Web console lifecycle"
+        # V2 auth is mandatory, so the console's own proxy must carry a token through. This
+        # stack is disposable and bootstraps its own admin, so the credentials come from its
+        # own data directory rather than from the operator environment.
+        credentials = subprocess.run(
+            _compose_command(
+                project_name,
+                "exec",
+                "-T",
+                "service-hub",
+                "cat",
+                "/data/bootstrap-admin.json",
+                compose_file=compose_file,
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        bootstrap = json.loads(credentials)
         login = httpx.post(
             f"{base}/api/v1/auth/login",
-            json={"username": username, "password": password},
+            json={
+                "username": bootstrap["username"],
+                "password": bootstrap["password"],
+            },
             timeout=30,
         )
         assert login.status_code == 200, login.text

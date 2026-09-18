@@ -67,11 +67,23 @@ def test_single_container_survives_restart_and_keeps_privilege_boundaries(
         assert metadata.json()["file_id"] == file_id
 
     states = _supervisor_process_states()
-    assert states == {
+    # V3.0 supervises six processes. Assert the roster as a required subset rather than an
+    # exact mapping so a future process added to supervisord.conf does not break the gate,
+    # while a process that died on restart still fails it.
+    required_states = {
         "hub-api": "RUNNING",
         "conda-runner": "RUNNING",
         "docker-runner": "RUNNING",
+        "cleaner": "RUNNING",
+        "scheduler": "RUNNING",
+        "service-manager": "RUNNING",
     }
+    missing = {
+        name: states.get(name, "<absent>")
+        for name, expected in required_states.items()
+        if states.get(name) != expected
+    }
+    assert not missing, f"supervisord processes not RUNNING: {missing}"
 
     for user in ("hub-api", "conda-runner"):
         denied = _docker_ping_as(user)
@@ -85,8 +97,8 @@ def test_single_container_survives_restart_and_keeps_privilege_boundaries(
     )
 
 
-def _compose(*arguments: str) -> str:
-    """Run a Compose command against the repository deployment and return stdout.
+def _compose_command(*arguments: str) -> list[str]:
+    """Build the Compose command line the deployment actually uses.
 
     A real deployment does not invoke ``docker compose`` bare: it pins a project name, layers
     the host override file over ``compose.yaml``, and exports the data-directory variable the
@@ -94,27 +106,34 @@ def _compose(*arguments: str) -> str:
     deploy script's own command line, split on whitespace) and ``HUB_HOST_DATA_DIR``, so the
     suite follows the deployment instead of guessing its flags.
     """
-    environment = dict(os.environ)
-    configured = environment.get("HUB_COMPOSE_COMMAND", "").split()
+    configured = os.environ.get("HUB_COMPOSE_COMMAND", "").split()
     if configured:
-        command = [*configured, *arguments]
-    else:
-        environment.setdefault("HUB_HOST_DATA_DIR", "/srv/service-hub-data")
-        command = [
-            "docker",
-            "compose",
-            "--project-directory",
-            str(REPOSITORY_ROOT),
-            *arguments,
-        ]
-    result = subprocess.run(
-        command,
+        return [*configured, *arguments]
+    return [
+        "docker",
+        "compose",
+        "--project-directory",
+        str(REPOSITORY_ROOT),
+        *arguments,
+    ]
+
+
+def _compose(*arguments: str) -> str:
+    """Run a Compose command and return stdout, failing the test on a non-zero exit."""
+    return _compose_result(*arguments).stdout
+
+
+def _compose_result(*arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run a Compose command and return the completed process without checking its status."""
+    environment = dict(os.environ)
+    environment.setdefault("HUB_HOST_DATA_DIR", "/srv/service-hub-data")
+    return subprocess.run(
+        _compose_command(*arguments),
         env=environment,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
-    return result.stdout
 
 
 def _container_health_state() -> str:
@@ -161,48 +180,30 @@ def _assert_single_container_deployment() -> None:
 
 def _supervisor_process_states() -> dict[str, str]:
     """Read supervisord process states over the in-container Unix socket."""
-    result = subprocess.run(
-        [
-            "docker",
-            "compose",
-            "--project-directory",
-            str(REPOSITORY_ROOT),
-            "exec",
-            "-T",
-            "-u",
-            "root",
-            "-w",
-            "/app",
-            "service-hub",
-            "python",
-            "-c",
-            _SUPERVISOR_STATES_SNIPPET,
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
+    output = _compose(
+        "exec",
+        "-T",
+        "-u",
+        "root",
+        "-w",
+        "/app",
+        "service-hub",
+        "python",
+        "-c",
+        _SUPERVISOR_STATES_SNIPPET,
     )
-    return dict(json.loads(result.stdout))
+    return dict(json.loads(output))
 
 
 def _docker_ping_as(user: str) -> subprocess.CompletedProcess[str]:
     """Attempt a Docker Engine ping as one of the managed in-container users."""
-    return subprocess.run(
-        [
-            "docker",
-            "compose",
-            "--project-directory",
-            str(REPOSITORY_ROOT),
-            "exec",
-            "-T",
-            "-u",
-            user,
-            "service-hub",
-            "python",
-            "-c",
-            _DOCKER_PING_SNIPPET,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
+    return _compose_result(
+        "exec",
+        "-T",
+        "-u",
+        user,
+        "service-hub",
+        "python",
+        "-c",
+        _DOCKER_PING_SNIPPET,
     )
