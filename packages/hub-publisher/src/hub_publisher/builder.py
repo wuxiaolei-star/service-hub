@@ -227,19 +227,23 @@ def _build_docker_runtime(
     shutil.copy2(dockerfile, context / "Dockerfile")
     image = f"{project.manifest.plugin.id}:{project.manifest.plugin.version}-linux-{arch}"
     docker_platform = "linux/amd64" if arch == "amd64" else "linux/arm64"
-    runner(
-        [
-            "docker",
-            "build",
-            "--platform",
-            docker_platform,
-            "--build-arg",
-            f"SOURCE_SHA256={project.source_digest()}",
-            "--tag",
-            image,
-            str(context),
-        ]
-    )
+    command = [
+        "docker",
+        "build",
+        "--platform",
+        docker_platform,
+        "--build-arg",
+        f"SOURCE_SHA256={project.source_digest()}",
+    ]
+    # Pass the optional PyPI mirror through to the Dockerfile. Unset, the build arg stays
+    # empty and pip keeps its default index, so an offline build is unaffected. Setting
+    # HUB_PLUGIN_PIP_INDEX_URL lets a build reach a nearer mirror, which on a slow
+    # international link is the difference between about a minute and about an hour.
+    pip_index_url = os.environ.get("HUB_PLUGIN_PIP_INDEX_URL", "").strip()
+    if pip_index_url:
+        command += ["--build-arg", f"PIP_INDEX_URL={pip_index_url}"]
+    command += ["--tag", image, str(context)]
+    runner(command)
     digest = runner(
         ["docker", "image", "inspect", "--format", "{{.Id}}", image],
         capture_stdout=True,

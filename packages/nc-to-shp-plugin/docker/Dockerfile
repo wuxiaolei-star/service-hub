@@ -1,6 +1,12 @@
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.3
 
 ARG SOURCE_SHA256
+# Optional PyPI index override. Left empty, pip uses its own default (pypi.org), so an
+# offline or air-gapped build behaves exactly as before. A build can point this at a
+# closer mirror instead, which on the reference host is worth two orders of magnitude:
+# pypi.org served these wheels at ~34 kB/s while mirrors.aliyun.com managed ~13 MB/s,
+# turning a ~40 minute dependency install into roughly one minute.
+ARG PIP_INDEX_URL=""
 LABEL org.opencontainers.image.title="nc_to_shp" \
       org.opencontainers.image.version="1.0.0" \
       io.python-service-hub.plugin-source-sha256="${SOURCE_SHA256}"
@@ -18,7 +24,11 @@ USER root
 RUN apt-get update \
     && apt-get install --no-install-recommends -y python3-venv \
     && rm -rf /var/lib/apt/lists/* \
-    && python3 -m venv --system-site-packages /opt/venv \
+    && python3 -m venv --system-site-packages /opt/venv
+# Kept as its own layer so swapping the mirror does not redo the apt work above.
+RUN if [ -n "$PIP_INDEX_URL" ]; then \
+      /opt/venv/bin/python -m pip config set global.index-url "$PIP_INDEX_URL"; \
+    fi \
     && /opt/venv/bin/python -m pip install --no-cache-dir \
       docker==7.1.0 \
       h5py==3.12.1 \

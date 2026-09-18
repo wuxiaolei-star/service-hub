@@ -113,3 +113,47 @@ def test_builder_rejects_unknown_architecture(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="amd64 or arm64"):
         build_plugin(project, "docker", "s390x", tmp_path / "out")
+
+
+def test_docker_builder_omits_the_pip_mirror_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unset mirror must leave the build arg out entirely, not pass an empty one.
+
+    Passing ``--build-arg PIP_INDEX_URL=`` would still be inert, but omitting it keeps
+    the command identical to what an offline build has always produced.
+    """
+    monkeypatch.delenv("HUB_PLUGIN_PIP_INDEX_URL", raising=False)
+    _write_project(tmp_path / "project")
+    (tmp_path / "project" / "Dockerfile").write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    project = PluginProject.load(tmp_path / "project")
+    runner = FakeCommandRunner(tmp_path)
+
+    build_plugin(
+        project, "docker", "amd64", tmp_path / "out", command_runner=runner, source_date_epoch=0
+    )
+
+    docker_build = next(
+        command for command, _env, _cap in runner.calls if command[:2] == ["docker", "build"]
+    )
+    assert not any("PIP_INDEX_URL" in part for part in docker_build)
+
+
+def test_docker_builder_passes_the_pip_mirror_when_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A configured mirror has to reach the Dockerfile, or the build stays slow."""
+    monkeypatch.setenv("HUB_PLUGIN_PIP_INDEX_URL", "https://mirrors.example.com/pypi/simple")
+    _write_project(tmp_path / "project")
+    (tmp_path / "project" / "Dockerfile").write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    project = PluginProject.load(tmp_path / "project")
+    runner = FakeCommandRunner(tmp_path)
+
+    build_plugin(
+        project, "docker", "amd64", tmp_path / "out", command_runner=runner, source_date_epoch=0
+    )
+
+    docker_build = next(
+        command for command, _env, _cap in runner.calls if command[:2] == ["docker", "build"]
+    )
+    assert "PIP_INDEX_URL=https://mirrors.example.com/pypi/simple" in docker_build
