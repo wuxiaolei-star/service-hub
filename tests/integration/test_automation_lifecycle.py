@@ -9,6 +9,7 @@ import os
 import platform
 import sys
 import threading
+from pathlib import Path
 
 import httpx
 import pytest
@@ -19,14 +20,54 @@ PIPELINE_NAME = "integration-pipeline"
 SCHEDULE_NAME = "integration-schedule"
 
 
+def _shares_loopback_with_deployment(base_url: str) -> bool:
+    """Report whether this process's loopback is the one the deployment delivers to.
+
+    The deployment posts webhooks from inside its own container, so a callback to
+    ``127.0.0.1`` only reaches this process when both share a network namespace. A non-loopback
+    ``base_url`` is always reachable, so only the loopback case needs the check.
+    """
+    if not base_url.startswith(("http://127.0.0.1", "http://localhost")):
+        return True
+    # Run from inside a container, /.dockerenv is present and the cgroup path names the
+    # container. Run on the host, neither holds, so this process's loopback is not the
+    # deployment's and every delivery would be refused.
+    try:
+        cgroup = Path("/proc/self/cgroup").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return Path("/.dockerenv").exists() or "docker" in cgroup
+
+
 class _HookRecorder(http.server.BaseHTTPRequestHandler):
-    last_body: bytes = b""
-    last_signature: str = ""
+    """Record the most recent webhook delivery.
+
+    The server runs on a background thread while the test thread polls, so the body and its
+    signature must be published together and read together: two independent class attributes
+    updated in sequence let the reader observe a body from one delivery next to a signature
+    from another, and the recomputed HMAC then never matches. One tuple under a lock keeps the
+    pair consistent.
+    """
+
+    _lock = threading.Lock()
+    _delivery: tuple[bytes, str] | None = None
+
+    @classmethod
+    def latest(cls) -> tuple[bytes, str] | None:
+        with cls._lock:
+            return cls._delivery
+
+    @classmethod
+    def reset(cls) -> None:
+        with cls._lock:
+            cls._delivery = None
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
-        _HookRecorder.last_body = self.rfile.read(length)
-        _HookRecorder.last_signature = self.headers.get("X-Hub-Signature", "")
+        body = self.rfile.read(length)
+        signature = self.headers.get("X-Hub-Signature", "")
+        with _HookRecorder._lock:
+            _HookRecorder._delivery = (body, signature)
         self.send_response(200)
         self.end_headers()
 
@@ -38,8 +79,16 @@ class _HookRecorder(http.server.BaseHTTPRequestHandler):
 def test_v2_automation_lifecycle() -> None:  # pragma: no cover - Linux AMD64 only
     """Callback signature, schedule trigger, and pipeline stepping on the deployed instance.
 
-    The callback recorder listens on the deployment host's loopback, which the outbound
-    webhook guard refuses by default. The instance under test must therefore opt in with
+    Run this suite **inside the API container** (``run_itests.py``, not ``run_host_itests.py``).
+
+    The recorder listens on ``127.0.0.1`` and the deployment delivers the callback from inside
+    the ``service-hub`` container. Those are only the same loopback when the test shares the
+    container's network namespace; run on the host instead and every delivery is refused with
+    ``Connection refused`` and this suite times out waiting for a signature. The failure mode
+    is indistinguishable from a broken webhook at a glance, so the precondition is asserted up
+    front rather than left to a two-minute timeout.
+
+    The loopback target is also why the instance must opt in with
     ``webhooks.allow_private_networks: true`` in ``config/hub.yaml``; a job creation that
     answers ``422 WEBHOOK_URL_FORBIDDEN`` means that switch is missing.
     """
@@ -50,7 +99,14 @@ def test_v2_automation_lifecycle() -> None:  # pragma: no cover - Linux AMD64 on
     password = os.environ.get("HUB_BOOTSTRAP_PASSWORD")
     if not password:
         pytest.skip("set HUB_BOOTSTRAP_PASSWORD to exercise the automation lifecycle")
+    if not _shares_loopback_with_deployment(base_url):
+        pytest.skip(
+            "callback delivery targets the deployment's loopback, so this suite must run "
+            "inside the service-hub container (use run_itests.py, not run_host_itests.py); "
+            f"{base_url} does not share this process's loopback"
+        )
 
+    _HookRecorder.reset()
     server = http.server.HTTPServer(("127.0.0.1", 0), _HookRecorder)
     hook_thread = threading.Thread(target=server.serve_forever, daemon=True)
     hook_thread.start()
@@ -148,16 +204,23 @@ def test_v2_automation_lifecycle() -> None:  # pragma: no cover - Linux AMD64 on
         import time
 
         deadline = time.monotonic() + 120
-        signature_ok = False
+        observed: str | None = None
         while time.monotonic() < deadline:
-            expected = hmac.new(
-                secret.encode(), _HookRecorder.last_body, hashlib.sha256
-            ).hexdigest()
-            signature_ok = _HookRecorder.last_signature == f"sha256={expected}"
-            if signature_ok and _HookRecorder.last_body:
-                break
+            delivery = _HookRecorder.latest()
+            if delivery is not None:
+                body, signature = delivery
+                expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+                if signature == f"sha256={expected}" and body:
+                    break
+                observed = f"signature={signature!r} body={body!r}"
             time.sleep(2)
-        assert signature_ok, "callback webhook was not delivered with a valid signature"
+        else:
+            deliveries = client.get(f"/api/v1/jobs/{job_id}/callbacks", headers=headers)
+            raise AssertionError(
+                "callback webhook was not delivered with a valid signature; "
+                f"last delivery seen by the recorder: {observed}; "
+                f"callback rows: {deliveries.text}"
+            )
 
         runs = client.get(
             "/api/v1/pipelines/runs", params={"pipeline_id": pipeline_id}, headers=headers
