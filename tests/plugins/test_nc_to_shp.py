@@ -7,13 +7,16 @@ import logging
 import zipfile
 from pathlib import Path
 
-import h5py
-import numpy as np
 import pytest
-from nc_to_shp_plugin.convert import map_cell_values_to_points
-from nc_to_shp_plugin.main import run
-from python_hub_sdk import InputFile, PluginContext, PluginValidationError
-from scripts.compare_shapefile_zip import compare_archives
+
+h5py = pytest.importorskip("h5py", reason="h5py is a heavy plugin-only dependency")
+np = pytest.importorskip("numpy", reason="numpy is a heavy plugin-only dependency")
+pytest.importorskip("scipy", reason="scipy is a heavy plugin-only dependency")
+
+from nc_to_shp_plugin.convert import map_cell_values_to_points  # noqa: E402
+from nc_to_shp_plugin.main import run  # noqa: E402
+from python_hub_sdk import InputFile, PluginContext, PluginValidationError  # noqa: E402
+from scripts.compare_shapefile_zip import compare_archives  # noqa: E402
 
 
 class _Events:
