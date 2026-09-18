@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 import sys
@@ -59,7 +60,7 @@ def test_web_console_serves_spa_and_enforces_boundaries(tmp_path: Path) -> None:
         pytest.skip("Web console lifecycle requires a native Linux AMD64 Docker host")
 
     compose_model = yaml.safe_load((REPOSITORY_ROOT / "compose.yaml").read_text("utf-8"))
-    assert set(compose_model["services"]) == {"service-hub", "service-hub-web"}
+    assert {"service-hub", "service-hub-web"} <= set(compose_model["services"])
     # V3.0 keeps the Docker Socket and the data directory inside the backend only.
     assert (
         "/var/run/docker.sock:/var/run/docker.sock"
@@ -126,15 +127,22 @@ def test_web_console_serves_spa_and_enforces_boundaries(tmp_path: Path) -> None:
         internal = httpx.get(f"{base}/internal/v1/system/health", timeout=30)
         assert internal.status_code == 404
 
-        web_mounts = subprocess.run(
+        # The Web container must never see the data directory or the Docker socket.
+        web_container = subprocess.run(
             _compose_command(
                 project_name,
-                "inspect",
-                "--format",
-                "{{json .Mounts}}",
+                "ps",
+                "-q",
                 "service-hub-web",
                 compose_file=compose_file,
             ),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert web_container, "service-hub-web container is not running"
+        web_mounts = subprocess.run(
+            ["docker", "inspect", "--format", "{{json .Mounts}}", web_container],
             check=True,
             capture_output=True,
             text=True,
@@ -203,12 +211,25 @@ def test_web_console_serves_spa_and_enforces_boundaries(tmp_path: Path) -> None:
         assert socket_gid not in _supplementary_groups("hub-api")
         assert socket_gid not in _supplementary_groups("conda-runner")
 
+        # V2 auth is mandatory, so the console's own proxy must carry a token through.
+        username = os.environ.get("HUB_BOOTSTRAP_USERNAME", "admin")
+        password = os.environ.get("HUB_BOOTSTRAP_PASSWORD")
+        assert password, "set HUB_BOOTSTRAP_PASSWORD to exercise the Web console lifecycle"
+        login = httpx.post(
+            f"{base}/api/v1/auth/login",
+            json={"username": username, "password": password},
+            timeout=30,
+        )
+        assert login.status_code == 200, login.text
+        console_headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
         uploaded = httpx.post(
             f"{base}/api/v1/files",
+            headers=console_headers,
             files={"file": ("web-smoke.nc", b"data")},
             timeout=30,
         )
-        assert uploaded.status_code == 201
+        assert uploaded.status_code == 201, uploaded.text
         file_id = str(uploaded.json()["file_id"])
 
         subprocess.run(
@@ -218,7 +239,9 @@ def test_web_console_serves_spa_and_enforces_boundaries(tmp_path: Path) -> None:
         )
         _wait_for_health(f"{base}/api/v1/system/health")
 
-        metadata = httpx.get(f"{base}/api/v1/files/{file_id}", timeout=30)
+        metadata = httpx.get(
+            f"{base}/api/v1/files/{file_id}", headers=console_headers, timeout=30
+        )
         assert metadata.status_code == 200
         assert metadata.json()["file_id"] == file_id
     finally:

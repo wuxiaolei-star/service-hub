@@ -99,13 +99,14 @@ def _wait_for_container_health(timeout_seconds: float = 120.0) -> None:
 
 
 def _assert_single_container_deployment() -> None:
-    """Preflight: one Compose service, healthy container, and restart recovery."""
+    """Preflight: the backend and Web services are up, healthy, and restart-recoverable."""
     services = {
         line.strip()
         for line in _compose("config", "--services").splitlines()
         if line.strip()
     }
-    assert services == {"service-hub"}, f"expected only service-hub: {sorted(services)}"
+    required = {"service-hub", "service-hub-web"}
+    assert required <= services, f"missing services: {sorted(required - services)}"
     _wait_for_container_health()
     _compose("restart", "service-hub")
     _wait_for_container_health()

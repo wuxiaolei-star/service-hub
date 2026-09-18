@@ -117,7 +117,7 @@ export async function executePipeline(pipelineId: number): Promise<PipelineExecu
 }
 
 export async function listPipelineRuns(pipelineId: number): Promise<ListResponse<PipelineRunRow>> {
-  const response = await apiClient.get<ListResponse<PipelineRunRow>>('/pipeline-runs', {
+  const response = await apiClient.get<ListResponse<PipelineRunRow>>('/pipelines/runs', {
     params: { pipeline_id: pipelineId },
   })
   return response.data
