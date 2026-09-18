@@ -404,7 +404,6 @@ def test_remove_forces_container_removal(
         ("post", "/ghost/stop"),
         ("post", "/ghost/start"),
         ("post", "/ghost/restart"),
-        ("delete", "/ghost"),
         ("get", "/ghost/logs"),
     ],
 )
@@ -413,12 +412,27 @@ def test_unknown_container_returns_404_for_operations(
 ) -> None:
     """Lifecycle and log calls act on a container, so absence is an error.
 
-    /status is deliberately absent from this list: it must answer for a service
-    that has no container yet, see test_status_reports_absent_container.
+    Two endpoints are deliberately absent from this list because they must
+    tolerate a definition that has no container: /status (see
+    test_status_reports_absent_container_instead_of_erroring) and DELETE (see
+    test_remove_is_idempotent_when_the_container_never_existed).
     """
     response = getattr(api, method)(path, headers=AUTH)
     assert response.status_code == 404
     assert response.json()["detail"] == "SERVICE_NOT_FOUND"
+
+
+def test_remove_is_idempotent_when_the_container_never_existed(api: TestClient) -> None:
+    """Deleting a service with no container must succeed.
+
+    Removal is the caller's clean-up path. Answering 404 made the Hub abort
+    before it deleted the row, so a definition left behind by a refused deploy
+    could never be removed and permanently blocked its own name.
+    """
+    response = api.delete("/ghost", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json() == {"name": "hub-svc-ghost", "state": "REMOVED"}
 
 
 def test_status_reports_absent_container_instead_of_erroring(api: TestClient) -> None:

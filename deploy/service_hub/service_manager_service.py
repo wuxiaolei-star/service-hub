@@ -227,10 +227,21 @@ def restart(name: str, _: Annotated[None, Depends(_require_runner_token)]) -> di
 
 @app.delete("/{name}")
 def remove(name: str, _: Annotated[None, Depends(_require_runner_token)]) -> dict[str, object]:
+    """Remove the container if it exists; removal is the caller's intent.
+
+    A definition can outlive its container (a refused deploy never created one).
+    Treating that as a 404 made DELETE /api/v1/services/{name} fail before it
+    reached the database, so the leftover definition could never be cleaned up -
+    the operator was stuck with a row that blocked reuse of the name.
+    """
     client = _docker_client()
-    container = _get_container(client, _container_name(name))
+    container_name = _container_name(name)
+    if not _container_exists(client, container_name):
+        _LOGGER.info("no container %s to remove, treating as already removed", container_name)
+        return {"name": container_name, "state": "REMOVED"}
+    container = client.containers.get(container_name)
     container.remove(force=True)
-    return {"name": _container_name(name), "state": "REMOVED"}
+    return {"name": container_name, "state": "REMOVED"}
 
 
 @app.get("/{name}/status")
