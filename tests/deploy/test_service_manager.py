@@ -405,16 +405,38 @@ def test_remove_forces_container_removal(
         ("post", "/ghost/start"),
         ("post", "/ghost/restart"),
         ("delete", "/ghost"),
-        ("get", "/ghost/status"),
         ("get", "/ghost/logs"),
     ],
 )
-def test_unknown_container_returns_404(
+def test_unknown_container_returns_404_for_operations(
     api: TestClient, method: str, path: str
 ) -> None:
+    """Lifecycle and log calls act on a container, so absence is an error.
+
+    /status is deliberately absent from this list: it must answer for a service
+    that has no container yet, see test_status_reports_absent_container.
+    """
     response = getattr(api, method)(path, headers=AUTH)
     assert response.status_code == 404
     assert response.json()["detail"] == "SERVICE_NOT_FOUND"
+
+
+def test_status_reports_absent_container_instead_of_erroring(api: TestClient) -> None:
+    """A defined-but-never-created service is a normal state, not a 404.
+
+    The Hub lists every saved definition and asks for each one's status, so a 404
+    here used to blank the entire catalogue on any host that had a leftover
+    definition from a refused deploy.
+    """
+    response = api.get("/ghost/status", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "name": "hub-svc-ghost",
+        "state": "absent",
+        "health": None,
+        "ports": None,
+    }
 
 
 STATUS_ATTRS = {

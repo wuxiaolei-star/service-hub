@@ -1,6 +1,9 @@
 .worktrees/
 .superpowers/sdd/
 .venv/
+# Local deployment helper: holds the SSH key and host credentials for the trial
+# server. Never commit these.
+.deploy-tools/
 __pycache__/
 .pytest_cache/
 .mypy_cache/

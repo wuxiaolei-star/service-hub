@@ -61,6 +61,28 @@ class FakeManager:
             )
 
 
+class ManagerWithMissingContainer(FakeManager):
+    """Manager that reports one named service as having no container.
+
+    This is the state a real host lands in whenever a deploy is refused (the
+    definition is still saved, as STOPPED) or a container is removed out of band.
+    """
+
+    def __init__(self, missing: set[str]) -> None:
+        super().__init__()
+        self.missing = missing
+
+    def status(self, name: str) -> dict[str, object]:
+        self.calls.append(("status", {"name": name}))
+        if name in self.missing:
+            from hub_server.errors import HubError
+
+            raise HubError(
+                code="SERVICE_CONTAINER_NOT_FOUND", message="服务容器不存在", status_code=404
+            )
+        return {"name": f"hub-svc-{name}", "state": "running", "health": "healthy"}
+
+
 def _settings(tmp_path: Path) -> HubSettings:
     return HubSettings(
         deployment=DeploymentSettings(mode="offline"),
@@ -191,6 +213,66 @@ def test_logs_forwards_bounded_tail(tmp_path: Path, monkeypatch: Any) -> None:
         assert response.status_code == 200
         assert response.text == "service ready\n"
         assert ("logs", {"name": "hello", "tail": 42}) in manager.calls
+
+
+def test_list_survives_a_definition_whose_container_is_gone(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """One containerless definition must not blank the whole catalogue.
+
+    The list used to forward the manager's 404 straight out, so a single leftover
+    definition (exactly what a refused deploy leaves behind) made GET /services
+    answer 404 forever - and the 404 in turn made later creates look like
+    SERVICE_NAME_TAKEN. Only a real host reaches this state, because the unit
+    fake never refuses a status call.
+    """
+    manager = ManagerWithMissingContainer(missing={"ghost"})
+    with _client(tmp_path, manager, monkeypatch) as client:
+        admin = _admin_headers(client)
+
+        with client.app.state.session_factory() as session:
+            session.add(
+                ServiceDef(
+                    name="ghost",
+                    image="ghost:1.0",
+                    container_name="hub-svc-ghost",
+                    ports_json=[{"host": 18099, "container": 80}],
+                    env_json={},
+                    mounts_json=[],
+                    command_json=None,
+                    user_label="65532:65532",
+                    desired_state="STOPPED",
+                )
+            )
+            session.commit()
+
+        response = client.get("/api/v1/services", headers=admin)
+
+        assert response.status_code == 200, response.text
+        items = response.json()["items"]
+        assert [item["name"] for item in items] == ["ghost"]
+        # The entry is still reported, just with an unknown runtime.
+        assert items[0]["runtime"]["state"] == "unknown"
+        assert items[0]["desired_state"] == "STOPPED"
+
+
+def test_list_reflects_a_container_the_manager_reports_normally(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The isolation must not swallow a healthy manager reply."""
+    manager = ManagerWithMissingContainer(missing=set())
+    with _client(tmp_path, manager, monkeypatch) as client:
+        admin = _admin_headers(client)
+        created = client.post("/api/v1/services", headers=admin, json=_payload())
+        assert created.status_code == 201, created.text
+
+        response = client.get("/api/v1/services", headers=admin)
+
+        assert response.status_code == 200, response.text
+        items = response.json()["items"]
+        assert items[0]["name"] == "hello"
+        assert items[0]["runtime"]["state"] == "running"
+        assert items[0]["runtime"]["health"] == "healthy"
 
 
 def test_create_rejects_mounts_outside_the_host_data_root(

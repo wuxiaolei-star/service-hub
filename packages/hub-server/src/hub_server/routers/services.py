@@ -76,12 +76,17 @@ def list_services(
     session: Annotated[Session, Depends(get_session)],
     settings: Annotated[HubSettings, Depends(get_settings)],
 ) -> ServiceListResponse:
-    """List saved definitions with their current manager-reported state."""
+    """List saved definitions with their current manager-reported state.
+
+    A saved definition can legitimately have no container (its image was refused,
+    or it was never started). Whatever the manager says about one entry, it must
+    not blank the catalogue: the failing entry is rendered as unknown and the
+    rest of the list still answers.
+    """
     manager: _Manager = get_service_manager(settings)
     definitions = session.query(ServiceDef).order_by(ServiceDef.name).all()
-    return ServiceListResponse(
-        items=[_response(definition, manager.status(definition.name)) for definition in definitions]
-    )
+    items = [_response(definition, _safe_status(manager, definition)) for definition in definitions]
+    return ServiceListResponse(items=items)
 
 
 @router.post(
@@ -291,6 +296,18 @@ def _audit_change(
         },
         ip=actor_ip(http_request),
     )
+
+
+def _safe_status(manager: _Manager, definition: ServiceDef) -> dict[str, object]:
+    """Ask the manager about one definition without letting a reply break the list.
+
+    A 404 means the container is gone, and any other failure means the manager
+    could not answer; both are rendered as an unknown runtime rather than raised.
+    """
+    try:
+        return manager.status(definition.name)
+    except HubError:
+        return {}
 
 
 def _response(definition: ServiceDef, manager_result: dict[str, object]) -> ServiceResponse:

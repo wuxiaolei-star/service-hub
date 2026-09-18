@@ -151,6 +151,21 @@ def _get_container(client: Any, container_name: str) -> Any:
         raise HTTPException(status_code=404, detail="SERVICE_NOT_FOUND") from exc
 
 
+def _container_exists(client: Any, container_name: str) -> bool:
+    """Report presence without turning absence into an HTTP error.
+
+    ``GET /{name}/status`` has to answer for a service that was defined but never
+    brought up (a refused image, a stopped-and-removed container). Routing that
+    through ``_get_container`` raised 404, and the Hub's list endpoint asked for
+    every name in turn - so one missing container blanked the whole catalogue.
+    """
+    try:
+        client.containers.get(container_name)
+    except _not_found_error():
+        return False
+    return True
+
+
 @app.get("/ping")
 def ping(_: Annotated[None, Depends(_require_runner_token)]) -> dict[str, str]:
     return {"status": "ok"}
@@ -221,11 +236,16 @@ def remove(name: str, _: Annotated[None, Depends(_require_runner_token)]) -> dic
 @app.get("/{name}/status")
 def status(name: str, _: Annotated[None, Depends(_require_runner_token)]) -> dict[str, object]:
     client = _docker_client()
-    container = _get_container(client, _container_name(name))
+    container_name = _container_name(name)
+    if not _container_exists(client, container_name):
+        # Not an error: a definition can exist without a container. Report the
+        # absence so the caller can render "not created yet" in a list.
+        return {"name": container_name, "state": "absent", "health": None, "ports": None}
+    container = client.containers.get(container_name)
     attrs: dict[str, Any] = container.attrs
     state = attrs.get("State", {})
     return {
-        "name": _container_name(name),
+        "name": container_name,
         "state": state.get("Status"),
         "health": state.get("Health", {}).get("Status"),
         "ports": attrs.get("NetworkSettings", {}).get("Ports"),
