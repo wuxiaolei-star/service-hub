@@ -11,6 +11,15 @@ from hub_server.settings import HubSettings
 
 _DEFAULT_MANAGER_URL = "http://127.0.0.1:8001"
 
+# Reads must fail fast: a wedged manager should not hold a request open.
+_QUERY_TIMEOUT_SECONDS = 5.0
+# A lifecycle action waits on the Docker daemon, which gives a container a
+# 10-second grace period before SIGKILL. A 5-second socket timeout therefore
+# expired before the daemon answered and the Hub reported 502
+# SERVICE_MANAGER_UNAVAILABLE for a stop that actually succeeded. Allow room for
+# the stop plus the manager's own round trip.
+_MUTATION_TIMEOUT_SECONDS = 60.0
+
 
 class ServiceManagerClient:
     """Forward Hub-approved service operations to the local manager only."""
@@ -20,7 +29,9 @@ class ServiceManagerClient:
         self._token = token
 
     def deploy(self, payload: dict[str, object]) -> dict[str, object]:
-        return self._request("POST", "/deploy", json=payload)
+        return self._request(
+            "POST", "/deploy", json=payload, timeout=_MUTATION_TIMEOUT_SECONDS
+        )
 
     def status(self, name: str) -> dict[str, object]:
         return self._request("GET", f"/{name}/status")
@@ -29,10 +40,10 @@ class ServiceManagerClient:
         return self._request("GET", f"/{name}/logs", params={"tail": tail})
 
     def action(self, name: str, action: str) -> dict[str, object]:
-        return self._request("POST", f"/{name}/{action}")
+        return self._request("POST", f"/{name}/{action}", timeout=_MUTATION_TIMEOUT_SECONDS)
 
     def remove(self, name: str) -> dict[str, object]:
-        return self._request("DELETE", f"/{name}")
+        return self._request("DELETE", f"/{name}", timeout=_MUTATION_TIMEOUT_SECONDS)
 
     def _request(
         self,
@@ -41,9 +52,10 @@ class ServiceManagerClient:
         *,
         json: dict[str, object] | None = None,
         params: dict[str, str | int] | None = None,
+        timeout: float = _QUERY_TIMEOUT_SECONDS,
     ) -> dict[str, object]:
         try:
-            with httpx.Client(base_url=self._base_url, timeout=5.0) as client:
+            with httpx.Client(base_url=self._base_url, timeout=timeout) as client:
                 response = client.request(
                     method,
                     path,

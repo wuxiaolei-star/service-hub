@@ -129,3 +129,53 @@ def test_successful_body_is_returned_as_a_string_keyed_mapping(
     body = _client(monkeypatch, handler).status("web")
 
     assert body == {"name": "hub-svc-web", "state": "running", "health": None}
+
+
+def _capture_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[float]:
+    """Record the timeout each request is issued with."""
+    seen: list[float] = []
+    original = httpx.Client
+
+    def factory(**kwargs: object) -> httpx.Client:
+        seen.append(float(kwargs.get("timeout", 0)))  # type: ignore[arg-type]
+        return original(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, json={"state": "exited"})
+            ),
+            base_url=str(kwargs.get("base_url", "http://manager.test")),
+        )
+
+    monkeypatch.setattr(httpx, "Client", factory)
+    return seen
+
+
+def test_lifecycle_requests_allow_for_the_docker_stop_grace_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stop must outlast the daemon's 10-second grace period.
+
+    With a 5-second socket timeout the Hub gave up while the daemon was still
+    stopping the container, so POST /{name}/stop returned 502
+    SERVICE_MANAGER_UNAVAILABLE even though the stop went through - the operator
+    saw a failure for an action that worked.
+    """
+    seen = _capture_timeouts(monkeypatch)
+    client = ServiceManagerClient(base_url="http://manager.test", token="runner-test-secret")
+
+    client.action("web", "stop")
+    client.deploy({"name": "web"})
+    client.remove("web")
+    assert seen, "no request was issued"
+    assert min(seen) > 10.0, f"grace period not covered: {seen}"
+
+
+def test_reads_still_fail_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only mutations get the long timeout; a wedged manager must not block reads."""
+    seen = _capture_timeouts(monkeypatch)
+    client = ServiceManagerClient(base_url="http://manager.test", token="runner-test-secret")
+
+    client.status("web")
+
+    assert seen == [pytest.approx(5.0)]
