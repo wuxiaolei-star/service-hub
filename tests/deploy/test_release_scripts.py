@@ -127,10 +127,41 @@ def test_everything_linux_executes_is_pinned_to_lf_endings() -> None:
     """
     attributes = Path(".gitattributes").read_text(encoding="utf-8")
 
-    for pattern in ("*.sh", "tools/hubctl", "Dockerfile"):
+    for pattern in ("*.sh", "tools/hubctl", "Dockerfile", "**/Dockerfile"):
         assert re.search(
             rf"^{re.escape(pattern)}\s+text\s+eol=lf\s*$", attributes, re.MULTILINE
         ), f"{pattern} must be pinned to LF endings"
+
+
+def test_nested_dockerfiles_are_actually_matched_by_their_gitattributes_rule() -> None:
+    """A bare ``Dockerfile`` pattern only covers the repository root.
+
+    The plugin images live at ``packages/*/docker/Dockerfile`` and are built by a Linux
+    host, so they need the same LF guarantee. Verified through ``git check-attr`` rather
+    than by re-reading ``.gitattributes`` — the point is that the attribute is *applied*
+    to the nested path, which a pattern-literal assertion cannot show.
+    """
+    nested = "packages/nc-to-shp-plugin/docker/Dockerfile"
+    result = subprocess.run(
+        ["git", "check-attr", "eol", "--", nested],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip().endswith("eol: lf"), result.stdout
+
+
+def test_files_linux_executes_hold_lf_in_the_working_tree() -> None:
+    """The attribute must be backed by real LF bytes, not just a repository rule."""
+    names = (
+        "docker-entrypoint.sh",
+        "tools/hubctl",
+        "packages/nc-to-shp-plugin/docker/Dockerfile",
+    )
+    for name in names:
+        payload = Path(name).read_bytes()
+        assert b"\r\n" not in payload, f"{name} contains CRLF in the working tree"
 
 
 def test_build_release_creates_amd64_offline_bundle_with_hubctl() -> None:

@@ -5,6 +5,10 @@
 # "/bin/sh\r", tini reports "exec ... failed: No such file or directory", and the
 # container restart-loops with exit code 127 while the image itself looks correct.
 # tools/hubctl and deploy/release/*.sh fail the same way once they reach a Linux host.
-*.sh          text eol=lf
-tools/hubctl  text eol=lf
-Dockerfile    text eol=lf
+#
+# Match Dockerfiles at ANY depth: the plugin images under packages/*/docker/ are built
+# on a Linux host too, and a bare `Dockerfile` pattern only covers the repository root.
+*.sh             text eol=lf
+tools/hubctl     text eol=lf
+Dockerfile       text eol=lf
+**/Dockerfile    text eol=lf

@@ -163,6 +163,27 @@ def test_service_hub_and_docker_plugin_share_a_fixed_non_root_data_uid() -> None
     assert "USER 65532:65532" in plugin_dockerfile
 
 
+def test_plugin_dockerfile_bootstraps_pip_before_installing() -> None:
+    """The GDAL base image has no pip and Ubuntu 24 marks its Python as externally managed.
+
+    Without this the first `python3 -m pip install` fails outright, so the plugin image
+    can never be built on a fresh machine — a defect that only surfaces at build time.
+    """
+    plugin_dockerfile = Path("packages/nc-to-shp-plugin/docker/Dockerfile").read_text("utf-8")
+
+    assert plugin_dockerfile.startswith("FROM ghcr.io/osgeo/gdal:")
+    assert "apt-get install" in plugin_dockerfile
+    assert "python3-pip" in plugin_dockerfile
+    # PEP 668: Ubuntu 24.04 refuses plain `pip install` into the system interpreter.
+    # Every pip invocation in this file must carry the escape hatch.
+    pip_lines = [
+        line for line in plugin_dockerfile.splitlines() if "python3 -m pip install" in line
+    ]
+    assert pip_lines, "expected at least one pip install step"
+    for line in pip_lines:
+        assert "--break-system-packages" in line, line
+
+
 def test_image_ships_the_long_running_service_manager() -> None:
     """V3.0 can only deploy services if the manager process exists inside the image."""
     dockerfile = Path("Dockerfile").read_text("utf-8")
