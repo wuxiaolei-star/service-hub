@@ -492,3 +492,20 @@ class ServiceDef(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, onupdate=_utc_now
     )
+
+
+class WebhookDelivery(Base):
+    """One immutable record of a single webhook delivery attempt."""
+
+    __tablename__ = "webhook_deliveries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    callback_id: Mapped[int] = mapped_column(
+        ForeignKey("job_callbacks.id", ondelete="CASCADE"), index=True
+    )
+    attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, index=True
+    )
+    status_code: Mapped[int | None] = mapped_column(nullable=True)
+    ok: Mapped[bool] = mapped_column(Boolean)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)

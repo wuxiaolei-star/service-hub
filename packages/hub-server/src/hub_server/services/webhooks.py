@@ -13,7 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from hub_server.errors import HubError, WebhookUrlForbiddenError
-from hub_server.models import Job, JobCallback
+from hub_server.models import Job, JobCallback, WebhookDelivery
 from hub_server.services.audit import record as audit
 from hub_server.services.webhook_guard import (
     ensure_delivery_target_allowed,
@@ -129,7 +129,7 @@ def _deliver_one(
     now: datetime,
     policy: WebhooksSettings | None,
 ) -> None:
-    """Attempt one delivery and advance the callback state machine."""
+    """Attempt one delivery, record its history row, and advance the state machine."""
     body = json.dumps(
         {
             "job_id": job.job_key,
@@ -179,6 +179,16 @@ def _deliver_one(
             )
     else:
         callback.state = "SUCCEEDED"
+
+    session.add(
+        WebhookDelivery(
+            callback_id=callback.id,
+            attempted_at=now,
+            status_code=status_code,
+            ok=result == "ok",
+            error=error,
+        )
+    )
 
     audit(
         session,
