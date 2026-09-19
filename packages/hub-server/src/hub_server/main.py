@@ -18,6 +18,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from alembic import command
 from hub_server.db import create_engine_and_session_factory
 from hub_server.errors import HubError
+from hub_server.plugins.schedules_plugin import SchedulesPlugin
+from hub_server.plugins.webhooks_plugin import WebhooksPlugin
 from hub_server.routers.audit import router as audit_router
 from hub_server.routers.auth import router as auth_router
 from hub_server.routers.files import router as files_router
@@ -27,12 +29,10 @@ from hub_server.routers.logs_stream import router as logs_stream_router
 from hub_server.routers.pipelines import router as pipelines_router
 from hub_server.routers.plugins import router as plugins_router
 from hub_server.routers.registry import router as registry_router
-from hub_server.routers.schedules import router as schedules_router
 from hub_server.routers.services import router as services_router
 from hub_server.routers.system import router as system_router
 from hub_server.routers.users import key_router as api_keys_router
 from hub_server.routers.users import router as users_router
-from hub_server.routers.webhooks import router as webhooks_router
 from hub_server.schemas import ErrorBody, ErrorResponse
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
@@ -82,9 +82,15 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(api_keys_router, prefix="/api/v1")
     app.include_router(audit_router, prefix="/api/v1")
-    app.include_router(schedules_router, prefix="/api/v1")
+    # schedules mounts through its FeaturePlugin declaration, so the kernel's
+    # enable/disable flow — not a hardcoded include — controls these routes.
+    for plugin_router in SchedulesPlugin().routers:
+        app.include_router(plugin_router, prefix="/api/v1")
     app.include_router(services_router, prefix="/api/v1")
-    app.include_router(webhooks_router, prefix="/api/v1")
+    # webhooks mounts through its FeaturePlugin declaration, so the kernel's
+    # enable/disable flow — not a hardcoded include — controls these routes.
+    for plugin_router in WebhooksPlugin().routers:
+        app.include_router(plugin_router, prefix="/api/v1")
     app.include_router(pipelines_router, prefix="/api/v1")
     app.include_router(registry_router, prefix="/api/v1")
     app.include_router(logs_stream_router, prefix="/api/v1")
