@@ -300,3 +300,22 @@ Linux 侧待验收项同样列入 `docs/service-docs/V3.0-部署验收清单.md`
 web 179 passed + typecheck/lint/build；compose config 通过。
 **真实 NC docker 运行时验收通过**：39464 要素 / EPSG:4326 / 组件集完整。
 服务说明：`docs/service-docs/服务说明-V3.1.md`。
+
+---
+
+# V3.2 日常效率（2026-09-14，spec/plan 42d1644）
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 Job 重跑+筛选分页 | d85f73f | POST /jobs/{key}/rerun（复用 params_json/inputs_json + 配额/Build 校验/审计 job.rerun）；GET /jobs 增 status(多值)/plugin_id/limit/offset + total；迁移 0008 jobs.replayed_from；JobResponse 增 replayed_from；24 新测试 |
+| Task 2 Webhook 重放 | c33f93b | POST /jobs/{key}/callbacks/{id}/replay（operator+，FAILED/EXHAUSTED→PENDING+审计 webhook.replay）；13 新测试（含真实再投递验证） |
+| Task 3 Web 效率界面 | f4ee04d | 任务列表 Segmented+插件筛选+服务端分页；失败行/详情页重跑按钮；详情页进度条（Progress）；回调重放按钮；日志查看器（关键字过滤+ERROR/WARN 着色+全量下载）；192 tests |
+| Task 4 收尾 | 本次 | 全量回归 871/0 + web 192/0；服务说明-V3.2.md；修改记录 |
+
+**实施方式**：Task 1/2/3 由三个子智能体并行完成（Task 1 因并发超限重发一次），
+主会话验收提交。Web 子智能体发现并修复 axios 数组参数序列化坑
+（`status[]=RUNNING` → `status=RUNNING`，有专门测试锁定 wire 格式）。
+
+**质量门**：python 非集成 **871 passed / 0 failed**；ruff/mypy strict 76 文件无问题；
+web **192 passed** + typecheck/lint/build；compose config 通过。
+服务说明：`docs/service-docs/服务说明-V3.2.md`。
