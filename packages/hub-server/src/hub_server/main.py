@@ -1,5 +1,6 @@
 """ASGI application factory for Python Service Hub."""
 
+import contextlib
 import json
 import logging
 import os
@@ -57,26 +58,41 @@ def _bootstrap_admin(settings: HubSettings) -> None:
             if session.query(UserRecord).count() > 0:
                 return
             password = secrets.token_urlsafe(18)
-            session.add(
-                UserRecord(
-                    username="admin",
-                    password_hash=hash_password(password),
-                    role="admin",
-                    must_change_password=True,
+            bootstrap_root = Path(settings.storage.root)
+            bootstrap_file = bootstrap_root / "bootstrap-admin.json"
+
+            # The credential must land on disk before the account exists. Writing it
+            # afterwards used to leave a committed admin whose password nobody held,
+            # and the OSError then escaped the lifespan and killed the process.
+            try:
+                bootstrap_root.mkdir(parents=True, exist_ok=True)
+                bootstrap_file.write_text(
+                    json.dumps({"username": "admin", "password": password}, ensure_ascii=False),
+                    encoding="utf-8",
                 )
-            )
-            session.commit()
+                bootstrap_file.chmod(0o600)
+            except OSError:
+                _LOGGER.warning("管理员凭据不可写入, 放弃本次播种: %s", bootstrap_file)
+                return
+
+            try:
+                session.add(
+                    UserRecord(
+                        username="admin",
+                        password_hash=hash_password(password),
+                        role="admin",
+                        must_change_password=True,
+                    )
+                )
+                session.commit()
+            except Exception:
+                # Never leave the credential behind without its account.
+                with contextlib.suppress(OSError):
+                    bootstrap_file.unlink()
+                raise
     finally:
         engine.dispose()
 
-    bootstrap_root = Path(settings.storage.root)
-    bootstrap_root.mkdir(parents=True, exist_ok=True)
-    bootstrap_file = bootstrap_root / "bootstrap-admin.json"
-    bootstrap_file.write_text(
-        json.dumps({"username": "admin", "password": password}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    bootstrap_file.chmod(0o600)
     _LOGGER.info("初始管理员凭据已写入 %s", bootstrap_file)
 
 
@@ -151,7 +167,9 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
 
     @app.exception_handler(HubError)
     async def hub_error_handler(_: Request, error: HubError) -> JSONResponse:
-        return _error_response(error.code, error.message, error.status_code, error.details)
+        return _error_response(
+            error.code, error.message, error.status_code, error.details, error.headers
+        )
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error_handler(
@@ -177,11 +195,17 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
 
 
 def _error_response(
-    code: str, message: str, status_code: int, details: dict[str, object] | None = None
+    code: str,
+    message: str,
+    status_code: int,
+    details: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     """Serialize one client-safe failure envelope."""
     payload = ErrorResponse(error=ErrorBody(code=code, message=message, details=details))
-    return JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=status_code, content=payload.model_dump(mode="json"), headers=headers
+    )
 
 
 def _http_error_code_and_message(status_code: int) -> tuple[str, str]:

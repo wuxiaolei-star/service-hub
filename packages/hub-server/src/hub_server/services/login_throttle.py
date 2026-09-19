@@ -34,6 +34,8 @@ def lockout_error(remaining: timedelta) -> HubError:
         message="登录失败次数过多",
         status_code=429,
         details={"retry_after_seconds": seconds},
+        # The standard header lets clients and proxies back off on their own.
+        headers={"Retry-After": str(seconds)},
     )
 
 
