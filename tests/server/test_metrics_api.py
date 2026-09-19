@@ -6,8 +6,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from hub_server.main import create_app
-from hub_server.services import metrics as metrics_module
 from hub_server.models import UserRecord
+from hub_server.services import metrics as metrics_module
 from hub_server.services.auth import AuthService
 from hub_server.settings import (
     AuthSettings,

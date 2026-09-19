@@ -106,6 +106,8 @@ class RetentionSettings(StrictSettingsModel):
     input_ttl_hours: int = Field(default=720, gt=0)
     sweep_interval_minutes: int = Field(default=30, gt=0)
     backup_keep: int = Field(default=3, gt=0)
+    job_retention_days: int = Field(default=30, gt=0)
+    audit_retention_days: int = Field(default=180, gt=0)
 
 
 def _native_architecture() -> Literal["amd64", "arm64"]:

@@ -233,6 +233,16 @@ def _find_build(session: Session, build_key: str) -> PluginBuild:
     return build
 
 
+def _version_sort_key(version: str) -> tuple[int, ...]:
+    """Parse a dotted version into comparable integer parts.
+
+    String comparison would rank "9.0" above "10.0"; each dot-separated segment
+    is parsed as an integer (non-numeric segments fall back to 0) so that
+    "1.0.0" -> (1, 0, 0), "9.0" -> (9, 0), "10.0" -> (10, 0).
+    """
+    return tuple(int(part) if part.isdigit() else 0 for part in version.split("."))
+
+
 def _plugin_summary(plugin: Plugin) -> PluginSummary:
     """Map one Plugin without exposing internal persistence metadata."""
     return PluginSummary(
@@ -240,7 +250,11 @@ def _plugin_summary(plugin: Plugin) -> PluginSummary:
         name=plugin.name,
         description=plugin.description,
         category=plugin.category,
-        latest_version=max((version.version for version in plugin.versions), default=None),
+        latest_version=max(
+            (version.version for version in plugin.versions),
+            key=_version_sort_key,
+            default=None,
+        ),
     )
 
 

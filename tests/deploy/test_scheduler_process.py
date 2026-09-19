@@ -86,7 +86,15 @@ def test_registered_tasks_accept_only_a_session(tmp_path: Path) -> None:
     scheduler_service._register_default_tasks(_settings(tmp_path))
 
     names = [task.__name__ for task in scheduler_service._TASKS]
-    assert names == ["deliver_callbacks", "trigger_schedules", "advance_pipelines"]
+    assert names == [
+        "deliver_callbacks",
+        "trigger_schedules",
+        "advance_pipelines",
+        "reap_lost_jobs",
+        "delete_retired_jobs",
+        "delete_expired_sessions",
+        "delete_old_audit_logs",
+    ]
     for task in scheduler_service._TASKS:
         inspect.signature(task).bind(object())
 

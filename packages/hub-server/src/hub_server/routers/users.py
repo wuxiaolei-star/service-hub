@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from hub_server.dependencies import get_session, get_settings
-from hub_server.dependencies_auth import require_role
+from hub_server.dependencies_auth import ROLE_ORDER, Actor, get_actor, require_role
 from hub_server.errors import HubError
 from hub_server.models import ApiKeyRecord, UserRecord
 from hub_server.services.audit import record as audit
@@ -171,8 +171,19 @@ def list_api_keys(
 
 @key_router.post("", status_code=status.HTTP_201_CREATED)
 def create_api_key(
-    body: CreateApiKeyRequest, session: Annotated[Session, Depends(get_session)]
+    body: CreateApiKeyRequest,
+    actor: Annotated[Actor, Depends(get_actor)],
+    session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, object]:
+    # Without an ApiKeyRecord owner column, clamp the requested role instead:
+    # a key must never outrank the identity that minted it (an API key actor's
+    # role is the role of its own key).
+    if ROLE_ORDER[body.role] > ROLE_ORDER[actor.role]:
+        raise HubError(
+            code="FORBIDDEN",
+            message="不能创建高于自身角色的 API Key",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
     service = AuthService(session)
     record, plaintext = service.create_api_key(name=body.name, role=body.role)
     audit(

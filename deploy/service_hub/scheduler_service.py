@@ -31,6 +31,12 @@ def _register_default_tasks(settings: HubSettings) -> None:
     every sweep.
     """
     from hub_server.services.pipelines import advance_runs
+    from hub_server.services.reaper import reap_stale_jobs
+    from hub_server.services.retention import (
+        sweep_expired_sessions,
+        sweep_old_audit_logs,
+        sweep_terminal_jobs,
+    )
     from hub_server.services.schedules import trigger_due
     from hub_server.services.webhooks import deliver_due
 
@@ -47,9 +53,25 @@ def _register_default_tasks(settings: HubSettings) -> None:
     def advance_pipelines(session: Session) -> int:
         return advance_runs(session, storage, settings)
 
+    def delete_retired_jobs(session: Session) -> int:
+        return sweep_terminal_jobs(session, Path(settings.storage.root), settings.retention)
+
+    def delete_expired_sessions(session: Session) -> int:
+        return sweep_expired_sessions(session)
+
+    def delete_old_audit_logs(session: Session) -> int:
+        return sweep_old_audit_logs(session, settings.retention)
+
+    def reap_lost_jobs(session: Session) -> int:
+        return reap_stale_jobs(session)
+
     register_task(deliver_callbacks)
     register_task(trigger_schedules)
     register_task(advance_pipelines)
+    register_task(reap_lost_jobs)
+    register_task(delete_retired_jobs)
+    register_task(delete_expired_sessions)
+    register_task(delete_old_audit_logs)
 
 
 def register_task(task: Callable[[Session], int]) -> None:
