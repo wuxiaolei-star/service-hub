@@ -319,3 +319,20 @@ web 179 passed + typecheck/lint/build；compose config 通过。
 **质量门**：python 非集成 **871 passed / 0 failed**；ruff/mypy strict 76 文件无问题；
 web **192 passed** + typecheck/lint/build；compose config 通过。
 服务说明：`docs/service-docs/服务说明-V3.2.md`。
+
+---
+
+# V3.3 治理完善（2026-09-14，spec/plan 327a90c）
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 备份预检+reconcile | 9298c3c | backup.py 磁盘剩余空间预检（409 DISK_SPACE_INSUFFICIENT）；services/reconcile.py 遍历 desired=RUNNING 的 ServiceDef → client.start 纠偏 + 审计；scheduler 注册 |
+| Task 2 Webhook 投递明细 | d1e4f81 | WebhookDelivery 模型 + 迁移 0009；_deliver_one 逐次写投递历史（ok/status_code/error）；GET /jobs/{key}/callbacks/{id}/deliveries（viewer 倒序 100 条）；8 新测试 |
+| Task 3 文件删除+CSV | 0062020 | DELETE /files/{key}（引用保护 409 FILE_IN_USE + unlink + 审计）；GET /audit-logs/export（admin CSV 流式+注入防护）；GET /jobs/export（operator CSV）；10 新测试 |
+| Task 4 收尾 | 本次 | 全量回归 899/0；服务说明-V3.3.md；修改记录 |
+
+**实施方式**：Task 1/2/3 由三个子智能体并行完成（Task 2 因并发超限重发一次），
+主会话验收提交。
+**质量门**：python 非集成 **899 passed / 0 failed**；ruff/mypy strict 77 文件无问题；
+compose config 通过。web 192 passed（V3.2 基线，V3.3 无前端改动）。
+服务说明：`docs/service-docs/服务说明-V3.3.md`。
