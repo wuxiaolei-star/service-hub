@@ -5,6 +5,9 @@ FROM python:3.12-slim
 # only has to be passed where PyPI is slow (a cold build spent 26 minutes at
 # 22 kB/s against pypi.org and 90 seconds against a regional mirror).
 ARG PIP_INDEX_URL=""
+# Same idea for the Debian archive, which is the other slow download on hosts
+# with poor connectivity to the default mirrors.
+ARG APT_MIRROR=""
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -14,7 +17,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
+RUN set -eux; \
+    if [ -n "$APT_MIRROR" ]; then \
+      for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
+        if [ -f "$f" ]; then sed -i -E "s#https?://deb\.debian\.org#${APT_MIRROR}#g" "$f"; fi; \
+      done; \
+    fi; \
+    apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates gosu supervisor tini \
     && rm -rf /var/lib/apt/lists/*
 
