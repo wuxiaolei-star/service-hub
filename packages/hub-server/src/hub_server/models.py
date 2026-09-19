@@ -509,3 +509,19 @@ class WebhookDelivery(Base):
     status_code: Mapped[int | None] = mapped_column(nullable=True)
     ok: Mapped[bool] = mapped_column(Boolean)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class HubEvent(Base):
+    """Kernel event log (outbox pattern) for cross-process delivery."""
+
+    __tablename__ = "hub_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(128), index=True)
+    payload_json: Mapped[dict[str, object]] = mapped_column(JSON)
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
