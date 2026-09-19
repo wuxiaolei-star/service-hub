@@ -350,3 +350,19 @@ compose config 通过。web 192 passed（V3.2 基线，V3.3 无前端改动）�
 
 **质量门**：python 非集成 451 passed / 0 failed（含 9 内核测试）；ruff/mypy strict 通过。
 **待做**：Phase 1 剩余插件拆分（catalog/jobs/files/audit）+ 前端能力动态化。
+
+---
+
+# V4.0 Phase 1 功能插件化内核（2026-09-14，spec 6f5cff3 / plan aefae2d）
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 内核基础设施 | d480fac | kernel/protocol.py + registry.py + events.py + HubEvent 模型 + 迁移 0010 |
+| Task 2 前置迁移+耦合解除 | 518f7c4 | 解除反向 FK；恢复 _file_response；mypy 修复 |
+| Task 3+4 插件包装 | 386a02f + a5c1305 + 44b3989 | 9 个 FeaturePlugin 子类（auth/files/jobs/catalog/schedules/webhooks/backup/metrics/quotas）；main.py 从硬编码 include_router 改为 Plugin Registry 拓扑序挂载 |
+| 真实 NC docker 验收 | 服务器执行 | 39464 要素 / EPSG:4326 / SUCCESS |
+
+**实施方式**：schedules/webhooks/catalog+公共/files+jobs/auth 由子智能体并行完成，
+主会话负责内核基础设施、统一接线和验收。Task 2 因并发超限重发一次。
+**质量门**：python 非集成 **447/451 通过**（4 个 Windows 环境问题）；web 192/0。
+服务说明：`docs/service-docs/服务说明-V4.0-alpha.md`。
