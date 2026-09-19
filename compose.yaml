@@ -3,6 +3,11 @@ services:
     image: python-service-hub:1.0.0-linux-amd64
     platform: linux/amd64
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     environment:
       HUB_HOST_DATA_DIR: ${HUB_HOST_DATA_DIR:?HUB_HOST_DATA_DIR must be set}
     ports:
@@ -15,6 +20,11 @@ services:
     image: python-service-hub-web:1.0.0-linux-amd64
     platform: linux/amd64
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     depends_on:
       service-hub:
         condition: service_healthy

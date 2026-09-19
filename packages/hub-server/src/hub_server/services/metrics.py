@@ -22,6 +22,13 @@ from hub_server.settings import HubSettings
 ACTIVE_JOB_STATUSES = ("PENDING", "PREPARING", "RUNNING", "CANCEL_REQUESTED")
 
 _PROCESS_START = time.time()
+_CACHE_TTL_SECONDS = 30.0
+_cache: dict[str, tuple[float, str]] = {}
+
+
+def _clear_metrics_cache() -> None:
+    """Test hook: drop the process-local metrics cache."""
+    _cache.pop("render", None)
 
 
 def _gauge(name: str, help_text: str, value: int | float) -> list[str]:
@@ -29,7 +36,17 @@ def _gauge(name: str, help_text: str, value: int | float) -> list[str]:
 
 
 def render_metrics(session: Session, settings: HubSettings) -> str:
-    """Render the Prometheus exposition for one scrape."""
+    """Render the Prometheus exposition for one scrape (30s process-local cache)."""
+    now = time.monotonic()
+    cached = _cache.get("render")
+    if cached is not None and now - cached[0] < _CACHE_TTL_SECONDS:
+        return cached[1]
+    body = _render_metrics(session, settings)
+    _cache["render"] = (now, body)
+    return body
+
+
+def _render_metrics(session: Session, settings: HubSettings) -> str:
     lines: list[str] = []
 
     job_status_counts = (

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from hub_server.main import create_app
+from hub_server.services import metrics as metrics_module
 from hub_server.models import UserRecord
 from hub_server.services.auth import AuthService
 from hub_server.settings import (
@@ -33,6 +34,7 @@ def _settings(tmp_path: Path) -> HubSettings:
 
 
 def _admin_headers(client: TestClient) -> dict[str, str]:
+    metrics_module._clear_metrics_cache()
     factory = client.app.state.session_factory
     with factory() as session:
         user = session.query(UserRecord).filter(UserRecord.username == "admin").one()
