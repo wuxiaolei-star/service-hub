@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -15,6 +16,26 @@ import pytest
 import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+# (environment variable, Dockerfile ARG) pairs accepted by the two images.
+_BACKEND_BUILD_ARGS = (("HUB_APT_MIRROR", "APT_MIRROR"), ("HUB_PIP_INDEX_URL", "PIP_INDEX_URL"))
+_WEB_BUILD_ARGS = (("HUB_NPM_REGISTRY", "NPM_REGISTRY"),)
+
+
+def _build_block(context: str, pairs: tuple[tuple[str, str], ...]) -> str:
+    """Render a Compose build section, forwarding any mirror overrides it finds.
+
+    This suite builds both images from source, so without the same build args the
+    deployment used every layer misses the cache and the run spends its whole
+    budget downloading from the default indexes. Leaving the variables unset keeps
+    the default indexes, which is what a fast host wants anyway.
+    """
+    lines = ["    build:\n", f"      context: {context}\n", "      dockerfile: Dockerfile\n"]
+    forwarded = [(name, os.environ[env]) for env, name in pairs if os.environ.get(env)]
+    if forwarded:
+        lines.append("      args:\n")
+        lines.extend(f"        {name}: {value}\n" for name, value in forwarded)
+    return "".join(lines)
 
 
 def _compose_command(project_name: str, *arguments: str, compose_file: Path) -> list[str]:
@@ -79,10 +100,8 @@ def test_web_console_serves_spa_and_enforces_boundaries(tmp_path: Path) -> None:
     compose_file.write_text(
         "services:\n"
         "  service-hub:\n"
-        "    build:\n"
-        f"      context: {REPOSITORY_ROOT.as_posix()}\n"
-        "      dockerfile: Dockerfile\n"
-        "    image: python-service-hub:1.0.0-linux-amd64\n"
+        + _build_block(REPOSITORY_ROOT.as_posix(), _BACKEND_BUILD_ARGS)
+        + "    image: python-service-hub:1.0.0-linux-amd64\n"
         "    platform: linux/amd64\n"
         "    environment:\n"
         f"      HUB_HOST_DATA_DIR: {absolute_data_dir}\n"
@@ -91,10 +110,8 @@ def test_web_console_serves_spa_and_enforces_boundaries(tmp_path: Path) -> None:
         f"      - {absolute_data_dir}:/data\n"
         "      - /var/run/docker.sock:/var/run/docker.sock\n"
         "  service-hub-web:\n"
-        "    build:\n"
-        f"      context: {(REPOSITORY_ROOT / 'web').as_posix()}\n"
-        "      dockerfile: Dockerfile\n"
-        "    image: python-service-hub-web:1.0.0-linux-amd64\n"
+        + _build_block((REPOSITORY_ROOT / "web").as_posix(), _WEB_BUILD_ARGS)
+        + "    image: python-service-hub-web:1.0.0-linux-amd64\n"
         "    platform: linux/amd64\n"
         "    depends_on:\n"
         "      service-hub:\n"
