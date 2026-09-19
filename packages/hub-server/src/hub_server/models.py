@@ -406,6 +406,8 @@ class Schedule(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_job_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    cron_expr: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    missed_run_policy: Mapped[str] = mapped_column(String(16), default="skip")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now
     )

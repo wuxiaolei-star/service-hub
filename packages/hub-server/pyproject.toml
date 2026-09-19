@@ -20,6 +20,7 @@ dependencies = [
   "zstandard>=0.23,<1",
   "argon2-cffi>=23.1,<24",
   "docker>=7.1,<8",
+  "croniter>=3.0,<4",
 ]
 
 [tool.hatch.build.targets.wheel]
