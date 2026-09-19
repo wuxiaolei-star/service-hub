@@ -1,5 +1,11 @@
 FROM python:3.12-slim
 
+# Optional build-time index override. Empty means "use pip's default index", so
+# the image builds identically on a machine with fast access to PyPI; a mirror
+# only has to be passed where PyPI is slow (a cold build spent 26 minutes at
+# 22 kB/s against pypi.org and 90 seconds against a regional mirror).
+ARG PIP_INDEX_URL=""
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app:/app/packages/hub-server/src \
@@ -16,7 +22,7 @@ COPY packages/hub-contracts packages/hub-contracts
 COPY packages/hub-sdk packages/hub-sdk
 COPY packages/hub-runner packages/hub-runner
 COPY packages/hub-server packages/hub-server
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} \
     ./packages/hub-contracts \
     ./packages/hub-sdk \
     ./packages/hub-runner \

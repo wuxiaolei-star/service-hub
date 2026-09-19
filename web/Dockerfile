@@ -1,8 +1,12 @@
 # Build the SPA with the pinned Node toolchain.
 FROM node:22-alpine AS build
+
+# Optional build-time registry override, empty for npm's default.
+ARG NPM_REGISTRY=""
+
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci ${NPM_REGISTRY:+--registry "$NPM_REGISTRY"}
 COPY . .
 RUN npm run build
 
