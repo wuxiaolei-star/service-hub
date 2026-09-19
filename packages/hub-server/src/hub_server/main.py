@@ -103,6 +103,7 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     app.state.settings = settings
 
     # Resolve the enabled plugin set and mount routers in dependency order.
+    from hub_server.kernel.protocol import BaseFeaturePlugin
     from hub_server.kernel.registry import resolve_plugins
     from hub_server.plugins.audit_plugin import AuditPlugin
     from hub_server.plugins.auth_plugin import AuthPlugin
@@ -115,9 +116,10 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     from hub_server.plugins.schedules_plugin import SchedulesPlugin
     from hub_server.plugins.webhooks_plugin import WebhooksPlugin
     from hub_server.routers.audit import router as audit_router
+    from hub_server.routers.pipelines import router as pipelines_router
     from hub_server.routers.services import router as services_router
 
-    plugin_catalog = {
+    plugin_catalog: dict[str, BaseFeaturePlugin] = {
         p.name: p
         for p in (
             AuthPlugin(),
@@ -145,6 +147,7 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     # mounted directly to avoid breaking existing endpoints.
     app.include_router(services_router, prefix="/api/v1")
     app.include_router(audit_router, prefix="/api/v1")
+    app.include_router(pipelines_router, prefix="/api/v1")
 
     @app.exception_handler(HubError)
     async def hub_error_handler(_: Request, error: HubError) -> JSONResponse:
