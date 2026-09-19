@@ -26,23 +26,29 @@ def _register_default_tasks(settings: HubSettings) -> None:
 
     The automation services need more than a session: schedule triggering and
     pipeline advancement create Jobs (storage + settings) and callback delivery
-    needs the outbound SSRF policy. Adapters keep ``register_task`` signatures
+    needs the outbound SSRF policy. Service reconciliation talks to the isolated
+    service-manager process, so its loopback client is built once here from
+    ``settings.runner.shared_token`` and the manager URL (port) injected into the
+    environment, then closed over. Adapters keep ``register_task`` signatures
     honest, so a mismatch surfaces here instead of as a swallowed TypeError in
     every sweep.
     """
     from hub_server.services.pipelines import advance_runs
     from hub_server.services.reaper import reap_stale_jobs
+    from hub_server.services.reconcile import reconcile_services
     from hub_server.services.retention import (
         sweep_expired_sessions,
         sweep_old_audit_logs,
         sweep_terminal_jobs,
     )
     from hub_server.services.schedules import trigger_due
+    from hub_server.services.service_manager import get_service_manager
     from hub_server.services.webhooks import deliver_due
 
     if _TASKS:
         return
     storage = LocalStorage(Path(settings.storage.root))
+    manager = get_service_manager(settings)
 
     def deliver_callbacks(session: Session) -> int:
         return deliver_due(session, policy=settings.webhooks)
@@ -65,10 +71,14 @@ def _register_default_tasks(settings: HubSettings) -> None:
     def reap_lost_jobs(session: Session) -> int:
         return reap_stale_jobs(session)
 
+    def reconcile_service_containers(session: Session) -> int:
+        return reconcile_services(session, manager)
+
     register_task(deliver_callbacks)
     register_task(trigger_schedules)
     register_task(advance_pipelines)
     register_task(reap_lost_jobs)
+    register_task(reconcile_service_containers)
     register_task(delete_retired_jobs)
     register_task(delete_expired_sessions)
     register_task(delete_old_audit_logs)

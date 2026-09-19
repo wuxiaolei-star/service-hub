@@ -8,6 +8,7 @@ the ``backups/``, ``environments/``, and ``logs/`` directories are excluded.
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 import tarfile
 import tempfile
@@ -27,6 +28,11 @@ _BACKUP_SUFFIX = ".tar.gz"
 _TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 _DATABASE_ARCHIVE_NAME = "hub.db"
 _EXCLUDED_DIRECTORY_NAMES = frozenset({"backups", "environments", "logs"})
+# The archive holds a database snapshot plus a gzip copy of the data directories.
+# Requiring 1.3x the estimated input size covers the snapshot copy, the growing
+# archive itself, and compression working in our favour; it keeps a large backup
+# from filling the very disk that stores the data it is protecting.
+_SPACE_SAFETY_FACTOR = 1.3
 
 
 def _utc_now() -> datetime:
@@ -68,6 +74,7 @@ class BackupService:
         current = now if now is not None else _utc_now()
         backup_dir = self._backup_dir()
         backup_dir.mkdir(parents=True, exist_ok=True)
+        self._require_free_disk_space()
         file_name = f"{_BACKUP_PREFIX}{current.strftime(_TIMESTAMP_FORMAT)}{_BACKUP_SUFFIX}"
         target = backup_dir / file_name
         partial = backup_dir / f".{file_name}.partial"
@@ -80,6 +87,43 @@ class BackupService:
         return BackupResult(
             file_name=file_name, size_bytes=target.stat().st_size, created_at=current
         )
+
+    def _require_free_disk_space(self) -> None:
+        """Refuse to start when the estimated archive could outgrow the disk.
+
+        The estimate is the size of every file the archive will read (the data
+        directories plus the database) plus room for the snapshot and the
+        archive itself. Without this precheck a data directory that outgrew its
+        disk would let the backup itself fill the drive and take the Hub down.
+        """
+        needed = int(self._estimate_archive_input_bytes() * _SPACE_SAFETY_FACTOR)
+        free = shutil.disk_usage(self._storage_root).free
+        if free < needed:
+            raise HubError(
+                code="DISK_SPACE_INSUFFICIENT",
+                message="磁盘剩余空间不足以创建备份",
+                status_code=409,
+                details={"free": free, "needed": needed},
+            )
+
+    def _estimate_archive_input_bytes(self) -> int:
+        """Approximate the bytes the archive will read, excluding never-archived directories."""
+        total = 0
+        if self._db_path.is_file():
+            total += self._db_path.stat().st_size
+        if not self._storage_root.is_dir():
+            return total
+        for path in self._storage_root.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(self._storage_root)
+            if relative.parts[0] in _EXCLUDED_DIRECTORY_NAMES:
+                continue
+            try:
+                total += path.stat().st_size
+            except OSError:
+                continue
+        return total
 
     def prune_backups(self, keep: int) -> int:
         """Delete the oldest archives beyond ``keep``; return the number removed."""

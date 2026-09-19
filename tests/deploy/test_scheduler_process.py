@@ -91,6 +91,7 @@ def test_registered_tasks_accept_only_a_session(tmp_path: Path) -> None:
         "trigger_schedules",
         "advance_pipelines",
         "reap_lost_jobs",
+        "reconcile_service_containers",
         "delete_retired_jobs",
         "delete_expired_sessions",
         "delete_old_audit_logs",
