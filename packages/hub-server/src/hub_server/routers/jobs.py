@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import csv
+import io
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import StreamingResponse
 from python_hub_contracts import JobStatus, RuntimeType
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from hub_server.dependencies import get_session, get_settings, get_storage
 from hub_server.dependencies_auth import Actor, actor_ip, get_actor, require_role
-from hub_server.models import FileRecord, Job
+from hub_server.models import FileRecord, Job, PluginBuild, PluginVersion
 from hub_server.routers.files import _file_response
 from hub_server.schemas import (
     FileResponse,
@@ -34,6 +38,21 @@ from hub_server.storage import LocalStorage
 router = APIRouter(
     prefix="/jobs", tags=["jobs"], dependencies=[Depends(require_role("viewer"))]
 )
+
+_JOBS_CSV_HEADER: tuple[str, ...] = (
+    "job_id",
+    "plugin_id",
+    "version",
+    "runtime_type",
+    "status",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "error_summary",
+)
+_JOBS_EXPORT_LIMIT = 10000
+_JOBS_EXPORT_BATCH_SIZE = 500
+_CSV_INJECTION_PREFIXES = ("=", "+", "-", "@")
 
 
 @router.post(
@@ -105,6 +124,80 @@ def list_jobs(
         offset=offset,
     )
     return JobListResponse(items=[_job_response(job) for job in jobs], total=total)
+
+
+# Registered before the "/{job_key}" routes so "export" is never read as a key.
+@router.get(
+    "/export",
+    response_class=StreamingResponse,
+    dependencies=[Depends(require_role("operator"))],
+)
+def export_jobs(
+    session: Annotated[Session, Depends(get_session)],
+) -> StreamingResponse:
+    """Stream the 10000 newest Jobs as a CSV attachment for spreadsheet consumers."""
+    return StreamingResponse(
+        _jobs_csv_rows(session),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="jobs.csv"'},
+    )
+
+
+def _jobs_csv_rows(session: Session) -> Iterator[str]:
+    """Stream the header line plus the newest Jobs newest-first, in batches."""
+    yield _csv_line(_JOBS_CSV_HEADER)
+    jobs = list(
+        session.scalars(
+            select(Job)
+            .options(
+                joinedload(Job.plugin_build)
+                .joinedload(PluginBuild.plugin_version)
+                .joinedload(PluginVersion.plugin)
+            )
+            .order_by(Job.created_at.desc(), Job.id.desc())
+            .limit(_JOBS_EXPORT_LIMIT)
+        )
+    )
+    for start in range(0, len(jobs), _JOBS_EXPORT_BATCH_SIZE):
+        for job in jobs[start : start + _JOBS_EXPORT_BATCH_SIZE]:
+            plugin_version = job.plugin_build.plugin_version
+            yield _csv_line(
+                (
+                    job.job_key,
+                    plugin_version.plugin.plugin_key,
+                    plugin_version.version,
+                    job.runtime_type,
+                    job.status,
+                    _csv_timestamp(job.created_at),
+                    _csv_timestamp(job.started_at),
+                    _csv_timestamp(job.finished_at),
+                    job.error_summary,
+                )
+            )
+
+
+def _csv_timestamp(value: datetime | None) -> str:
+    """Render a lifecycle timestamp for CSV, empty when the Job never reached it."""
+    if value is None:
+        return ""
+    if value.tzinfo is None or value.utcoffset() is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
+
+
+def _csv_line(values: Sequence[object]) -> str:
+    """Render one CSV row with formula-injection neutralisation applied per cell."""
+    buffer = io.StringIO()
+    csv.writer(buffer, lineterminator="\n").writerow(_guarded_cell(value) for value in values)
+    return buffer.getvalue()
+
+
+def _guarded_cell(value: object) -> str:
+    """Prefix cells that a spreadsheet could interpret as a formula."""
+    text = "" if value is None else str(value)
+    if text.startswith(_CSV_INJECTION_PREFIXES):
+        return f"'{text}"
+    return text
 
 
 @router.post(

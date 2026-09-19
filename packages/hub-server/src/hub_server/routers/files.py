@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from datetime import UTC, datetime
 from typing import Annotated, NamedTuple
 
-from fastapi import APIRouter, Depends, Path, Request, status
+from fastapi import APIRouter, Depends, Path, Request, Response, status
 from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import MultipartParser, parse_options_header
 from sqlalchemy import select
@@ -17,7 +18,7 @@ from starlette.responses import FileResponse as StreamingFileResponse
 from hub_server.dependencies import get_session, get_settings, get_storage
 from hub_server.dependencies_auth import Actor, actor_ip, get_actor, require_role
 from hub_server.errors import HubError, UploadTooLargeError
-from hub_server.models import FileRecord
+from hub_server.models import FileRecord, JobFile
 from hub_server.schemas import FileListResponse, FileResponse
 from hub_server.services.audit import record as audit
 from hub_server.services.files import FileService
@@ -347,5 +348,56 @@ def _sha256_not_found(sha256: str) -> HubError:
     return HubError(
         code="FILE_NOT_FOUND",
         message=f"文件 {sha256} 不存在",
+        status_code=404,
+    )
+
+
+@router.delete(
+    "/{file_key}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("operator"))],
+)
+def delete_file(
+    actor: Annotated[Actor, Depends(get_actor)],
+    request: Request,
+    file_key: str,
+    session: Annotated[Session, Depends(get_session)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+) -> Response:
+    """Delete one available file that no Job still references."""
+    record = session.scalar(select(FileRecord).where(FileRecord.file_key == file_key))
+    if record is None or record.status != "AVAILABLE":
+        raise _file_not_found(file_key)
+    referenced = session.scalar(
+        select(JobFile.id).where(JobFile.file_record_id == record.id).limit(1)
+    )
+    if referenced is not None:
+        raise HubError(
+            code="FILE_IN_USE",
+            message="文件被 Job 引用，无法删除",  # noqa: RUF001
+            status_code=409,
+        )
+    payload_path = storage.open_relative(record.relative_path)
+    with contextlib.suppress(FileNotFoundError):
+        payload_path.unlink()
+    session.delete(record)
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="file.delete",
+        resource_type="file",
+        resource_id=file_key,
+        ip=actor_ip(request),
+    )
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _file_not_found(file_key: str) -> HubError:
+    return HubError(
+        code="FILE_NOT_FOUND",
+        message=f"文件 {file_key} 不存在",
         status_code=404,
     )
