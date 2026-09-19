@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from hub_server.errors import WebhookUrlForbiddenError
+from hub_server.errors import HubError, WebhookUrlForbiddenError
 from hub_server.models import Job, JobCallback
 from hub_server.services.audit import record as audit
 from hub_server.services.webhook_guard import (
@@ -23,6 +23,7 @@ from hub_server.settings import WebhooksSettings
 
 TERMINAL_JOB_STATUSES: tuple[str, ...] = ("SUCCESS", "FAILED", "CANCELLED", "TIMED_OUT")
 RETRYABLE_STATES: tuple[str, ...] = ("PENDING", "FAILED")
+REPLAYABLE_STATES: tuple[str, ...] = ("FAILED", "EXHAUSTED")
 MAX_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 60
 DELIVERY_TIMEOUT_SECONDS = 10
@@ -48,6 +49,39 @@ def enqueue_callback(
         state="PENDING",
     )
     session.add(callback)
+    session.flush()
+    return callback
+
+
+def replay_callback(
+    session: Session,
+    callback_id: int,
+    now: datetime | None = None,
+) -> JobCallback:
+    """Reset one FAILED or EXHAUSTED callback so the scheduler delivers it again.
+
+    A PENDING callback is still in flight and a SUCCEEDED callback already
+    reached its target, so only FAILED and EXHAUSTED states are replayable.
+    The reset clears every delivery artifact (attempts, backoff schedule, last
+    response) so the next :func:`deliver_due` scan treats the callback as fresh.
+    The caller owns the commit; user attribution is recorded by the router,
+    which is the only layer that knows the acting subject.
+    """
+    del now  # accepted for call-site symmetry with deliver_due; replay is immediate
+    callback = session.get(JobCallback, callback_id)
+    if callback is None:
+        raise HubError(code="CALLBACK_NOT_FOUND", message="回调不存在", status_code=404)
+    if callback.state not in REPLAYABLE_STATES:
+        raise HubError(
+            code="CALLBACK_NOT_REPLAYABLE",
+            message="回调当前状态不可重放",
+            status_code=409,
+        )
+    callback.state = "PENDING"
+    callback.attempts = 0
+    callback.next_attempt_at = None
+    callback.last_status_code = None
+    callback.last_error = None
     session.flush()
     return callback
 
