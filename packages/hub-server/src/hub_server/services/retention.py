@@ -12,9 +12,13 @@ from sqlalchemy.orm import Session
 
 from hub_server.models import AuditLogRecord, FileRecord, Job, JobCallback, JobFile, SessionRecord
 from hub_server.services.audit import record as audit
+from hub_server.services.files import CHUNK_STAGING_ID_PATTERN, PAYLOAD_BASENAME
 from hub_server.settings import RetentionSettings
 
 SWEEP_BATCH_LIMIT = 500
+# A chunked-upload staging session that has not completed within one day is
+# abandoned; its staged parts are temporary data no FileRecord ever references.
+_CHUNK_STAGING_MAX_AGE_HOURS = 24
 
 TERMINAL_JOB_STATUSES = (
     JobStatus.SUCCESS.value,
@@ -38,7 +42,10 @@ class RetentionSweeper:
         self._settings = settings
 
     def sweep(self, *, now: datetime | None = None) -> int:
-        """Remove expired unreferenced inputs; return the number deleted."""
+        """Remove expired unreferenced inputs and abandoned chunk staging.
+
+        Returns the number of deleted records plus removed staging directories.
+        """
         current = now if now is not None else datetime.now(UTC)
         cutoff = current - timedelta(hours=self._settings.input_ttl_hours)
         candidates = (
@@ -70,7 +77,38 @@ class RetentionSweeper:
             self._session.delete(record)
         if candidates:
             self._session.commit()
-        return len(candidates)
+        removed_directories = sweep_stale_chunk_directories(self._storage_root, now=current)
+        return len(candidates) + removed_directories
+
+
+def sweep_stale_chunk_directories(storage_root: Path, *, now: datetime | None = None) -> int:
+    """Remove chunked-upload staging directories idle for over 24 hours; return the count.
+
+    Staging directories are named by their raw 32-hex upload id, so the
+    ``file_``-prefixed directories of installed uploads never match. A staging
+    directory that already carries a merged ``payload`` belongs to a completed
+    upload whose FileRecord references it and is never touched here.
+    """
+    current = now if now is not None else datetime.now(UTC)
+    cutoff = (current - timedelta(hours=_CHUNK_STAGING_MAX_AGE_HOURS)).timestamp()
+    try:
+        entries = list((storage_root / "uploads").iterdir())
+    except OSError:
+        return 0
+    removed = 0
+    for entry in entries:
+        if not entry.is_dir() or CHUNK_STAGING_ID_PATTERN.fullmatch(entry.name) is None:
+            continue
+        if (entry / PAYLOAD_BASENAME).exists():
+            continue
+        try:
+            if entry.stat().st_mtime >= cutoff:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+        removed += 1
+    return removed
 
 
 def sweep_terminal_jobs(

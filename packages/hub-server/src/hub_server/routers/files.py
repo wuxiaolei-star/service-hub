@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import re
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path as FsPath
 from typing import Annotated, NamedTuple
 
 from fastapi import APIRouter, Depends, Path, Request, Response, status
+from pydantic import BaseModel, Field
 from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import MultipartParser, parse_options_header
 from sqlalchemy import select
@@ -21,7 +25,13 @@ from hub_server.errors import HubError, UploadTooLargeError
 from hub_server.models import FileRecord, JobFile
 from hub_server.schemas import FileListResponse, FileResponse
 from hub_server.services.audit import record as audit
-from hub_server.services.files import FileService
+from hub_server.services.files import (
+    PAYLOAD_BASENAME,
+    FileService,
+    chunk_file_name,
+    chunk_staging_relative_path,
+    new_chunk_upload_id,
+)
 from hub_server.services.quotas import QuotaService, UploadCap
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage, StoredUpload, StreamingUpload
@@ -39,6 +49,10 @@ _MAX_MULTIPART_HEADER_SIZE_BYTES = 4224
 # this slack cannot describe an acceptable upload. The slack only ever makes the
 # declared-size rejection more conservative; the stream cap stays authoritative.
 _MAX_MULTIPART_ENVELOPE_BYTES = 16 * 1024
+# Chunked uploads merge at most this many parts, which also keeps the zero-padded
+# on-disk chunk names a fixed width.
+_MAX_CHUNK_COUNT = 10000
+_CHUNK_COPY_BYTES = 1024 * 1024
 
 
 class _StreamedUpload(NamedTuple):
@@ -401,3 +415,240 @@ def _file_not_found(file_key: str) -> HubError:
         message=f"文件 {file_key} 不存在",
         status_code=404,
     )
+
+
+class ChunkInitRequest(BaseModel):
+    """Body for opening one chunked upload staging session."""
+
+    filename: str = Field(min_length=1, max_length=512)
+    total_size: int = Field(ge=0)
+
+
+class ChunkInitResponse(BaseModel):
+    upload_id: str
+
+
+class ChunkCompleteRequest(BaseModel):
+    """Body for merging staged chunks into one available Hub file."""
+
+    filename: str = Field(min_length=1, max_length=512)
+    total_chunks: int = Field(ge=1, le=_MAX_CHUNK_COUNT)
+
+
+class ChunkUploadedResponse(BaseModel):
+    chunk_index: int
+    size: int
+
+
+def _chunk_upload_not_found() -> HubError:
+    return HubError(
+        code="CHUNK_UPLOAD_NOT_FOUND",
+        message="分片上传会话不存在",
+        status_code=404,
+    )
+
+
+def _chunk_upload_incomplete() -> HubError:
+    return HubError(
+        code="CHUNK_UPLOAD_INCOMPLETE",
+        message="分片不完整，无法合并",  # noqa: RUF001
+        status_code=409,
+    )
+
+
+def _chunk_staging_directory(storage: LocalStorage, upload_id: str) -> FsPath:
+    """Resolve one existing staging directory or raise the stable 404 error."""
+    try:
+        relative = chunk_staging_relative_path(upload_id)
+    except ValueError as error:
+        raise _chunk_upload_not_found() from error
+    staging = storage.open_relative(relative)
+    if not staging.is_dir():
+        raise _chunk_upload_not_found()
+    return staging
+
+
+def _staged_chunk_bytes(staging: FsPath) -> int:
+    """Return the bytes already staged, so one part cannot exceed the file cap."""
+    total = 0
+    for path in staging.glob("chunk_*"):
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _merge_chunks(staging: FsPath, total_chunks: int, upload_id: str) -> StoredUpload:
+    """Concatenate staged chunks in index order into the staging payload file."""
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with (staging / PAYLOAD_BASENAME).open("wb") as sink:
+            for index in range(total_chunks):
+                with (staging / chunk_file_name(index)).open("rb") as source:
+                    while block := source.read(_CHUNK_COPY_BYTES):
+                        digest.update(block)
+                        size += len(block)
+                        sink.write(block)
+    except OSError as error:
+        _LOGGER.exception("Unable to merge a chunked upload payload")
+        raise HubError(
+            code="UNEXPECTED_ERROR", message="保存上传文件失败", status_code=500
+        ) from error
+    return StoredUpload(
+        relative_path=f"uploads/{upload_id}/payload",
+        size_bytes=size,
+        sha256=digest.hexdigest(),
+    )
+
+
+def _remove_chunk_files(staging: FsPath) -> None:
+    """Best-effort removal of merged chunk files; the payload must survive."""
+    try:
+        for path in staging.glob("chunk_*"):
+            if path.is_file():
+                path.unlink(missing_ok=True)
+    except OSError:
+        _LOGGER.warning("Unable to clean merged chunk files", exc_info=True)
+
+
+@router.post(
+    "/chunk/init",
+    response_model=ChunkInitResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("operator"))],
+)
+def init_chunked_upload(
+    actor: Annotated[Actor, Depends(get_actor)],
+    request: Request,
+    body: ChunkInitRequest,
+    session: Annotated[Session, Depends(get_session)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
+) -> ChunkInitResponse:
+    """Reserve a staging directory for one large multi-request upload."""
+    if body.total_size > settings.uploads.max_size_bytes:
+        raise UploadTooLargeError(max_size_bytes=settings.uploads.max_size_bytes)
+    upload_id = new_chunk_upload_id()
+    staging = storage.open_relative(chunk_staging_relative_path(upload_id))
+    try:
+        staging.mkdir(parents=True)
+    except OSError as error:
+        _LOGGER.exception("Unable to open a chunked upload staging directory")
+        raise HubError(
+            code="UNEXPECTED_ERROR", message="保存上传文件失败", status_code=500
+        ) from error
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="file.chunk_init",
+        resource_type="file",
+        resource_id=upload_id,
+        detail={"filename": body.filename, "total_size": body.total_size},
+        ip=actor_ip(request),
+    )
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return ChunkInitResponse(upload_id=upload_id)
+
+
+@router.put(
+    "/chunk/{upload_id}/{chunk_index}",
+    response_model=ChunkUploadedResponse,
+    dependencies=[Depends(require_role("operator"))],
+)
+async def upload_chunk(
+    upload_id: str,
+    chunk_index: Annotated[int, Path(ge=0, le=_MAX_CHUNK_COUNT - 1)],
+    request: Request,
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
+) -> ChunkUploadedResponse:
+    """Store one raw chunk below its staging directory, bounded by the file cap."""
+    staging = _chunk_staging_directory(storage, upload_id)
+    remaining = settings.uploads.max_size_bytes - _staged_chunk_bytes(staging)
+    target = staging / chunk_file_name(chunk_index)
+    size = 0
+    try:
+        with target.open("wb") as sink:
+            async for block in request.stream():
+                size += len(block)
+                if size > remaining:
+                    raise UploadTooLargeError(max_size_bytes=settings.uploads.max_size_bytes)
+                sink.write(block)
+    except UploadTooLargeError:
+        with contextlib.suppress(OSError):
+            target.unlink(missing_ok=True)
+        raise
+    except OSError as error:
+        _LOGGER.exception("Unable to store a chunked upload part")
+        raise HubError(
+            code="UNEXPECTED_ERROR", message="保存上传文件失败", status_code=500
+        ) from error
+    return ChunkUploadedResponse(chunk_index=chunk_index, size=size)
+
+
+@router.post(
+    "/chunk/{upload_id}/complete",
+    response_model=FileResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("operator"))],
+)
+def complete_chunked_upload(
+    actor: Annotated[Actor, Depends(get_actor)],
+    request: Request,
+    upload_id: str,
+    body: ChunkCompleteRequest,
+    session: Annotated[Session, Depends(get_session)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
+) -> FileResponse:
+    """Merge staged chunks into one FileRecord under the usual upload quota."""
+    staging = _chunk_staging_directory(storage, upload_id)
+    if any(
+        not (staging / chunk_file_name(index)).is_file() for index in range(body.total_chunks)
+    ):
+        raise _chunk_upload_incomplete()
+
+    service = _file_service(session, storage, settings)
+    stored = _merge_chunks(staging, body.total_chunks, upload_id)
+    record = service.install_upload_metadata(
+        service.new_file_key(),
+        body.filename,
+        None,
+        stored,
+        owner_user_id=actor.id if actor.kind == "user" else None,
+    )
+    try:
+        # Authoritative quota check over the merged total. It runs after the row
+        # is flushed, so this connection already holds the write lock, and before
+        # the commit, so a rejection leaves neither metadata nor payload behind.
+        QuotaService(session, settings.quotas).enforce_upload(
+            actor, record.size_bytes, exclude_file_id=record.id
+        )
+        audit(
+            session,
+            actor_type=actor.kind,
+            actor_id=actor.id,
+            actor_name=actor.name,
+            action="file.chunk_complete",
+            resource_type="file",
+            resource_id=record.file_key,
+            detail={"upload_id": upload_id, "chunks": body.total_chunks},
+            ip=actor_ip(request),
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    _remove_chunk_files(staging)
+    return _file_response(record)
