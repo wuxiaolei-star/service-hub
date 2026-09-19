@@ -110,6 +110,13 @@ class RetentionSettings(StrictSettingsModel):
     audit_retention_days: int = Field(default=180, gt=0)
 
 
+class PluginsSettings(StrictSettingsModel):
+    """Kernel feature plugin switches (V4.0)."""
+
+    enabled: list[str] | None = None
+    options: dict[str, dict[str, object]] = Field(default_factory=dict)
+
+
 def _native_architecture() -> Literal["amd64", "arm64"]:
     machine = platform.machine().lower()
     if machine in {"amd64", "x86_64"}:
@@ -126,6 +133,7 @@ class HubSettings(StrictSettingsModel):
     uploads: UploadSettings
     runner: RunnerSettings
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    plugins: PluginsSettings = Field(default_factory=PluginsSettings)
     quotas: QuotasSettings = Field(default_factory=QuotasSettings)
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
     webhooks: WebhooksSettings = Field(default_factory=WebhooksSettings)

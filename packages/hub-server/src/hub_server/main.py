@@ -18,21 +18,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from alembic import command
 from hub_server.db import create_engine_and_session_factory
 from hub_server.errors import HubError
-from hub_server.plugins.schedules_plugin import SchedulesPlugin
-from hub_server.plugins.webhooks_plugin import WebhooksPlugin
-from hub_server.routers.audit import router as audit_router
-from hub_server.routers.auth import router as auth_router
-from hub_server.routers.files import router as files_router
 from hub_server.routers.internal_runner import router as internal_runner_router
-from hub_server.routers.jobs import router as jobs_router
-from hub_server.routers.logs_stream import router as logs_stream_router
-from hub_server.routers.pipelines import router as pipelines_router
-from hub_server.routers.plugins import router as plugins_router
-from hub_server.routers.registry import router as registry_router
-from hub_server.routers.services import router as services_router
 from hub_server.routers.system import router as system_router
-from hub_server.routers.users import key_router as api_keys_router
-from hub_server.routers.users import router as users_router
 from hub_server.schemas import ErrorBody, ErrorResponse
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
@@ -56,6 +43,43 @@ def _ensure_sqlite_database_directory(database_url: str) -> None:
         Path(database).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _bootstrap_admin(settings: HubSettings) -> None:
+    """Seed the first admin account into a protected file on first run."""
+    if settings.auth.mode != "required":
+        return
+    from hub_server.db import create_engine_and_session_factory
+    from hub_server.models import UserRecord
+    from hub_server.services.auth import hash_password
+
+    engine, session_factory = create_engine_and_session_factory(settings.database.url)
+    try:
+        with session_factory() as session:
+            if session.query(UserRecord).count() > 0:
+                return
+            password = secrets.token_urlsafe(18)
+            session.add(
+                UserRecord(
+                    username="admin",
+                    password_hash=hash_password(password),
+                    role="admin",
+                    must_change_password=True,
+                )
+            )
+            session.commit()
+    finally:
+        engine.dispose()
+
+    bootstrap_root = Path(settings.storage.root)
+    bootstrap_root.mkdir(parents=True, exist_ok=True)
+    bootstrap_file = bootstrap_root / "bootstrap-admin.json"
+    bootstrap_file.write_text(
+        json.dumps({"username": "admin", "password": password}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    bootstrap_file.chmod(0o600)
+    _LOGGER.info("初始管理员凭据已写入 %s", bootstrap_file)
+
+
 def create_app(settings: HubSettings | None = None) -> FastAPI:
     """Create a configured Hub ASGI application."""
     if settings is None:
@@ -77,27 +101,50 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
 
     app = FastAPI(title="Python Service Hub", version=settings.hub_version, lifespan=lifespan)
     app.state.settings = settings
-    app.include_router(system_router, prefix="/api/v1")
-    app.include_router(auth_router, prefix="/api/v1")
-    app.include_router(users_router, prefix="/api/v1")
-    app.include_router(api_keys_router, prefix="/api/v1")
-    app.include_router(audit_router, prefix="/api/v1")
-    # schedules mounts through its FeaturePlugin declaration, so the kernel's
-    # enable/disable flow — not a hardcoded include — controls these routes.
-    for plugin_router in SchedulesPlugin().routers:
-        app.include_router(plugin_router, prefix="/api/v1")
-    app.include_router(services_router, prefix="/api/v1")
-    # webhooks mounts through its FeaturePlugin declaration, so the kernel's
-    # enable/disable flow — not a hardcoded include — controls these routes.
-    for plugin_router in WebhooksPlugin().routers:
-        app.include_router(plugin_router, prefix="/api/v1")
-    app.include_router(pipelines_router, prefix="/api/v1")
-    app.include_router(registry_router, prefix="/api/v1")
-    app.include_router(logs_stream_router, prefix="/api/v1")
-    app.include_router(files_router, prefix="/api/v1")
-    app.include_router(plugins_router, prefix="/api/v1")
-    app.include_router(jobs_router, prefix="/api/v1")
+
+    # Resolve the enabled plugin set and mount routers in dependency order.
+    from hub_server.kernel.registry import resolve_plugins
+    from hub_server.plugins.audit_plugin import AuditPlugin
+    from hub_server.plugins.auth_plugin import AuthPlugin
+    from hub_server.plugins.backup_plugin import BackupPlugin
+    from hub_server.plugins.catalog_plugin import CatalogPlugin
+    from hub_server.plugins.files_plugin import FilesPlugin
+    from hub_server.plugins.jobs_plugin import JobsPlugin
+    from hub_server.plugins.metrics_plugin import MetricsPlugin
+    from hub_server.plugins.quotas_plugin import QuotasPlugin
+    from hub_server.plugins.schedules_plugin import SchedulesPlugin
+    from hub_server.plugins.webhooks_plugin import WebhooksPlugin
+    from hub_server.routers.audit import router as audit_router
+    from hub_server.routers.services import router as services_router
+
+    plugin_catalog = {
+        p.name: p
+        for p in (
+            AuthPlugin(),
+            FilesPlugin(),
+            JobsPlugin(),
+            CatalogPlugin(),
+            SchedulesPlugin(),
+            WebhooksPlugin(),
+            BackupPlugin(),
+            MetricsPlugin(),
+            QuotasPlugin(),
+            AuditPlugin(),
+        )
+    }
+    enabled_plugins = resolve_plugins(plugin_catalog, settings.plugins.enabled)
+
+    for plugin in enabled_plugins:
+        for router in plugin.routers:
+            app.include_router(router, prefix="/api/v1")
+
+    # Non-plugin routers (internal runner protocol, system health/info).
     app.include_router(internal_runner_router, prefix="/internal/v1")
+    app.include_router(system_router, prefix="/api/v1")
+    # Services and audit are governance domains not yet wrapped as plugins;
+    # mounted directly to avoid breaking existing endpoints.
+    app.include_router(services_router, prefix="/api/v1")
+    app.include_router(audit_router, prefix="/api/v1")
 
     @app.exception_handler(HubError)
     async def hub_error_handler(_: Request, error: HubError) -> JSONResponse:
@@ -126,72 +173,12 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
     return app
 
 
-def _bootstrap_admin(settings: HubSettings) -> None:
-    """Seed the first admin account and persist its one-time credential.
-
-    The credential file is written *before* the account is committed. On a fresh
-    container the data root is created by Docker as ``root:root``, so a hub-api
-    that cannot write there would otherwise commit an admin row whose password
-    nobody can read -- and every later start would skip seeding because a user
-    already exists, losing the credential for good. Failing before the commit
-    keeps this idempotent: fix the directory permissions, restart, and the
-    credential is written and the account seeded.
-    """
-    if settings.auth.mode != "required":
-        return
-    from hub_server.db import create_engine_and_session_factory
-    from hub_server.models import UserRecord
-    from hub_server.services.auth import hash_password
-
-    engine, session_factory = create_engine_and_session_factory(settings.database.url)
-    try:
-        with session_factory() as session:
-            if session.query(UserRecord).count() > 0:
-                return
-            password = secrets.token_urlsafe(18)
-            bootstrap_file = Path(settings.storage.root) / "bootstrap-admin.json"
-            try:
-                bootstrap_file.parent.mkdir(parents=True, exist_ok=True)
-                bootstrap_file.write_text(
-                    json.dumps({"username": "admin", "password": password}, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                bootstrap_file.chmod(0o600)
-            except OSError:
-                _LOGGER.error(
-                    "cannot persist the bootstrap admin credential to %s; skipping admin "
-                    "creation, so a restart after fixing that directory seeds it again",
-                    bootstrap_file,
-                    exc_info=True,
-                )
-                return
-            session.add(
-                UserRecord(
-                    username="admin",
-                    password_hash=hash_password(password),
-                    role="admin",
-                    must_change_password=True,
-                )
-            )
-            session.commit()
-            _LOGGER.info("初始管理员凭据已写入 %s", bootstrap_file)
-    finally:
-        engine.dispose()
-
-
 def _error_response(
     code: str, message: str, status_code: int, details: dict[str, object] | None = None
 ) -> JSONResponse:
     """Serialize one client-safe failure envelope."""
     payload = ErrorResponse(error=ErrorBody(code=code, message=message, details=details))
-    response = JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
-    # Throttled login responses must tell a well-behaved client when to retry,
-    # so the wait is a header rather than something to parse out of the body.
-    if status_code == 429 and details is not None:
-        retry_after = details.get("retry_after_seconds")
-        if isinstance(retry_after, int) and retry_after > 0:
-            response.headers["Retry-After"] = str(retry_after)
-    return response
+    return JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
 
 
 def _http_error_code_and_message(status_code: int) -> tuple[str, str]:
