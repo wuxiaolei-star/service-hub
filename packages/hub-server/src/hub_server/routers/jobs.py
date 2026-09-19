@@ -90,10 +90,63 @@ def create_job(
 @router.get("", response_model=JobListResponse)
 def list_jobs(
     session: Annotated[Session, Depends(get_session)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
+    status_filter: Annotated[list[str] | None, Query(alias="status")] = None,
+    plugin_id: Annotated[str | None, Query(max_length=64)] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> JobListResponse:
-    """Return recent Jobs."""
-    jobs = session.scalars(select(Job).order_by(Job.created_at.desc()).limit(100)).all()
-    return JobListResponse(items=[_job_response(job) for job in jobs])
+    """Return filtered Jobs newest-first with the total matching the filters."""
+    jobs, total = JobService(session, storage, settings).list_jobs(
+        status=status_filter,
+        plugin_id=plugin_id,
+        limit=limit,
+        offset=offset,
+    )
+    return JobListResponse(items=[_job_response(job) for job in jobs], total=total)
+
+
+@router.post(
+    "/{job_key}/rerun",
+    response_model=JobResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("operator"))],
+)
+def rerun_job(
+    actor: Annotated[Actor, Depends(get_actor)],
+    http_request: Request,
+    job_key: str,
+    session: Annotated[Session, Depends(get_session)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
+) -> JobResponse:
+    """Replay one terminal Job's snapshot as a fresh pending Job."""
+    service = JobService(session, storage, settings)
+    original = service.terminal_job(job_key)
+    plugin_version = original.plugin_build.plugin_version
+    job = service.create(
+        plugin_id=plugin_version.plugin.plugin_key,
+        version=plugin_version.version,
+        runtime_type=cast(RuntimeType, original.runtime_type),
+        inputs=original.inputs_json,
+        params=original.params_json,
+        owner_user_id=actor.id if actor.kind == "user" else None,
+        replayed_from=original.job_key,
+    )
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="job.rerun",
+        resource_type="job",
+        resource_id=job.job_key,
+        detail={"replayed_from": original.job_key},
+        ip=actor_ip(http_request),
+    )
+    session.commit()
+    return _job_response(job)
 
 
 @router.get("/{job_key}", response_model=JobResponse)
@@ -184,6 +237,7 @@ def _job_response(job: Job) -> JobResponse:
         status=JobStatus(job.status),
         cancel_requested=job.cancel_requested,
         error_summary=job.error_summary,
+        replayed_from=job.replayed_from,
         created_at=_utc_timestamp(job.created_at),
         started_at=_utc_timestamp(job.started_at) if job.started_at is not None else None,
         finished_at=_utc_timestamp(job.finished_at) if job.finished_at is not None else None,

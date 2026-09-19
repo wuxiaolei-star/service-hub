@@ -113,6 +113,7 @@ class JobResponse(BaseModel):
     status: JobStatus
     cancel_requested: bool = False
     error_summary: str | None = None
+    replayed_from: str | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -120,6 +121,7 @@ class JobResponse(BaseModel):
 
 class JobListResponse(BaseModel):
     items: list[JobResponse]
+    total: int = 0
 
 
 class FileListResponse(BaseModel):

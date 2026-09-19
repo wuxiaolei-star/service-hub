@@ -201,6 +201,8 @@ class Job(Base):
     )
     exit_code: Mapped[int | None] = mapped_column(nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # job_key of the original Job when this row was created by a rerun.
+    replayed_from: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, onupdate=_utc_now

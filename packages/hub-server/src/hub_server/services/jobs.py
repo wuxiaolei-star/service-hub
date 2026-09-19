@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import cast
 
 from python_hub_contracts import JobStatus, PluginManifest, RuntimeType
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
 from hub_server.errors import HubError
@@ -15,6 +15,13 @@ from hub_server.models import FileRecord, Job, Plugin, PluginBuild, PluginVersio
 from hub_server.services.workspaces import JobWorkspaceService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
+
+_TERMINAL_STATUSES = {
+    JobStatus.SUCCESS.value,
+    JobStatus.FAILED.value,
+    JobStatus.CANCELLED.value,
+    JobStatus.TIMED_OUT.value,
+}
 
 
 class JobService:
@@ -34,6 +41,7 @@ class JobService:
         inputs: Mapping[str, object],
         params: Mapping[str, object],
         owner_user_id: int | None = None,
+        replayed_from: str | None = None,
     ) -> Job:
         selected_runtime: RuntimeType = runtime_type or "docker"
         build = self._resolve_enabled_build(plugin_id, version, selected_runtime)
@@ -50,6 +58,7 @@ class JobService:
             timeout_seconds=manifest.execution.timeout,
             cancel_requested=False,
             owner_user_id=owner_user_id,
+            replayed_from=replayed_from,
         )
         try:
             self._session.add(job)
@@ -71,16 +80,52 @@ class JobService:
 
     def cancel(self, job_key: str) -> Job:
         job = self._get_job(job_key)
-        if job.status not in {
-            JobStatus.SUCCESS.value,
-            JobStatus.FAILED.value,
-            JobStatus.CANCELLED.value,
-            JobStatus.TIMED_OUT.value,
-        }:
+        if job.status not in _TERMINAL_STATUSES:
             job.cancel_requested = True
             self._session.commit()
             self._session.refresh(job)
         return job
+
+    def terminal_job(self, job_key: str) -> Job:
+        """Return a terminal Job, or raise the stable rerun precondition errors."""
+        job = self._get_job(job_key)
+        if job.status not in _TERMINAL_STATUSES:
+            raise HubError(
+                code="JOB_NOT_TERMINAL",
+                message="Job 尚未结束，不能重跑",  # noqa: RUF001
+                status_code=409,
+            )
+        return job
+
+    def list_jobs(
+        self,
+        *,
+        status: Sequence[str] | None = None,
+        plugin_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[Job], int]:
+        """Return filtered Jobs newest-first plus the total matching the filters."""
+        conditions: list[ColumnElement[bool]] = []
+        if status:
+            conditions.append(Job.status.in_(list(status)))
+        stmt = select(Job)
+        if plugin_id is not None:
+            stmt = (
+                stmt.join(Job.plugin_build)
+                .join(PluginBuild.plugin_version)
+                .join(PluginVersion.plugin)
+            )
+            conditions.append(Plugin.plugin_key == plugin_id)
+        if conditions:
+            stmt = stmt.where(*conditions)
+        total = self._session.scalar(select(func.count()).select_from(stmt.subquery()))
+        jobs = list(
+            self._session.scalars(
+                stmt.order_by(Job.created_at.desc(), Job.id.desc()).limit(limit).offset(offset)
+            )
+        )
+        return jobs, int(total or 0)
 
     def logs(
         self, job_key: str, *, cursor: int, limit: int
