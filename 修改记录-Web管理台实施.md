@@ -336,3 +336,17 @@ web **192 passed** + typecheck/lint/build；compose config 通过。
 **质量门**：python 非集成 **899 passed / 0 failed**；ruff/mypy strict 77 文件无问题；
 compose config 通过。web 192 passed（V3.2 基线，V3.3 无前端改动）。
 服务说明：`docs/service-docs/服务说明-V3.3.md`。
+
+---
+
+# V4.0 Phase 1 功能插件化内核（2026-09-14，spec 6f5cff3 / plan aefae2d）
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 内核基础设施 | d480fac | kernel/protocol.py（FeaturePlugin/BaseFeaturePlugin/EventEnvelope/EventBinding/SchedulerTaskSpec/RouterMount/PluginContext）；kernel/registry.py（resolve_plugins 拓扑排序+依赖闭包校验）；kernel/events.py（EventBus 进程内同步+SQLite outbox）；HubEvent 模型 + 迁移 0010；9 新测试 |
+| Task 2 前置迁移+耦合解除 | 518f7c4 | 解除 jobs.pipeline_run_id FK（逻辑引用）；_file_response 保留在 files.py（后续下沉）；恢复 pipeline_run_id 类型 |
+| Task 3+4 插件拆分 | 386a02f | schedules + webhooks 包装为 FeaturePlugin 子类；main.py 从硬编码 include_router 改为按插件声明挂载 |
+| Task 5 回归+文档 | 本次 | 全量 451/0；服务说明-V4.0-alpha.md；修改记录 |
+
+**质量门**：python 非集成 451 passed / 0 failed（含 9 内核测试）；ruff/mypy strict 通过。
+**待做**：Phase 1 剩余插件拆分（catalog/jobs/files/audit）+ 前端能力动态化。
