@@ -35,3 +35,8 @@ export async function changePassword(oldPassword: string, newPassword: string): 
 export function isUnauthorized(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 401
 }
+
+/** Send the browser back to the login page after a session-expiring 401. */
+export function redirectToLogin(): void {
+  window.location.assign('/login')
+}

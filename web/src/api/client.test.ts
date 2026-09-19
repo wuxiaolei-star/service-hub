@@ -1,7 +1,7 @@
 import { AxiosError, AxiosHeaders, type AxiosProgressEvent } from 'axios'
 import { afterEach, vi } from 'vitest'
 
-import { apiClient, toHubApiError } from './client'
+import { apiClient, handleUnauthorized, toHubApiError } from './client'
 import { downloadFile, getFileMetadata, listFiles, uploadFile } from './files'
 import {
   disablePluginBuild,
@@ -15,6 +15,13 @@ import {
 import { getHealth, getSystemInfo } from './system'
 import { cancelJob, createJob, getJob, getJobLogs, getJobOutputs, listJobs } from './jobs'
 import { queryKeys } from '../hooks/queryKeys'
+
+const redirectToLoginMock = vi.hoisted(() => vi.fn())
+
+vi.mock('./auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./auth')>()),
+  redirectToLogin: redirectToLoginMock,
+}))
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -190,6 +197,55 @@ describe('public endpoint contracts', () => {
 
     expect(get).toHaveBeenNthCalledWith(1, '/system/health')
     expect(get).toHaveBeenNthCalledWith(2, '/system/info')
+  })
+})
+
+describe('unauthorized request handling', () => {
+  const originalAdapter = apiClient.defaults.adapter
+
+  const unauthorized = (url: string) => {
+    const config = { url, headers: new AxiosHeaders() }
+    return new AxiosError('Request failed with status code 401', undefined, config, undefined, {
+      data: {},
+      status: 401,
+      statusText: 'Unauthorized',
+      headers: {},
+      config,
+    })
+  }
+
+  afterEach(() => {
+    apiClient.defaults.adapter = originalAdapter
+    redirectToLoginMock.mockClear()
+  })
+
+  test('flags 401 failures outside the login call only', () => {
+    expect(handleUnauthorized(unauthorized('/jobs'))).toBe(true)
+    expect(handleUnauthorized(unauthorized('/auth/me'))).toBe(true)
+    expect(handleUnauthorized(unauthorized('/auth/login'))).toBe(false)
+    expect(handleUnauthorized(new AxiosError('Network Error'))).toBe(false)
+    expect(handleUnauthorized(new Error('请求失败'))).toBe(false)
+  })
+
+  test('sends the browser to /login and still rejects with a HubApiError', async () => {
+    apiClient.defaults.adapter = () => Promise.reject(unauthorized('/jobs'))
+
+    await expect(apiClient.get('/jobs')).rejects.toEqual({
+      code: 'HTTP_ERROR',
+      message: 'Request failed with status code 401',
+      status: 401,
+    })
+    expect(redirectToLoginMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps a failed login attempt on the login page', async () => {
+    apiClient.defaults.adapter = () => Promise.reject(unauthorized('/auth/login'))
+
+    await expect(apiClient.post('/auth/login', {})).rejects.toMatchObject({
+      code: 'HTTP_ERROR',
+      status: 401,
+    })
+    expect(redirectToLoginMock).not.toHaveBeenCalled()
   })
 })
 

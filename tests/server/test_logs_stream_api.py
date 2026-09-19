@@ -149,6 +149,25 @@ def _complete_job_later(
     return timer
 
 
+def _append_log_lines_later(
+    client: TestClient,
+    job_key: str,
+    messages: list[str],
+    *,
+    delay_seconds: float,
+) -> threading.Timer:
+    """Append more runner events to events.jsonl while the stream is open."""
+
+    def append() -> None:
+        log_path = client.app.state.storage.open_relative(f"jobs/{job_key}/logs/events.jsonl")
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write("".join(_event_line(message) for message in messages))
+
+    timer = threading.Timer(delay_seconds, append)
+    timer.daemon = True
+    return timer
+
+
 def _collect_stream(
     client: TestClient,
     url: str,
@@ -255,6 +274,40 @@ def test_stream_running_job_delivers_log_events_before_disconnect(
         names = [name for name, _data in events]
         assert names == ["log", "log", "log"]
         assert _log_messages(events) == ["m1", "m2", "m3"]
+
+
+def test_stream_running_job_streams_appended_lines_once(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        headers = _viewer_headers(client)
+        _seed_job(
+            client,
+            "job_stream_append",
+            status="RUNNING",
+            messages=["m1", "m2"],
+        )
+        appended = _append_log_lines_later(
+            client,
+            "job_stream_append",
+            ["m3", "m4"],
+            delay_seconds=0.5,
+        )
+        timer = _complete_job_later(client, "job_stream_append", delay_seconds=1.5)
+        appended.start()
+        timer.start()
+        lines = _collect_stream(
+            client,
+            "/api/v1/jobs/job_stream_append/logs/stream",
+            headers,
+        )
+        appended.join()
+        timer.join()
+
+        events = _parse_sse(lines)
+        names = [name for name, _data in events]
+        assert names == ["log", "log", "log", "log", "end"]
+        # Every written line is delivered exactly once, in write order: the
+        # pre-existing lines are not re-sent after the append.
+        assert _log_messages(events) == ["m1", "m2", "m3", "m4"]
 
 
 def test_stream_terminal_job_sends_end_after_logs(tmp_path: Path) -> None:
