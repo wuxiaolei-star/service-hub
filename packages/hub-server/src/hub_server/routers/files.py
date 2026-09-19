@@ -50,8 +50,15 @@ class _StreamedUpload(NamedTuple):
     stored: StoredUpload
 
 
+def _utc_timestamp(value: datetime) -> datetime:
+    """Normalize SQLite's timezone-naive values for the public UTC contract."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _file_response(record: FileRecord) -> FileResponse:
-    """Map persisted file metadata into the stable HTTP representation."""
+    """Build the public file metadata response from a FileRecord."""
     return FileResponse(
         file_id=record.file_key,
         name=record.logical_name,
@@ -59,16 +66,9 @@ def _file_response(record: FileRecord) -> FileResponse:
         sha256=record.sha256,
         extension=record.extension,
         mime_type=record.mime_type,
-        status="AVAILABLE",
+        status=record.status,  # type: ignore[arg-type]
         created_at=_utc_timestamp(record.created_at),
     )
-
-
-def _utc_timestamp(value: datetime) -> datetime:
-    """Normalize SQLite's timezone-naive values for the public UTC contract."""
-    if value.tzinfo is None or value.utcoffset() is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
 
 
 def _file_service(session: Session, storage: LocalStorage, settings: HubSettings) -> FileService:

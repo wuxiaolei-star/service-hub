@@ -197,8 +197,8 @@ class Job(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     pipeline_run_id: Mapped[int | None] = mapped_column(
-        ForeignKey("pipeline_runs.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+        nullable=True, index=True
+    )  # logical reference to pipeline_runs.id (FK removed for plugin independence)
     exit_code: Mapped[int | None] = mapped_column(nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # job_key of the original Job when this row was created by a rerun.

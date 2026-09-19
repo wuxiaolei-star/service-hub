@@ -18,7 +18,10 @@ depends_on: Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create hub_events outbox table."""
+    """Create hub_events outbox table and decouple jobs from pipeline_runs."""
+    with op.batch_alter_table("jobs") as batch:
+        batch.drop_constraint("fk_jobs_pipeline_run", type_="foreignkey")
+        batch.drop_index("ix_jobs_pipeline_run_id")
     op.create_table(
         "hub_events",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -35,5 +38,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove hub_events outbox table."""
+    """Remove hub_events outbox table and restore pipeline FK."""
+    with op.batch_alter_table("jobs") as batch:
+        batch.create_foreign_key(
+            "fk_jobs_pipeline_run", "pipeline_runs", ["pipeline_run_id"], ["id"],
+            ondelete="SET NULL",
+        )
+        batch.create_index("ix_jobs_pipeline_run_id", ["pipeline_run_id"])
     op.drop_table("hub_events")
