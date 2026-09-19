@@ -26,6 +26,8 @@ const enabledRow: ScheduleRow = {
   version: '1.0.0',
   runtime_type: 'docker',
   interval_minutes: 60,
+  cron_expr: null,
+  missed_run_policy: 'skip',
   enabled: true,
   next_run_at: '2026-09-13T18:00:00Z',
   last_job_id: 'job-9',

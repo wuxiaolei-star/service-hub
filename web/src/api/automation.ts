@@ -8,6 +8,8 @@ export interface ScheduleRow {
   version: string
   runtime_type: RuntimeType
   interval_minutes: number
+  cron_expr: string | null
+  missed_run_policy: string
   enabled: boolean
   next_run_at: string | null
   last_job_id: string | null
@@ -20,7 +22,9 @@ export interface ScheduleCreateRequest {
   runtime_type: RuntimeType
   inputs: Record<string, unknown>
   params: Record<string, unknown>
-  interval_minutes: number
+  interval_minutes?: number
+  cron_expr?: string
+  missed_run_policy?: string
 }
 
 export interface PipelineStep {

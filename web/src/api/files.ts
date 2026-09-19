@@ -12,12 +12,44 @@ function uploadProgressHandler(onProgress?: UploadProgressHandler) {
 }
 
 export async function uploadFile(file: File, onProgress?: UploadProgressHandler): Promise<FileRecord> {
+  if (file.size > 10 * 1024 * 1024) {
+    return uploadFileChunked(file, onProgress)
+  }
   const formData = new FormData()
   formData.append('file', file)
   const response = await apiClient.post<FileRecord>('/files', formData, {
     onUploadProgress: uploadProgressHandler(onProgress),
   })
   return response.data
+}
+
+const CHUNK_SIZE = 5 * 1024 * 1024 // 5 MB
+
+async function uploadFileChunked(file: File, onProgress?: UploadProgressHandler): Promise<FileRecord> {
+  const init = await apiClient.post<{ upload_id: string }>('/files/chunk/init', {
+    filename: file.name,
+    total_size: file.size,
+  })
+  const uploadId = init.data.upload_id
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
+
+  for (let index = 0; index < totalChunks; index++) {
+    const start = index * CHUNK_SIZE
+    const end = Math.min(start + CHUNK_SIZE, file.size)
+    const chunk = file.slice(start, end)
+    const chunkData = await chunk.arrayBuffer()
+    await apiClient.put(`/files/chunk/${uploadId}/${index}`, chunkData, {
+      headers: { 'Content-Type': 'application/octet-stream' },
+    })
+    onProgress?.(Math.round(((index + 1) / totalChunks) * 90))
+  }
+
+  const complete = await apiClient.post<FileRecord>(`/files/chunk/${uploadId}/complete`, {
+    filename: file.name,
+    total_chunks: totalChunks,
+  })
+  onProgress?.(100)
+  return complete.data
 }
 
 export async function listFiles(): Promise<FileListResponse> {
