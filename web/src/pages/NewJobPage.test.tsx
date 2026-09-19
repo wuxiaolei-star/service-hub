@@ -134,6 +134,7 @@ describe('NewJobPage', () => {
       created_at: '2026-09-13T09:00:00Z',
       started_at: null,
       finished_at: null,
+      replayed_from: null,
     })
 
     const user = userEvent.setup()

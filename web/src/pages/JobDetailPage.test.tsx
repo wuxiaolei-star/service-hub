@@ -3,8 +3,8 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, test, vi } from 'vitest'
 import JobDetailPage from './JobDetailPage'
-import { cancelJob, getJob, getJobLogs, getJobOutputs } from '../api/jobs'
-import { listJobCallbacks } from '../api/automation'
+import { cancelJob, getJob, getJobLogs, getJobOutputs, rerunJob } from '../api/jobs'
+import { listJobCallbacks, replayCallback } from '../api/automation'
 import type { CallbackRow } from '../api/automation'
 import { downloadFile } from '../api/files'
 import { setEventSourceFactory } from '../hooks/useJobLogStream'
@@ -24,15 +24,18 @@ vi.mock('../api/jobs', () => ({
   cancelJob: vi.fn(),
   getJobLogs: vi.fn(),
   getJobOutputs: vi.fn(),
+  rerunJob: vi.fn(),
 }))
-vi.mock('../api/automation', () => ({ listJobCallbacks: vi.fn() }))
+vi.mock('../api/automation', () => ({ listJobCallbacks: vi.fn(), replayCallback: vi.fn() }))
 vi.mock('../api/files', () => ({ downloadFile: vi.fn() }))
 
 const mockedGetJob = vi.mocked(getJob)
 const mockedCancelJob = vi.mocked(cancelJob)
 const mockedGetJobLogs = vi.mocked(getJobLogs)
 const mockedGetJobOutputs = vi.mocked(getJobOutputs)
+const mockedRerunJob = vi.mocked(rerunJob)
 const mockedListJobCallbacks = vi.mocked(listJobCallbacks)
+const mockedReplayCallback = vi.mocked(replayCallback)
 const mockedDownloadFile = vi.mocked(downloadFile)
 
 const runningJob: Job = {
@@ -47,6 +50,7 @@ const runningJob: Job = {
   created_at: '2026-09-13T09:00:00Z',
   started_at: '2026-09-13T09:00:05Z',
   finished_at: null,
+  replayed_from: null,
 }
 
 const failedJob: Job = { ...runningJob, status: 'FAILED', error_summary: '插件执行失败' }
@@ -227,5 +231,53 @@ describe('JobDetailPage', () => {
     renderPage()
 
     expect(await screen.findByText('无回调注册')).toBeInTheDocument()
+  }, 15000)
+
+  test('offers rerun for terminal jobs and navigates to the replayed job', async () => {
+    mockedGetJob.mockResolvedValue(failedJob)
+    mockedRerunJob.mockResolvedValue({
+      ...failedJob,
+      job_id: 'job-new',
+      status: 'PENDING',
+      error_summary: null,
+      replayed_from: 'job-1',
+    })
+    const user = userEvent.setup()
+
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: '按原参数重跑' }))
+
+    await waitFor(() => expect(mockedRerunJob).toHaveBeenCalledWith('job-1'))
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/jobs/job-new'))
+  }, 15000)
+
+  test('replays exhausted callbacks', async () => {
+    mockedGetJob.mockResolvedValue(runningJob)
+    mockedListJobCallbacks.mockResolvedValue({ items: [callbackRow] })
+    mockedReplayCallback.mockResolvedValue({
+      ...callbackRow,
+      state: 'PENDING',
+      attempts: 0,
+      last_status_code: null,
+    })
+    const user = userEvent.setup()
+
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: /重\s*放/ }))
+
+    await waitFor(() => expect(mockedReplayCallback).toHaveBeenCalledWith('job-1', 1))
+  }, 15000)
+
+  test('renders a progress bar from the latest progress event', async () => {
+    mockedGetJob.mockResolvedValue(runningJob)
+    mockedGetJobLogs.mockResolvedValue({
+      items: [{ type: 'progress', message: '转换中', percent: 60 }],
+      next_cursor: null,
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('60%')).toBeInTheDocument()
+    expect(document.querySelector('.ant-progress-line')).not.toBeNull()
   }, 15000)
 })

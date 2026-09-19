@@ -145,6 +145,7 @@ export interface Job {
   created_at: string
   started_at: IsoTimestamp
   finished_at: IsoTimestamp
+  replayed_from: string | null
 }
 
 export interface JobCancelResponse {
@@ -165,7 +166,11 @@ export interface ListResponse<T> {
 export type PluginListResponse = ListResponse<PluginSummary>
 export type PluginBuildListResponse = ListResponse<PluginBuild>
 export type FileListResponse = ListResponse<FileRecord>
-export type JobListResponse = ListResponse<Job>
 export type JobOutputsResponse = ListResponse<FileRecord>
+
+export interface JobListResponse {
+  items: Job[]
+  total: number
+}
 
 export type UploadProgressHandler = (percent: number) => void

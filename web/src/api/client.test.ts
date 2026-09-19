@@ -180,7 +180,10 @@ describe('public endpoint contracts', () => {
       version: '1.0.0',
       inputs: {},
     })
-    expect(get).toHaveBeenNthCalledWith(4, '/jobs')
+    expect(get).toHaveBeenNthCalledWith(4, '/jobs', {
+      params: {},
+      paramsSerializer: expect.anything(),
+    })
     expect(get).toHaveBeenNthCalledWith(5, '/jobs/job%2Fone')
     expect(post).toHaveBeenNthCalledWith(2, '/jobs/job%2Fone/cancel')
     expect(get).toHaveBeenNthCalledWith(6, '/jobs/job%2Fone/logs', {

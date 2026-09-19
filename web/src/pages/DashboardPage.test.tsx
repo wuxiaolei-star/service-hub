@@ -32,7 +32,7 @@ describe('DashboardPage', () => {
       { build_id: 'build-1', plugin_id: 'nc-to-shp', version: '1.0.0', runtime_type: 'docker', target_os: 'linux', target_arch: 'amd64', status: 'ENABLED', package_sha256: 'a', runtime_fingerprint: 'b', error_summary: null },
       { build_id: 'build-2', plugin_id: 'nc-to-shp', version: '1.0.0', runtime_type: 'conda-pack', target_os: 'linux', target_arch: 'amd64', status: 'READY', package_sha256: 'a', runtime_fingerprint: 'b', error_summary: null },
     ] })
-    mockedListJobs.mockResolvedValue({ items: [{ job_id: 'job-1', plugin_id: 'nc-to-shp', version: '1.0.0', build_id: 'build-1', runtime_type: 'docker', status: 'SUCCESS', cancel_requested: false, error_summary: null, created_at: '2026-09-13T08:00:00Z', started_at: null, finished_at: null }] })
+    mockedListJobs.mockResolvedValue({ items: [{ job_id: 'job-1', plugin_id: 'nc-to-shp', version: '1.0.0', build_id: 'build-1', runtime_type: 'docker', status: 'SUCCESS', cancel_requested: false, error_summary: null, created_at: '2026-09-13T08:00:00Z', started_at: null, finished_at: null, replayed_from: null }], total: 1 })
 
     renderPage()
 
@@ -58,7 +58,7 @@ describe('DashboardPage', () => {
   test('offers retry after a summary request fails', async () => {
     mockedListPlugins.mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce({ items: [] })
     mockedListPluginBuilds.mockResolvedValue({ items: [] })
-    mockedListJobs.mockResolvedValue({ items: [] })
+    mockedListJobs.mockResolvedValue({ items: [], total: 0 })
 
     const { user } = renderPage() as ReturnType<typeof render> & { user?: never }
     expect(await screen.findByRole('alert')).toHaveTextContent('network down')

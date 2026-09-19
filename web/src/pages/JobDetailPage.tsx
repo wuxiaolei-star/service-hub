@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Alert, Button, Card, Descriptions, Popconfirm, Space, Table, Tag } from 'antd'
+import { Alert, Button, Card, Descriptions, message, Popconfirm, Progress, Space, Table, Tag } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { downloadFile } from '../api/files'
-import { listJobCallbacks } from '../api/automation'
+import { listJobCallbacks, replayCallback } from '../api/automation'
 import type { CallbackRow } from '../api/automation'
 import { toHubApiError } from '../api/errors'
-import { cancelJob, getJob, getJobOutputs } from '../api/jobs'
+import { cancelJob, getJob, getJobOutputs, rerunJob } from '../api/jobs'
 import EmptyState from '../components/EmptyState'
 import HubErrorAlert from '../components/HubErrorAlert'
 import JobLogViewer from '../components/JobLogViewer'
@@ -26,6 +26,8 @@ const ACTIVE_STATUSES: ReadonlySet<JobStatus> = new Set([
   'RUNNING',
   'CANCEL_REQUESTED',
 ])
+
+const REPLAYABLE_CALLBACK_STATES: ReadonlySet<CallbackRow['state']> = new Set(['EXHAUSTED', 'FAILED'])
 
 const CALLBACK_STATE_COLORS: Record<CallbackRow['state'], string> = {
   PENDING: 'default',
@@ -67,6 +69,17 @@ export default function JobDetailPage() {
     ? logs.isLoading && logs.events.length === 0 && stream.events.length === 0
     : stream.isLoading
 
+  // Latest runner progress event (0-100) reported over the log stream/poll.
+  const lastPercent: number | null = (() => {
+    for (let index = logEvents.length - 1; index >= 0; index -= 1) {
+      const event = logEvents[index]
+      if (event.type === 'progress' && typeof event.percent === 'number') {
+        return event.percent
+      }
+    }
+    return null
+  })()
+
   const outputs = useQuery({
     queryKey: queryKeys.jobs.outputs(jobId ?? 'none'),
     queryFn: () => getJobOutputs(jobId as string),
@@ -83,6 +96,29 @@ export default function JobDetailPage() {
     mutationFn: () => cancelJob(jobId as string),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(jobId ?? 'none') })
+    },
+  })
+
+  const rerun = useMutation({
+    mutationFn: (jobKey: string) => rerunJob(jobKey),
+    onSuccess: (created) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.list() })
+      message.success(`已创建重跑任务 ${created.job_id}`)
+      navigate(`/jobs/${created.job_id}`)
+    },
+    onError: (error) => {
+      message.error(toHubApiError(error).message)
+    },
+  })
+
+  const replay = useMutation({
+    mutationFn: (callbackId: number) => replayCallback(jobId as string, callbackId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.callbacks(jobId ?? 'none') })
+      message.success('回调已重新排队')
+    },
+    onError: (error) => {
+      message.error(toHubApiError(error).message)
     },
   })
 
@@ -124,6 +160,20 @@ export default function JobDetailPage() {
       title: '最近状态码',
       dataIndex: 'last_status_code',
       render: (value: number | null) => (value === null ? '-' : value),
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      render: (_, record) =>
+        REPLAYABLE_CALLBACK_STATES.has(record.state) ? (
+          <Button
+            size="small"
+            loading={replay.isPending && replay.variables === record.id}
+            onClick={() => replay.mutate(record.id)}
+          >
+            重放
+          </Button>
+        ) : null,
     },
   ]
 
@@ -180,16 +230,30 @@ export default function JobDetailPage() {
             <span>
               耗时 {formatDuration(data.created_at, data.started_at, data.finished_at, Date.now())}
             </span>
+            {!isActive && (
+              <Button
+                loading={rerun.isPending}
+                onClick={() => rerun.mutate(data.job_id)}
+              >
+                按原参数重跑
+              </Button>
+            )}
             {data.cancel_requested && (
               <Alert type="warning" showIcon message="已请求取消，等待 Runner 结束" />
             )}
           </Space>
+          {isActive && lastPercent !== null && (
+            <Progress percent={lastPercent} size="small" aria-label="任务进度" />
+          )}
           <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
             <Descriptions.Item label="插件">{data.plugin_id}</Descriptions.Item>
             <Descriptions.Item label="版本">{data.version}</Descriptions.Item>
             <Descriptions.Item label="Build">{data.build_id}</Descriptions.Item>
             <Descriptions.Item label="开始时间">{formatDateTime(data.started_at)}</Descriptions.Item>
             <Descriptions.Item label="结束时间">{formatDateTime(data.finished_at)}</Descriptions.Item>
+            {data.replayed_from !== null && (
+              <Descriptions.Item label="重跑自">{data.replayed_from}</Descriptions.Item>
+            )}
           </Descriptions>
           {data.status === 'FAILED' && data.error_summary !== null && (
             <Alert type="error" showIcon message="任务失败" description={data.error_summary} />
@@ -198,7 +262,7 @@ export default function JobDetailPage() {
       </Card>
 
       <Card title="运行日志" style={{ marginBottom: 16 }}>
-        <JobLogViewer events={logEvents} isLoading={logLoading} />
+        <JobLogViewer events={logEvents} isLoading={logLoading} jobKey={jobId} />
       </Card>
 
       <Card title="Webhook 回调" style={{ marginBottom: 16 }}>

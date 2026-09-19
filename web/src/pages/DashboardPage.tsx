@@ -28,7 +28,7 @@ const jobColumns: ColumnsType<Job> = [
 export default function DashboardPage() {
   const plugins = useQuery({ queryKey: queryKeys.plugins.list(), queryFn: listPlugins })
   const builds = useQuery({ queryKey: queryKeys.plugins.builds(), queryFn: () => listPluginBuilds() })
-  const jobs = useQuery({ queryKey: queryKeys.jobs.list(), queryFn: listJobs })
+  const jobs = useQuery({ queryKey: queryKeys.jobs.list(), queryFn: () => listJobs() })
   const isLoading = plugins.isLoading || builds.isLoading || jobs.isLoading
   const error = plugins.error ?? builds.error ?? jobs.error
   const summary = useMemo(() => {

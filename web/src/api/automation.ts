@@ -101,6 +101,14 @@ export async function listJobCallbacks(jobKey: string): Promise<ListResponse<Cal
   return response.data
 }
 
+/** Re-queue one webhook callback: it returns to PENDING with attempts reset. */
+export async function replayCallback(jobKey: string, callbackId: number): Promise<CallbackRow> {
+  const response = await apiClient.post<CallbackRow>(
+    `/jobs/${encodeURIComponent(jobKey)}/callbacks/${callbackId}/replay`,
+  )
+  return response.data
+}
+
 export async function createPipeline(request: PipelineCreateRequest): Promise<PipelineRow> {
   const response = await apiClient.post<PipelineRow>('/pipelines', request)
   return response.data

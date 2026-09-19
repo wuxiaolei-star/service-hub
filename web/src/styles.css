@@ -130,3 +130,11 @@ button:focus-visible,
     padding: 16px;
   }
 }
+
+.job-log-viewer .log-line-error {
+  color: #f87171;
+}
+
+.job-log-viewer .log-line-warning {
+  color: #fbbf24;
+}
