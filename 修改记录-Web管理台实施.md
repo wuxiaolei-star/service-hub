@@ -279,3 +279,24 @@ Task 3/4/6 主会话独立验收后提交）；主会话负责 Task 1/5/7。
 | 本次 | V3.0 服务说明与部署验收清单、README、文档一致性测试 |
 
 Linux 侧待验收项同样列入 `docs/service-docs/V3.0-部署验收清单.md` 第 1 节。
+
+---
+
+# V3.1 稳定性与正确性（2026-09-14，spec/plan 80f0981）
+
+| 任务 | 提交 | 内容 |
+| --- | --- | --- |
+| Task 1 生命周期+reaper | da475c8（含 Task 2 合入） | RetentionSettings 增 job_retention_days/audit_retention_days；sweep_terminal_jobs/sweep_expired_sessions/sweep_old_audit_logs 三组清理；reaper 僵尸 Job 回收（PREPARING/RUNNING 超时→TIMED_OUT）；scheduler 注册；35 新测试 |
+| Task 2 正确性修复 | 同上合入 | API Key 创建角色钳制（堵提权口子）；latest_version 点分整数排序（修 9.0>10.0 bug）；13 新测试 |
+| Task 3 SSE 增量读+401 | d7e7324 | logs_stream 字节偏移增量读（无缓冲 FileIO、残行跨轮、终态冲刷）；Web 全局 401 拦截跳登录（handleUnauthorized 纯函数+测试） |
+| Task 4 快修 | e6bec70 | metrics 30s 进程内缓存（_clear_metrics_cache 测试钩子）；compose 日志轮转 |
+| 真实 NC 验收 | 服务器执行 | 样本 159MB 上传→docker Job SUCCESS→39464 要素/EPSG:4326/组件集完整 |
+
+**实施方式**：Task 1/2/3 由三个子智能体并行完成（Task 2 因并发超限重发一次），
+主会话验收提交并完成 Task 4。Task 1 提交时因并行写同一目录连带收入了 Task 2 的
+进行中文件（代码已验证正确，提交信息已 amend 覆盖）。
+
+**质量门**：python 非集成 **841 passed / 0 failed**；ruff/mypy strict 76 文件无问题；
+web 179 passed + typecheck/lint/build；compose config 通过。
+**真实 NC docker 运行时验收通过**：39464 要素 / EPSG:4326 / 组件集完整。
+服务说明：`docs/service-docs/服务说明-V3.1.md`。
