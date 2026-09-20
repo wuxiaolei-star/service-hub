@@ -119,13 +119,46 @@ button:focus-visible,
 .app-header {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 8px;
   height: 64px;
   padding: 0 24px;
   border-bottom: 1px solid #dce8f5;
   background: #fff;
   color: #1f2937;
+}
+
+.app-content .kpi-card {
+  background: #f8fafc;
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.app-content .kpi-card .ant-card-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+
+.kpi-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #e6f1fb;
+  color: #185fa5;
+  font-size: 18px;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .app-content {

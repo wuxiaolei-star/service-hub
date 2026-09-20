@@ -16,8 +16,9 @@ import {
   FileSearchOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Layout, Menu, Space, Typography } from 'antd'
+import { Badge, Breadcrumb, Button, Layout, Menu, Space, Typography } from 'antd'
 import type { MenuProps } from 'antd'
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { getHealth } from '../api/system'
@@ -60,6 +61,35 @@ const menuItems: MenuProps['items'] = [
     ],
   },
 ]
+
+const ROUTE_TITLES: Record<string, string> = {
+  '/': '总览',
+  '/plugins': '插件',
+  '/registry': '仓库',
+  '/files': '文件',
+  '/jobs': '任务',
+  '/jobs/new': '新建任务',
+  '/schedules': '定时任务',
+  '/pipelines': '管道',
+  '/services': '服务',
+  '/system': '系统',
+  '/admin/users': '用户',
+  '/admin/api-keys': 'API Key',
+  '/admin/audit': '审计',
+}
+
+function breadcrumbItems(pathname: string) {
+  const items: { title: ReactNode }[] = [{ title: <Link to="/">总览</Link> }]
+  if (pathname === '/') return items
+  if (pathname.startsWith('/jobs/')) {
+    items.push({ title: <Link to="/jobs">任务</Link> })
+    items.push({ title: pathname === '/jobs/new' ? '新建任务' : '任务详情' })
+    return items
+  }
+  const title = ROUTE_TITLES[pathname]
+  if (title !== undefined) items.push({ title })
+  return items
+}
 
 function selectedMenuKey(pathname: string) {
   if (pathname.startsWith('/jobs/')) return '/jobs'
@@ -142,8 +172,9 @@ export default function AppLayout() {
       </Layout.Sider>
       <Layout>
         <Layout.Header className="app-header">
-          <Typography.Text type="secondary">服务状态</Typography.Text>
+          <Breadcrumb items={breadcrumbItems(pathname)} />
           <Space>
+            <Typography.Text type="secondary">服务状态</Typography.Text>
             <Badge status={healthStatus} text={healthLabel} />
             {me.data !== undefined && (
               <Typography.Text>

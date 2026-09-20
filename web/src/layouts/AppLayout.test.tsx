@@ -45,8 +45,9 @@ test('renders a pale, accessible, collapsible service navigation shell', async (
   expect(sidebar).not.toBeNull()
   expect(getComputedStyle(sidebar!).backgroundColor).toBe('rgb(234, 243, 255)')
   expect(screen.getByText('Service Hub')).toBeInTheDocument()
-  expect(screen.getByRole('navigation')).toHaveAttribute('id', 'main-navigation')
-  expect(within(screen.getByRole('navigation')).getByText('概览')).toBeInTheDocument()
+  const mainNav = document.querySelector<HTMLElement>('nav#main-navigation')
+  expect(mainNav).not.toBeNull()
+  expect(within(mainNav!).getByText('概览')).toBeInTheDocument()
   expect(getComputedStyle(screen.getByText('服务状态')).color).toBe('rgb(100, 116, 139)')
 
   await screen.findByText('已注册插件')
