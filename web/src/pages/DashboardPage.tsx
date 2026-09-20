@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Card, Col, Empty, Row, Segmented, Skeleton, Statistic, Table, Tooltip, Typography } from 'antd'
+import {
+  AppstoreOutlined,
+  CloudServerOutlined,
+  PlayCircleOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons'
+import { Card, Empty, Segmented, Skeleton, Statistic, Table, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { listJobs } from '../api/jobs'
 import { listPluginBuilds, listPlugins } from '../api/plugins'
@@ -47,8 +53,16 @@ export default function DashboardPage() {
       activeJobs: (jobs.data?.items ?? []).filter((item) =>
         ['PENDING', 'PREPARING', 'RUNNING', 'CANCEL_REQUESTED'].includes(item.status),
       ).length,
+      recentFinished: (jobs.data?.items ?? []).filter((item) =>
+        ['SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT'].includes(item.status),
+      ).length,
+      recentSuccesses: (jobs.data?.items ?? []).filter((item) => item.status === 'SUCCESS').length,
     }
   }, [builds.data, jobs.data, plugins.data])
+
+  const successRate = summary.recentFinished > 0
+    ? Math.round((summary.recentSuccesses / summary.recentFinished) * 100)
+    : null
 
   const recentItems = useMemo(() => {
     const statuses = RECENT_FILTERS.find((option) => option.value === recentFilter)?.statuses
@@ -100,12 +114,24 @@ export default function DashboardPage() {
         <Skeleton active paragraph={{ rows: 6 }} />
       ) : (
         <>
-          <Row gutter={[16, 16]}>
-            <Col xs={24} sm={12} xl={6}><Card><Statistic title="已注册插件" value={summary.pluginCount} /></Card></Col>
-            <Col xs={24} sm={12} xl={6}><Card><Statistic title="运行环境 Build" value={summary.buildCount} /></Card></Col>
-            <Col xs={24} sm={12} xl={6}><Card><Statistic title="可用 Build" value={`${summary.enabledBuilds + summary.readyBuilds}`} suffix={`已启用 ${summary.enabledBuilds} / 就绪 ${summary.readyBuilds}`} /></Card></Col>
-            <Col xs={24} sm={12} xl={6}><Card><Statistic title="进行中任务" value={summary.activeJobs} /></Card></Col>
-          </Row>
+          <div className="kpi-grid">
+            <Card className="kpi-card" onClick={() => navigate('/jobs')}>
+              <div className="kpi-icon"><PlayCircleOutlined /></div>
+              <Statistic title="进行中任务" value={summary.activeJobs} />
+            </Card>
+            <Card className="kpi-card">
+              <div className="kpi-icon"><ThunderboltOutlined /></div>
+              <Statistic title="最近成功率" value={successRate === null ? '--' : successRate} suffix={successRate === null ? '' : '%'} />
+            </Card>
+            <Card className="kpi-card" onClick={() => navigate('/plugins')}>
+              <div className="kpi-icon"><CloudServerOutlined /></div>
+              <Statistic title="运行环境 Build" value={summary.buildCount} suffix={`已启用 ${summary.enabledBuilds} / 就绪 ${summary.readyBuilds}`} />
+            </Card>
+            <Card className="kpi-card" onClick={() => navigate('/plugins')}>
+              <div className="kpi-icon"><AppstoreOutlined /></div>
+              <Statistic title="已注册插件" value={summary.pluginCount} />
+            </Card>
+          </div>
           <Card style={{ marginTop: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
               <Typography.Title level={4} style={{ margin: 0 }}>最近任务（最多 100 条）</Typography.Title>

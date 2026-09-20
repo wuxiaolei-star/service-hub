@@ -19,6 +19,9 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:8000',
           changeOrigin: true,
+          // The dev proxy may point at a staging host with a self-signed cert;
+          // production traffic never goes through this layer.
+          secure: false,
         },
       },
     },
