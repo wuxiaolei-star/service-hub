@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Button, message, Segmented, Select, Space, Table } from 'antd'
+import { Button, message, Segmented, Select, Space, Table, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useState } from 'react'
 import { listJobs, rerunJob } from '../api/jobs'
@@ -10,8 +10,9 @@ import PageHeader from '../components/PageHeader'
 import StatusTag from '../components/StatusTag'
 import { queryKeys } from '../hooks/queryKeys'
 import type { Job, JobStatus } from '../types/api'
-import { formatDateTime } from '../utils/format'
+import { shortJobId } from '../utils/format'
 import { formatDuration } from '../utils/jobTime'
+import { formatRelative } from '../utils/time'
 
 const PAGE_SIZE = 20
 
@@ -83,7 +84,22 @@ export default function JobsPage() {
   ).map((pluginId) => ({ label: pluginId, value: pluginId }))
 
   const columns: ColumnsType<Job> = [
-    { title: '任务 ID', dataIndex: 'job_id', ellipsis: true },
+    {
+      title: '任务 ID',
+      dataIndex: 'job_id',
+      render: (_, record) => (
+        <Tooltip title={record.job_id}>
+          <Typography.Text
+            code
+            copyable={{ text: record.job_id, tooltips: ['复制完整 ID', '已复制'] }}
+            style={{ cursor: 'pointer' }}
+            onClick={() => navigate(`/jobs/${record.job_id}`)}
+          >
+            {shortJobId(record.job_id)}
+          </Typography.Text>
+        </Tooltip>
+      ),
+    },
     { title: '插件', dataIndex: 'plugin_id' },
     { title: '版本', dataIndex: 'version' },
     {
@@ -99,7 +115,7 @@ export default function JobsPage() {
     {
       title: '创建时间',
       dataIndex: 'created_at',
-      render: (value: string) => formatDateTime(value),
+      render: (value: string) => <Tooltip title={value}>{formatRelative(value)}</Tooltip>,
     },
     {
       title: '耗时',

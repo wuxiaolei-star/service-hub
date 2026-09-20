@@ -16,6 +16,14 @@ export function formatFileSize(bytes: number): string {
   return `${formatted} ${FILE_SIZE_UNITS[unitIndex]}`
 }
 
+/**
+ * Compact display form of a job ID: long IDs keep a 14-char prefix so table
+ * columns stay readable; the full ID remains copyable next to it.
+ */
+export function shortJobId(jobId: string): string {
+  return jobId.length <= 14 ? jobId : jobId.slice(0, 14)
+}
+
 /** Render an ISO timestamp in the local timezone, or a dash for null/invalid values. */
 export function formatDateTime(iso: string | null | undefined): string {
   if (iso === null || iso === undefined || iso === '') {

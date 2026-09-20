@@ -16,7 +16,7 @@ import {
   FileSearchOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Layout, Menu, Space, Tag, Typography } from 'antd'
+import { Badge, Button, Layout, Menu, Space, Typography } from 'antd'
 import type { MenuProps } from 'antd'
 import { useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -25,24 +25,51 @@ import { fetchMe, logout } from '../api/auth'
 import { queryKeys } from '../hooks/queryKeys'
 
 const menuItems: MenuProps['items'] = [
-  { key: '/', icon: <AppstoreOutlined />, label: <Link to="/">概览</Link> },
-  { key: '/plugins', icon: <CloudOutlined />, label: <Link to="/plugins">插件</Link> },
-  { key: '/registry', icon: <CloudDownloadOutlined />, label: <Link to="/registry">仓库</Link> },
-  { key: '/files', icon: <FileOutlined />, label: <Link to="/files">文件</Link> },
-  { key: '/jobs/new', icon: <PlusCircleOutlined />, label: <Link to="/jobs/new">新建任务</Link> },
-  { key: '/jobs', icon: <HddOutlined />, label: <Link to="/jobs">任务</Link> },
-  { key: '/schedules', icon: <ScheduleOutlined />, label: <Link to="/schedules">定时任务</Link> },
-  { key: '/pipelines', icon: <PartitionOutlined />, label: <Link to="/pipelines">管道</Link> },
-  { key: '/services', icon: <DeploymentUnitOutlined />, label: <Link to="/services">服务</Link> },
-  { key: '/system', icon: <SettingOutlined />, label: <Link to="/system">系统</Link> },
-  { key: '/admin/users', icon: <UserOutlined />, label: <Link to="/admin/users">用户</Link> },
-  { key: '/admin/api-keys', icon: <KeyOutlined />, label: <Link to="/admin/api-keys">API Key</Link> },
-  { key: '/admin/audit', icon: <FileSearchOutlined />, label: <Link to="/admin/audit">审计</Link> },
+  {
+    type: 'group',
+    label: '总览',
+    children: [{ key: '/', icon: <AppstoreOutlined />, label: <Link to="/">概览</Link> }],
+  },
+  {
+    type: 'group',
+    label: '资产',
+    children: [
+      { key: '/plugins', icon: <CloudOutlined />, label: <Link to="/plugins">插件</Link> },
+      { key: '/registry', icon: <CloudDownloadOutlined />, label: <Link to="/registry">仓库</Link> },
+      { key: '/files', icon: <FileOutlined />, label: <Link to="/files">文件</Link> },
+    ],
+  },
+  {
+    type: 'group',
+    label: '运行',
+    children: [
+      { key: '/jobs', icon: <HddOutlined />, label: <Link to="/jobs">任务</Link> },
+      { key: '/schedules', icon: <ScheduleOutlined />, label: <Link to="/schedules">定时任务</Link> },
+      { key: '/pipelines', icon: <PartitionOutlined />, label: <Link to="/pipelines">管道</Link> },
+      { key: '/services', icon: <DeploymentUnitOutlined />, label: <Link to="/services">服务</Link> },
+    ],
+  },
+  {
+    type: 'group',
+    label: '管理',
+    children: [
+      { key: '/system', icon: <SettingOutlined />, label: <Link to="/system">系统</Link> },
+      { key: '/admin/users', icon: <UserOutlined />, label: <Link to="/admin/users">用户</Link> },
+      { key: '/admin/api-keys', icon: <KeyOutlined />, label: <Link to="/admin/api-keys">API Key</Link> },
+      { key: '/admin/audit', icon: <FileSearchOutlined />, label: <Link to="/admin/audit">审计</Link> },
+    ],
+  },
 ]
 
 function selectedMenuKey(pathname: string) {
-  if (pathname.startsWith('/jobs/')) return pathname === '/jobs/new' ? '/jobs/new' : '/jobs'
-  return menuItems?.some((item) => item?.key === pathname) ? pathname : ''
+  if (pathname.startsWith('/jobs/')) return '/jobs'
+  return menuItems?.some((group) =>
+    group?.type === 'group' && Array.isArray(group.children)
+      ? group.children.some((item) => item?.key === pathname)
+      : false,
+  )
+    ? pathname
+    : ''
 }
 
 export default function AppLayout() {
@@ -61,7 +88,7 @@ export default function AppLayout() {
   const health = useQuery({
     queryKey: queryKeys.system.health(),
     queryFn: getHealth,
-    refetchInterval: 10_000,
+    refetchInterval: (query) => (query.state.error !== null ? 60_000 : 30_000),
   })
   const healthLabel = health.data?.status === 'UP' ? '服务正常' : health.isError ? '服务离线' : '状态未知'
   const healthStatus = health.data?.status === 'UP' ? 'success' : health.isError ? 'error' : 'default'
@@ -85,6 +112,24 @@ export default function AppLayout() {
         <nav id="main-navigation" aria-label="主导航">
           <Menu theme="light" mode="inline" selectedKeys={[selectedMenuKey(pathname)]} items={menuItems} />
         </nav>
+        {collapsed ? (
+          <Button
+            className="sider-new-job"
+            type="primary"
+            aria-label="新建任务"
+            icon={<PlusCircleOutlined />}
+            onClick={() => navigate('/jobs/new')}
+          />
+        ) : (
+          <Button
+            className="sider-new-job"
+            type="primary"
+            icon={<PlusCircleOutlined />}
+            onClick={() => navigate('/jobs/new')}
+          >
+            新建任务
+          </Button>
+        )}
         <Button
           className="sider-toggle"
           type="text"
@@ -99,7 +144,7 @@ export default function AppLayout() {
         <Layout.Header className="app-header">
           <Typography.Text type="secondary">服务状态</Typography.Text>
           <Space>
-            <Tag color={healthStatus}><Badge status={healthStatus} />{healthLabel}</Tag>
+            <Badge status={healthStatus} text={healthLabel} />
             {me.data !== undefined && (
               <Typography.Text>
                 {me.data.username}（{me.data.role}）
