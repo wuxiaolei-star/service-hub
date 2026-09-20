@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { vi } from 'vitest'
 import DashboardPage from './DashboardPage'
 import { listJobs } from '../api/jobs'
@@ -16,7 +17,9 @@ function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <DashboardPage />
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }

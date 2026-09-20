@@ -45,6 +45,23 @@ button:focus-visible,
 
 .app-sider .ant-menu-item-selected {
   background: #dce8f5;
+  box-shadow: inset 3px 0 0 #3b82f6;
+}
+
+.sider-new-job {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 8px 12px 56px;
+}
+
+.ant-layout-sider-collapsed .sider-new-job {
+  width: 40px;
+  margin: 8px auto 56px;
+  padding: 0;
+}
+
+.ant-table-cell {
+  font-variant-numeric: tabular-nums;
 }
 
 .sider-toggle {
