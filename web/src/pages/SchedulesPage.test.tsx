@@ -26,6 +26,8 @@ const enabledRow: ScheduleRow = {
   version: '1.0.0',
   runtime_type: 'docker',
   interval_minutes: 60,
+  cron_expr: null,
+  missed_run_policy: 'skip',
   enabled: true,
   next_run_at: '2026-09-13T18:00:00Z',
   last_job_id: 'job-9',
@@ -100,6 +102,31 @@ describe('SchedulesPage', () => {
       params: {},
     })
   }, 15000)
+
+  test('creates a cron schedule once the cron mode is selected', async () => {
+    mockedCreateSchedule.mockResolvedValue({ ...enabledRow, cron_expr: '0 2 * * *' })
+    const user = userEvent.setup()
+
+    renderPage()
+    await screen.findByText('每夜裁剪')
+
+    await user.click(screen.getByRole('button', { name: /新建定时任务/ }))
+    await user.type(await screen.findByLabelText('名称'), '每天两点')
+    await user.type(screen.getByLabelText('插件 ID'), 'nc_to_shp')
+    await user.type(screen.getByLabelText('版本'), '1.0.0')
+    await user.click(screen.getByLabelText('调度方式'))
+    await user.click(await screen.findByTitle('按 cron 表达式'))
+    await user.type(await screen.findByLabelText('cron 表达式'), '0 2 * * *')
+    await user.click(screen.getByRole('button', { name: /创\s*建/ }))
+
+    await waitFor(() => expect(mockedCreateSchedule).toHaveBeenCalledTimes(1))
+    expect(mockedCreateSchedule.mock.calls[0][0]).toMatchObject({
+      cron_expr: '0 2 * * *',
+      missed_run_policy: 'skip',
+    })
+    // Sending both timings is a 422, so the interval must not ride along.
+    expect(mockedCreateSchedule.mock.calls[0][0]).not.toHaveProperty('interval_minutes')
+  }, 20000)
 
   test('deletes a schedule after confirmation', async () => {
     mockedDeleteSchedule.mockResolvedValue(undefined)

@@ -30,6 +30,7 @@ import { formatDateTime } from '../utils/format'
 export default function SchedulesPage() {
   const queryClient = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
+  const [scheduleMode, setScheduleMode] = useState<'interval' | 'cron'>('interval')
   const [form] = Form.useForm()
 
   const schedules = useQuery({ queryKey: queryKeys.schedules.list(), queryFn: listSchedules })
@@ -63,7 +64,12 @@ export default function SchedulesPage() {
     { title: '名称', dataIndex: 'name' },
     { title: '插件', dataIndex: 'plugin_id' },
     { title: '版本', dataIndex: 'version' },
-    { title: '间隔（分钟）', dataIndex: 'interval_minutes' },
+    { title: '间隔（分钟）', dataIndex: 'interval_minutes', render: (_: number, row: ScheduleRow) => (row.cron_expr ? '-' : row.interval_minutes) },
+    {
+      title: 'cron 表达式',
+      dataIndex: 'cron_expr',
+      render: (value: string | null) => value ?? '-',
+    },
     {
       title: '下次运行',
       dataIndex: 'next_run_at',
@@ -121,9 +127,15 @@ export default function SchedulesPage() {
     <div>
       <PageHeader
         title="定时任务"
-        subtitle="按固定间隔重复执行插件任务。"
+        subtitle="按固定间隔或 cron 表达式重复执行插件任务。"
         extra={
-          <Button type="primary" onClick={() => setCreateOpen(true)}>
+          <Button
+            type="primary"
+            onClick={() => {
+              setScheduleMode('interval')
+              setCreateOpen(true)
+            }}
+          >
             新建定时任务
           </Button>
         }
@@ -156,17 +168,25 @@ export default function SchedulesPage() {
         <Form
           form={form}
           layout="vertical"
-          onFinish={(values) =>
+          onFinish={(values) => {
+            // The API accepts exactly one of the two; sending both is a 422.
+            const timing =
+              scheduleMode === 'cron'
+                ? {
+                    cron_expr: values.cron_expr,
+                    missed_run_policy: values.missed_run_policy ?? 'skip',
+                  }
+                : { interval_minutes: values.interval_minutes }
             create.mutate({
               name: values.name,
               plugin_id: values.plugin_id,
               version: values.version,
               runtime_type: values.runtime_type,
-              interval_minutes: values.interval_minutes,
               inputs: {},
               params: {},
+              ...timing,
             })
-          }
+          }}
         >
           <Form.Item name="name" label="名称" rules={[{ required: true }]}>
             <Input />
@@ -185,14 +205,50 @@ export default function SchedulesPage() {
               ]}
             />
           </Form.Item>
-          <Form.Item
-            name="interval_minutes"
-            label="间隔（分钟）"
-            rules={[{ required: true, message: '请输入执行间隔' }]}
-            initialValue={60}
-          >
-            <InputNumber min={1} style={{ width: '100%' }} />
+          <Form.Item name="schedule_mode" label="调度方式" initialValue="interval">
+            <Select
+              onChange={(value: 'interval' | 'cron') => setScheduleMode(value)}
+              options={[
+                { value: 'interval', label: '按固定间隔' },
+                { value: 'cron', label: '按 cron 表达式' },
+              ]}
+            />
           </Form.Item>
+          {scheduleMode === 'interval' ? (
+            <Form.Item
+              name="interval_minutes"
+              label="间隔（分钟）"
+              rules={[{ required: true, message: '请输入执行间隔' }]}
+              initialValue={60}
+            >
+              <InputNumber min={1} style={{ width: '100%' }} />
+            </Form.Item>
+          ) : (
+            <>
+              <Form.Item
+                name="cron_expr"
+                label="cron 表达式"
+                rules={[{ required: true, message: '请输入 cron 表达式' }]}
+                extra="分 时 日 月 周；例如 0 2 * * * 表示每天 02:00"
+              >
+                <Input placeholder="0 2 * * *" />
+              </Form.Item>
+              <Form.Item
+                name="missed_run_policy"
+                label="错过执行时的策略"
+                initialValue="skip"
+                extra="skip 跳过；catch_up 逐个补跑；latest 只补最近一次"
+              >
+                <Select
+                  options={[
+                    { value: 'skip', label: 'skip（跳过）' },
+                    { value: 'catch_up', label: 'catch_up（逐个补跑）' },
+                    { value: 'latest', label: 'latest（只补最近一次）' },
+                  ]}
+                />
+              </Form.Item>
+            </>
+          )}
         </Form>
       </Modal>
     </div>

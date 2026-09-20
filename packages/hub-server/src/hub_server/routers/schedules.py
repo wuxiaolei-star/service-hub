@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal, cast
 
+from croniter import croniter  # type: ignore[import-untyped]
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -27,7 +28,9 @@ class ScheduleCreateRequest(BaseModel):
     runtime_type: str = Field(pattern="^(conda-pack|docker)$")
     inputs: dict[str, object] = Field(default_factory=dict)
     params: dict[str, object] = Field(default_factory=dict)
-    interval_minutes: int = Field(ge=1)
+    interval_minutes: int | None = Field(default=None, ge=1)
+    cron_expr: str | None = Field(default=None, min_length=1, max_length=64)
+    missed_run_policy: Literal["skip", "catch_up", "latest"] = "skip"
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -37,7 +40,7 @@ def create_schedule(
     request: ScheduleCreateRequest,
     session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, object]:
-    """Register one periodic job creation rule."""
+    """Register one periodic job creation rule (interval or cron driven)."""
     existing = (
         session.query(Schedule).filter(Schedule.name == request.name).one_or_none()
     )
@@ -47,6 +50,43 @@ def create_schedule(
             message="调度名称已存在",
             status_code=status.HTTP_409_CONFLICT,
         )
+    if request.interval_minutes is not None and request.cron_expr is not None:
+        raise HubError(
+            code="SCHEDULE_TRIGGER_MODE_CONFLICT",
+            message="interval_minutes 与 cron_expr 只能二选一",
+            status_code=422,
+        )
+    if request.interval_minutes is None and request.cron_expr is None:
+        raise HubError(
+            code="SCHEDULE_TRIGGER_MODE_REQUIRED",
+            message="interval_minutes 与 cron_expr 必须二选一",
+            status_code=422,
+        )
+    cron_expr: str | None = None
+    next_run_at: datetime
+    if request.cron_expr is not None:
+        cron_expr = request.cron_expr
+        if not croniter.is_valid(cron_expr):
+            raise HubError(
+                code="SCHEDULE_INVALID_CRON_EXPR",
+                message="无效的 cron 表达式",
+                status_code=422,
+                details={"cron_expr": cron_expr},
+            )
+        interval_minutes = 0
+        next_run_at = cast(
+            datetime, croniter(cron_expr, datetime.now(UTC)).get_next(datetime)
+        )
+    else:
+        interval = request.interval_minutes
+        if interval is None:  # unreachable after the two guards above
+            raise HubError(
+                code="SCHEDULE_TRIGGER_MODE_REQUIRED",
+                message="interval_minutes 与 cron_expr 必须二选一",
+                status_code=422,
+            )
+        interval_minutes = interval
+        next_run_at = datetime.now(UTC) + timedelta(minutes=interval)
     schedule = Schedule(
         name=request.name,
         plugin_id=request.plugin_id,
@@ -54,9 +94,11 @@ def create_schedule(
         runtime_type=request.runtime_type,
         inputs_json=dict(request.inputs),
         params_json=dict(request.params),
-        interval_minutes=request.interval_minutes,
+        interval_minutes=interval_minutes,
         enabled=True,
-        next_run_at=datetime.now(UTC) + timedelta(minutes=request.interval_minutes),
+        next_run_at=next_run_at,
+        cron_expr=cron_expr,
+        missed_run_policy=request.missed_run_policy,
     )
     session.add(schedule)
     session.flush()
@@ -74,6 +116,8 @@ def create_schedule(
             "version": schedule.version,
             "runtime_type": schedule.runtime_type,
             "interval_minutes": schedule.interval_minutes,
+            "cron_expr": schedule.cron_expr,
+            "missed_run_policy": schedule.missed_run_policy,
         },
         ip=actor_ip(http_request),
     )
@@ -188,6 +232,8 @@ def _schedule_response(schedule: Schedule) -> dict[str, object]:
         "inputs": dict(schedule.inputs_json or {}),
         "params": dict(schedule.params_json or {}),
         "interval_minutes": schedule.interval_minutes,
+        "cron_expr": schedule.cron_expr,
+        "missed_run_policy": schedule.missed_run_policy,
         "enabled": schedule.enabled,
         "next_run_at": _utc_iso(schedule.next_run_at),
         "last_job_id": schedule.last_job_id,

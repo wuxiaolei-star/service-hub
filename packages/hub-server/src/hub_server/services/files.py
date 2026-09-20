@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import BinaryIO
 from uuid import uuid4
@@ -15,6 +16,33 @@ from hub_server.models import FileRecord
 from hub_server.storage import LocalStorage, StoredUpload
 
 _LOGGER = logging.getLogger(__name__)
+
+# Chunked uploads stage parts below "uploads/" under their raw upload id. That
+# id is a bare UUID4 hex string, so staging directories never collide with the
+# "file_"-prefixed directories of installed single-request uploads.
+CHUNK_STAGING_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+PAYLOAD_BASENAME = "payload"
+
+
+def chunk_staging_relative_path(upload_id: str) -> str:
+    """Return the storage-relative staging directory of one chunked upload.
+
+    Raises ``ValueError`` for identifiers that could escape the uploads tree;
+    callers translate that into their own client error.
+    """
+    if CHUNK_STAGING_ID_PATTERN.fullmatch(upload_id) is None:
+        raise ValueError("chunk upload id must be a UUID4 hex string")
+    return f"uploads/{upload_id}"
+
+
+def chunk_file_name(chunk_index: int) -> str:
+    """Return the zero-padded on-disk name that orders one uploaded chunk."""
+    return f"chunk_{chunk_index:04d}"
+
+
+def new_chunk_upload_id() -> str:
+    """Create one unguessable staging identifier for a chunked upload."""
+    return uuid4().hex
 
 
 class FileService:
