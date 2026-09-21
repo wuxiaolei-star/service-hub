@@ -16,7 +16,7 @@ import {
   FileSearchOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, Breadcrumb, Button, Layout, Menu, Space, Typography } from 'antd'
+import { Badge, Breadcrumb, Button, Layout, Menu, Space, Tooltip, Typography } from 'antd'
 import type { MenuProps } from 'antd'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
@@ -61,6 +61,29 @@ const menuItems: MenuProps['items'] = [
     ],
   },
 ]
+
+/** Routes that require the admin role; shown disabled for lower roles. */
+const ADMIN_ONLY_KEYS = new Set(['/admin/users', '/admin/api-keys', '/admin/audit'])
+
+function buildMenuItems(isAdmin: boolean): MenuProps['items'] {
+  if (isAdmin) return menuItems
+  const clone = (items: MenuProps['items']): MenuProps['items'] =>
+    items?.map((item) => {
+      if (item?.type === 'group' && Array.isArray(item.children)) {
+        return { ...item, children: clone(item.children) }
+      }
+      if (item?.key !== undefined && ADMIN_ONLY_KEYS.has(String(item.key))) {
+        const text = ROUTE_TITLES[String(item.key)] ?? String(item.key)
+        return {
+          ...item,
+          disabled: true,
+          label: <Tooltip title="需要管理员角色">{text}</Tooltip>,
+        }
+      }
+      return item
+    })
+  return clone(menuItems)
+}
 
 const ROUTE_TITLES: Record<string, string> = {
   '/': '总览',
@@ -140,7 +163,12 @@ export default function AppLayout() {
           <Typography.Text className="brand-name">Service Hub</Typography.Text>
         </Link>
         <nav id="main-navigation" aria-label="主导航">
-          <Menu theme="light" mode="inline" selectedKeys={[selectedMenuKey(pathname)]} items={menuItems} />
+          <Menu
+            theme="light"
+            mode="inline"
+            selectedKeys={[selectedMenuKey(pathname)]}
+            items={buildMenuItems(me.data?.role === 'admin')}
+          />
         </nav>
         {collapsed ? (
           <Button

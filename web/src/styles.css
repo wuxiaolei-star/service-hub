@@ -18,7 +18,8 @@ body,
 }
 
 body {
-  min-width: 1280px;
+  /* Wide tables scroll inside their own containers; the page itself stays fluid. */
+  min-width: 0;
 }
 
 a:focus-visible,
@@ -163,6 +164,9 @@ button:focus-visible,
 
 .app-content {
   padding: 24px;
+  /* Inside the flex shell, allow the content to shrink so inner tables
+     scroll horizontally instead of pushing the whole page wide. */
+  min-width: 0;
 }
 
 .app-content .ant-card {
@@ -172,10 +176,6 @@ button:focus-visible,
 }
 
 @media (max-width: 991px) {
-  body {
-    min-width: 0;
-  }
-
   .app-content {
     padding: 16px;
   }

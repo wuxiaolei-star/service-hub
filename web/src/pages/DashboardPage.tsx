@@ -91,6 +91,21 @@ export default function DashboardPage() {
     { title: '版本', dataIndex: 'version' },
     { title: '状态', dataIndex: 'status', render: (status: Job['status']) => <StatusTag status={status} /> },
     {
+      title: '失败原因',
+      dataIndex: 'error_summary',
+      width: 180,
+      render: (summary: Job['error_summary'], record) =>
+        summary === null || summary === '' || !['FAILED', 'TIMED_OUT'].includes(record.status) ? (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ) : (
+          <Tooltip title={summary} placement="topLeft">
+            <Typography.Text type="danger" ellipsis style={{ maxWidth: 160 }}>
+              {summary}
+            </Typography.Text>
+          </Tooltip>
+        ),
+    },
+    {
       title: '耗时',
       key: 'duration',
       render: (_, record) => formatDuration(record.created_at, record.started_at, record.finished_at, Date.now()),
