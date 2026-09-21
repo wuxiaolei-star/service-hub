@@ -113,6 +113,21 @@ export default function JobsPage() {
       render: (status: Job['status']) => <StatusTag status={status} />,
     },
     {
+      title: '失败原因',
+      dataIndex: 'error_summary',
+      width: 200,
+      render: (summary: Job['error_summary'], record) =>
+        summary === null || summary === '' || !RERUNNABLE_STATUSES.has(record.status) ? (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ) : (
+          <Tooltip title={summary} placement="topLeft">
+            <Typography.Text type="danger" ellipsis style={{ maxWidth: 180 }}>
+              {summary}
+            </Typography.Text>
+          </Tooltip>
+        ),
+    },
+    {
       title: '创建时间',
       dataIndex: 'created_at',
       render: (value: string) => <Tooltip title={value}>{formatRelative(value)}</Tooltip>,
@@ -182,6 +197,7 @@ export default function JobsPage() {
         dataSource={jobs.data?.items ?? []}
         columns={columns}
         locale={{ emptyText: '暂无任务' }}
+        scroll={{ x: 960 }}
         pagination={{
           pageSize: PAGE_SIZE,
           current: page,
