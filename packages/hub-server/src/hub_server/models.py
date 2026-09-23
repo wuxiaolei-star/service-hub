@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -26,13 +27,6 @@ def _utc_now() -> datetime:
 
 def _public_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
-
-
-_SESSION_TTL = timedelta(hours=24)
-
-
-def _session_expiry() -> datetime:
-    return datetime.now(UTC) + _SESSION_TTL
 
 
 class FileRecord(Base):
@@ -176,6 +170,14 @@ class Job(Base):
     """One immutable request snapshot and its mutable execution lifecycle."""
 
     __tablename__ = "jobs"
+    __table_args__ = (
+        Index(
+            "ix_jobs_runtime_status_created",
+            "runtime_type",
+            "status",
+            "created_at",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_key: Mapped[str] = mapped_column(
@@ -308,8 +310,8 @@ class SessionRecord(Base):
         DateTime(timezone=True), default=_utc_now
     )
     expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_session_expiry
-    )
+        DateTime(timezone=True)
+    )  # always set explicitly by AuthService.create_session from settings
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -380,7 +382,7 @@ class JobCallback(Base):
     last_status_code: Mapped[int | None] = mapped_column(nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     next_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        DateTime(timezone=True), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now
@@ -404,7 +406,9 @@ class Schedule(Base):
     params_json: Mapped[dict[str, object]] = mapped_column(JSON)
     interval_minutes: Mapped[int] = mapped_column()
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    next_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
     last_job_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     cron_expr: Mapped[str | None] = mapped_column(String(64), nullable=True)
     missed_run_policy: Mapped[str] = mapped_column(String(16), default="skip")

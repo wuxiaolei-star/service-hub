@@ -340,7 +340,11 @@ def test_expired_sessions_are_swept(session: Session) -> None:
         token_hash="a" * 64,
         expires_at=datetime.now(UTC) - timedelta(hours=1),
     )
-    live = SessionRecord(user_id=user.id, token_hash="b" * 64)
+    live = SessionRecord(
+        user_id=user.id,
+        token_hash="b" * 64,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
     session.add_all([expired, live])
     session.commit()
     expired_id, live_id = expired.id, live.id

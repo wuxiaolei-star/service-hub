@@ -100,8 +100,10 @@ def deliver_due(
     failure, non-2xx response, or SSRF-guard refusal increments attempts, schedules
     a linear backoff (next_attempt_at = now + 60s * attempts) and moves the callback
     to EXHAUSTED once three attempts have been made. Every delivery writes one
-    "webhook.deliver" audit entry attributed to the system scheduler. Commits
-    once and returns the number of processed callbacks.
+    "webhook.deliver" audit entry attributed to the system scheduler. Each callback
+    commits immediately after delivery so a crash between deliveries cannot lose
+    the attempts/audit history of callbacks already processed; returns the number
+    of processed callbacks.
     """
     current = _utc_now(now)
     rows = session.execute(
@@ -117,8 +119,8 @@ def deliver_due(
     processed = 0
     for callback, job in rows:
         _deliver_one(session, callback, job, current, policy)
+        session.commit()
         processed += 1
-    session.commit()
     return processed
 
 
