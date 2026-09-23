@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from hub_server.models import ApiKeyRecord, AuditLogRecord, SessionRecord, UserRecord
 from sqlalchemy.exc import IntegrityError
@@ -54,6 +56,7 @@ def test_session_roundtrip(session: Session) -> None:
     record = SessionRecord(
         token_hash="a" * 64,
         user_id=user.id,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
         ip="127.0.0.1",
         user_agent="hubctl",
     )
@@ -70,7 +73,13 @@ def test_session_cascade_deletes_with_user(session: Session) -> None:
     user = UserRecord(username="gone", password_hash="h", role="viewer")
     session.add(user)
     session.flush()
-    session.add(SessionRecord(token_hash="b" * 64, user_id=user.id))
+    session.add(
+        SessionRecord(
+            token_hash="b" * 64,
+            user_id=user.id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
     session.commit()
 
     session.delete(user)

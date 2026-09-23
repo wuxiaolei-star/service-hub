@@ -55,9 +55,20 @@ def resolve_actor(
     session: Session,
     settings: HubSettings,
 ) -> Actor:
-    """Resolve the request credential to an actor, or raise AUTH_REQUIRED."""
+    """Resolve the request credential to an actor, or raise AUTH_REQUIRED.
+
+    A request typically triggers resolution twice (router-level ``require_role``
+    plus an endpoint ``get_actor``); the result is cached on ``request.state``
+    so the credential is looked up exactly once. Failures are never cached.
+    """
+    cached = getattr(request.state, "actor", None)
+    if isinstance(cached, Actor):
+        return cached
+
     if settings.auth.mode == "off":
-        return Actor(kind="anonymous", id=None, name="anonymous", role="admin")
+        actor = Actor(kind="anonymous", id=None, name="anonymous", role="admin")
+        request.state.actor = actor
+        return actor
 
     credential = _extract_credential(request)
     if credential is None:
@@ -68,17 +79,19 @@ def resolve_actor(
         key = service.resolve_api_key(credential)
         if key is None:
             raise _auth_required("凭证无效或已吊销")
-        return Actor(kind="api_key", id=key.id, name=key.name, role=key.role)
-
-    record = service.resolve_session(credential)
-    if record is None:
-        raise _auth_required("凭证无效或已过期")
-    return Actor(
-        kind="user",
-        id=record.user.id,
-        name=record.user.username,
-        role=record.user.role,
-    )
+        actor = Actor(kind="api_key", id=key.id, name=key.name, role=key.role)
+    else:
+        record = service.resolve_session(credential)
+        if record is None:
+            raise _auth_required("凭证无效或已过期")
+        actor = Actor(
+            kind="user",
+            id=record.user.id,
+            name=record.user.username,
+            role=record.user.role,
+        )
+    request.state.actor = actor
+    return actor
 
 
 def actor_ip(request: Request) -> str | None:

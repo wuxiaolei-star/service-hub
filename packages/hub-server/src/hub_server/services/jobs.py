@@ -8,7 +8,7 @@ from typing import cast
 
 from python_hub_contracts import JobStatus, PluginManifest, RuntimeType
 from sqlalchemy import ColumnElement, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, contains_eager, joinedload
 
 from hub_server.errors import HubError
 from hub_server.models import FileRecord, Job, Plugin, PluginBuild, PluginVersion
@@ -119,6 +119,21 @@ class JobService:
             conditions.append(Plugin.plugin_key == plugin_id)
         if conditions:
             stmt = stmt.where(*conditions)
+        # _job_response walks plugin_build -> plugin_version -> plugin per row;
+        # eager-load the chain so a page of Jobs does not trigger 3 lazy SELECTs
+        # per row. contains_eager reuses the filter joins instead of duplicating.
+        if plugin_id is not None:
+            stmt = stmt.options(
+                contains_eager(Job.plugin_build)
+                .contains_eager(PluginBuild.plugin_version)
+                .contains_eager(PluginVersion.plugin)
+            )
+        else:
+            stmt = stmt.options(
+                joinedload(Job.plugin_build)
+                .joinedload(PluginBuild.plugin_version)
+                .joinedload(PluginVersion.plugin)
+            )
         total = self._session.scalar(select(func.count()).select_from(stmt.subquery()))
         jobs = list(
             self._session.scalars(
@@ -136,14 +151,20 @@ class JobService:
         log_path = self._storage.open_relative(f"{job.workspace_path}/logs/events.jsonl")
         if not log_path.exists():
             return [], None
-        lines = log_path.read_text("utf-8").splitlines()
-        selected = lines[cursor : cursor + limit]
+        # Stream line by line instead of read_text(): total line count and the
+        # requested window are computed without holding the whole file (which
+        # grows without bound for long-running jobs) in memory.
         events: list[dict[str, object]] = []
-        for line in selected:
-            loaded = json.loads(line)
-            if isinstance(loaded, dict):
-                events.append(cast(dict[str, object], loaded))
-        next_cursor = cursor + len(selected) if cursor + len(selected) < len(lines) else None
+        total = 0
+        with log_path.open("r", encoding="utf-8") as handle:
+            for index, line in enumerate(handle):
+                total = index + 1
+                if cursor <= index < cursor + limit:
+                    loaded = json.loads(line)
+                    if isinstance(loaded, dict):
+                        events.append(cast(dict[str, object], loaded))
+        selected_end = min(cursor + limit, total)
+        next_cursor = selected_end if selected_end < total else None
         return events, next_cursor
 
     def outputs(self, job_key: str) -> list[FileRecord]:
