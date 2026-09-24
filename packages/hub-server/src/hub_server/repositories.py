@@ -8,6 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
+from hub_server.errors import HubError
 from hub_server.models import (
     Environment,
     Job,
@@ -92,7 +93,14 @@ class HubRepository:
             version.source_sha256 != build_manifest.source_sha256
             or version.manifest_json != plugin_snapshot
         ):
-            raise ValueError("plugin version source and manifest are immutable")
+            raise HubError(
+                code="PLUGIN_VERSION_IMMUTABLE_CONFLICT",
+                message=(
+                    "PLUGIN_VERSION_IMMUTABLE_CONFLICT: 插件版本不可变, "
+                    "已存在版本的源码或清单与本次安装不一致, 请升级版本号后重新安装"
+                ),
+                status_code=409,
+            )
 
         if build_manifest.runtime.type == "conda-pack":
             fingerprint = build_manifest.runtime.fingerprint

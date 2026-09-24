@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from hub_server.errors import HubError
 from hub_server.models import (
     Job,
     JobFile,
@@ -161,6 +162,32 @@ def test_create_build_installation_preserves_manifest_identity_and_runtime_metad
     assert operation.status == "PENDING"
     assert operation.runtime_type == runtime_type
 
+
+def _install_fixture_build(session: Session, source_sha256: str) -> None:
+    fixtures = Path(__file__).parents[1] / "fixtures"
+    plugin_manifest = load_plugin_manifest(fixtures / "valid-plugin.yaml")
+    build_data = json.loads((fixtures / "valid-build.json").read_text("utf-8"))
+    build_data["target"]["arch"] = "amd64"
+    build_data["build_id"] = f"package-build-{source_sha256[:8]}"
+    build_data["source_sha256"] = source_sha256
+    HubRepository(session).create_build_installation(
+        plugin_manifest=plugin_manifest,
+        build_manifest=PluginBuildManifest.model_validate(build_data),
+        package_sha256="b" * 64,
+    )
+
+
+def test_reinstalling_changed_source_under_same_version_reports_conflict(
+    session: Session,
+) -> None:
+    """Re-publishing changed sources under an existing version must not surface as a 500."""
+    _install_fixture_build(session, "a" * 64)
+
+    with pytest.raises(HubError) as raised:
+        _install_fixture_build(session, "b" * 64)
+
+    assert raised.value.code == "PLUGIN_VERSION_IMMUTABLE_CONFLICT"
+    assert raised.value.status_code == 409
 
 def test_claim_job_only_claims_oldest_matching_pending_runtime(session: Session) -> None:
     """A non-atomic or unfiltered claim can hand a worker the wrong or newer runtime job."""
