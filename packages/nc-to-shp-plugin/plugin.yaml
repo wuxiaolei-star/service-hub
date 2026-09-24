@@ -3,7 +3,7 @@ spec_version: "1.0"
 plugin:
   id: nc_to_shp
   name: NC 转 Shapefile
-  version: "1.0.0"
+  version: "1.0.1"
   description: 将水动力模型 HDF5/NetCDF 面指标转换为 PointZ Shapefile
   author: Lane
   category: gis

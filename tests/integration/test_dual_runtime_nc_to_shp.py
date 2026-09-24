@@ -16,7 +16,7 @@ import pytest
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_ROOT = REPOSITORY_ROOT / "packages" / "nc-to-shp-plugin"
 PLUGIN_ID = "nc_to_shp"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 
 
 @pytest.mark.integration
