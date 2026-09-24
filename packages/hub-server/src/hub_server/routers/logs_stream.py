@@ -8,12 +8,12 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, BinaryIO, cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
-from hub_server.dependencies import get_session, get_storage
+from hub_server.dependencies import get_storage
 from hub_server.dependencies_auth import require_role
 from hub_server.errors import HubError
 from hub_server.models import Job
@@ -29,21 +29,25 @@ _TERMINAL_STATUSES = {"SUCCESS", "FAILED", "CANCELLED", "TIMED_OUT"}
 @router.get("/jobs/{job_key}/logs/stream")
 def stream_job_logs(
     job_key: str,
-    session: Annotated[Session, Depends(get_session)],
+    request: Request,
     storage: Annotated[LocalStorage, Depends(get_storage)],
 ) -> StreamingResponse:
     """Stream runner events for one Job until it reaches a terminal state."""
-    job = session.scalar(select(Job).where(Job.job_key == job_key))
+    session_factory = request.app.state.session_factory
+    # Short-lived lookup only: this route must not pin a request-scoped session
+    # (and its connection) for the whole streaming lifetime.
+    with session_factory() as session:
+        job = session.scalar(select(Job).where(Job.job_key == job_key))
     if job is None:
         raise HubError(code="JOB_NOT_FOUND", message="Job 不存在", status_code=404)
     return StreamingResponse(
-        _event_stream(session, storage, job_key, job.workspace_path),
+        _event_stream(session_factory, storage, job_key, job.workspace_path),
         media_type="text/event-stream",
     )
 
 
 def _event_stream(
-    session: Session,
+    session_factory: sessionmaker[Session],
     storage: LocalStorage,
     job_key: str,
     workspace_path: str | None,
@@ -61,7 +65,11 @@ def _event_stream(
     pending = b""
     try:
         while True:
-            if _load_job(session, job_key) is None:
+            # Borrow one fresh session per poll so the SQLite connection and its
+            # read snapshot are held only for the duration of this status query.
+            with session_factory() as session:
+                job = _load_job(session, job_key)
+            if job is None:
                 # The Job vanished mid-stream; close the channel gracefully.
                 yield _sse_event("end", {})
                 return
@@ -83,11 +91,8 @@ def _event_stream(
                     item = _decode_log_item(raw_line)
                     if item is not None:
                         yield _sse_event("log", item)
-            # Release the read snapshot so each poll observes fresh Job state.
-            session.commit()
-            job = _load_job(session, job_key)
-            if job is None or job.status in _TERMINAL_STATUSES:
-                if pending and job is not None:
+            if job.status in _TERMINAL_STATUSES:
+                if pending:
                     # The writer is finished and this tail never got its newline;
                     # emit the fragment exactly like the previous full-file read.
                     item = _decode_log_item(pending)

@@ -44,6 +44,19 @@ def _ensure_sqlite_database_directory(database_url: str) -> None:
         Path(database).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _sweep_stale_job_temporaries(storage: LocalStorage) -> None:
+    """Clean Job staging directories orphaned by a crash between stage and install."""
+    from hub_server.services.workspaces import JobWorkspaceService
+
+    try:
+        removed = JobWorkspaceService(storage).sweep_stale_temporaries()
+    except Exception:
+        _LOGGER.exception("Unable to sweep stale Job temporary directories")
+        return
+    if removed:
+        _LOGGER.info("已清理 %d 个过期的 Job 临时工作区目录", removed)
+
+
 def _bootstrap_admin(settings: HubSettings) -> None:
     """Seed the first admin account into a protected file on first run."""
     if settings.auth.mode != "required":
@@ -99,7 +112,12 @@ def _bootstrap_admin(settings: HubSettings) -> None:
 def create_app(settings: HubSettings | None = None) -> FastAPI:
     """Create a configured Hub ASGI application."""
     if settings is None:
-        settings = HubSettings.from_yaml(Path(os.environ["HUB_CONFIG_PATH"]))
+        config_path = os.environ.get("HUB_CONFIG_PATH")
+        if not config_path:
+            raise RuntimeError(
+                "HUB_CONFIG_PATH 环境变量未设置, 无法定位 Hub 配置文件"
+            )
+        settings = HubSettings.from_yaml(Path(config_path))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -109,6 +127,7 @@ def create_app(settings: HubSettings | None = None) -> FastAPI:
         app.state.engine = engine
         app.state.session_factory = session_factory
         app.state.storage = LocalStorage(settings.storage.root)
+        _sweep_stale_job_temporaries(app.state.storage)
         _bootstrap_admin(settings)
         try:
             yield

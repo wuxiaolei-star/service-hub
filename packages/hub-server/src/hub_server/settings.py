@@ -117,6 +117,29 @@ class PluginsSettings(StrictSettingsModel):
     options: dict[str, dict[str, object]] = Field(default_factory=dict)
 
 
+class ServiceManagerSettings(StrictSettingsModel):
+    """Loopback service-manager process location (V3.0 sidecar)."""
+
+    base_url: str = "http://127.0.0.1:8001"
+
+    @field_validator("base_url")
+    @classmethod
+    def _normalize_base_url(cls, value: str) -> str:
+        """Store the URL without a trailing slash so client paths join cleanly."""
+        return value.rstrip("/")
+
+
+class DockerSettings(StrictSettingsModel):
+    """Docker-side service deployment boundary (V3.0).
+
+    ``host_data_root`` is the host-side whitelist root for managed service bind
+    mounts. It stays unset in local/dev configs; the container entrypoint
+    exports it from the deployment environment.
+    """
+
+    host_data_root: str | None = None
+
+
 def _native_architecture() -> Literal["amd64", "arm64"]:
     machine = platform.machine().lower()
     if machine in {"amd64", "x86_64"}:
@@ -140,6 +163,8 @@ class HubSettings(StrictSettingsModel):
     hub_version: str = "0.1.0"
     platform_os: Literal["linux"] = "linux"
     platform_arch: Literal["amd64", "arm64"] = Field(default_factory=_native_architecture)
+    service_manager: ServiceManagerSettings = Field(default_factory=ServiceManagerSettings)
+    docker: DockerSettings = Field(default_factory=DockerSettings)
 
     @classmethod
     def from_yaml(cls, path: Path) -> Self:
@@ -150,4 +175,13 @@ class HubSettings(StrictSettingsModel):
             value["runner"] = {**value.get("runner", {}), "shared_token": token}
         if mode := os.environ.get("HUB_AUTH_MODE"):
             value["auth"] = {**value.get("auth", {}), "mode": mode}
+        # Deployment-time injections keep precedence over the YAML file so the
+        # existing compose -> entrypoint chain does not change behaviour.
+        if manager_url := os.environ.get("HUB_SERVICE_MANAGER_URL"):
+            value["service_manager"] = {
+                **value.get("service_manager", {}),
+                "base_url": manager_url,
+            }
+        if data_root := os.environ.get("HUB_DOCKER_HOST_DATA_ROOT"):
+            value["docker"] = {**value.get("docker", {}), "host_data_root": data_root}
         return cls.model_validate(value)

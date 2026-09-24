@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import os
-
 import httpx
 
 from hub_server.errors import HubError
 from hub_server.settings import HubSettings
-
-_DEFAULT_MANAGER_URL = "http://127.0.0.1:8001"
 
 # Reads must fail fast: a wedged manager should not hold a request open.
 _QUERY_TIMEOUT_SECONDS = 5.0
@@ -117,9 +113,9 @@ def _manager_rejection(response: httpx.Response) -> HubError:
 
 
 def get_service_manager(settings: HubSettings) -> ServiceManagerClient:
-    """Create a manager client using the runner token injected at deployment."""
+    """Create a manager client using the configured URL and runner token."""
     return ServiceManagerClient(
-        base_url=os.environ.get("HUB_SERVICE_MANAGER_URL", _DEFAULT_MANAGER_URL),
+        base_url=settings.service_manager.base_url,
         token=settings.runner.shared_token.get_secret_value(),
     )
 

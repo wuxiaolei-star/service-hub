@@ -100,9 +100,10 @@ HOST_DATA_ROOT = "/srv/hub-data"
 def _client(tmp_path: Path, manager: FakeManager, monkeypatch: Any) -> TestClient:
     import hub_server.routers.services as services
 
-    monkeypatch.setenv("HUB_DOCKER_HOST_DATA_ROOT", HOST_DATA_ROOT)
     monkeypatch.setattr(services, "get_service_manager", lambda _settings: manager)
-    return TestClient(create_app(_settings(tmp_path)))
+    settings = _settings(tmp_path)
+    settings.docker.host_data_root = HOST_DATA_ROOT
+    return TestClient(create_app(settings))
 
 
 def _headers_for(client: TestClient, username: str) -> dict[str, str]:

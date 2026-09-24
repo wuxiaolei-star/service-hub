@@ -17,6 +17,7 @@ from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import MultipartParser, parse_options_header
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import FileResponse as StreamingFileResponse
 
 from hub_server.dependencies import get_session, get_settings, get_storage
@@ -263,15 +264,18 @@ async def _stream_multipart_file(
         raise _validation_error() from error
     try:
         async for chunk in request.stream():
-            parser.write(chunk)
-        parser.finalize()
+            # The parser callbacks perform the payload write plus its digest
+            # update; dispatching them off the event loop keeps a large upload
+            # from blocking every other request for the whole transfer.
+            await run_in_threadpool(parser.write, chunk)
+        await run_in_threadpool(parser.finalize)
         if not complete or upload is None or filename is None:
             raise _validation_error()
-        stored = upload.finish()
+        stored = await run_in_threadpool(upload.finish)
         return _StreamedUpload(file_key, filename, mime_type, stored)
     except Exception as error:
         if upload is not None:
-            upload.abort()
+            await run_in_threadpool(upload.abort)
         if isinstance(error, (FormParserError, UnicodeDecodeError)):
             raise _validation_error() from error
         # When the cap came from a quota rather than the upload limit, the
@@ -573,8 +577,9 @@ async def upload_chunk(
     settings: Annotated[HubSettings, Depends(get_settings)],
 ) -> ChunkUploadedResponse:
     """Store one raw chunk below its staging directory, bounded by the file cap."""
-    staging = _chunk_staging_directory(storage, upload_id)
-    remaining = settings.uploads.max_size_bytes - _staged_chunk_bytes(staging)
+    staging = await run_in_threadpool(_chunk_staging_directory, storage, upload_id)
+    staged_bytes = await run_in_threadpool(_staged_chunk_bytes, staging)
+    remaining = settings.uploads.max_size_bytes - staged_bytes
     target = staging / chunk_file_name(chunk_index)
     size = 0
     try:
@@ -583,7 +588,7 @@ async def upload_chunk(
                 size += len(block)
                 if size > remaining:
                     raise UploadTooLargeError(max_size_bytes=settings.uploads.max_size_bytes)
-                sink.write(block)
+                await run_in_threadpool(sink.write, block)
     except UploadTooLargeError:
         with contextlib.suppress(OSError):
             target.unlink(missing_ok=True)

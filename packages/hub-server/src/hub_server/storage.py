@@ -17,6 +17,7 @@ from hub_server.errors import HubError, UploadTooLargeError
 _FILE_KEY_PATTERN = re.compile(r"^file_([0-9a-f]{32})$")
 _PLUGIN_BUILD_KEY_PATTERN = re.compile(r"^plugin_build_[0-9a-f]{32}$")
 _STAGED_PLUGIN_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_JOB_KEY_PATTERN = re.compile(r"^job_[0-9a-f]{32}$")
 _CHUNK_SIZE_BYTES = 1024 * 1024
 _MAX_PROTOCOL_PATH_LENGTH = 1024
 _LOGGER = logging.getLogger(__name__)
@@ -258,6 +259,18 @@ class LocalStorage:
         except OSError as error:
             _LOGGER.exception("Unable to remove failed plugin Build storage")
             raise self._storage_error("无法清理插件 Build") from error
+
+    def remove_job_workspace(self, job_key: str) -> None:
+        """Remove one exact Job workspace after its creation transaction failed."""
+        if _JOB_KEY_PATTERN.fullmatch(job_key) is None:
+            raise ValueError("job key is invalid")
+        directory = self._resolve_relative(f"jobs/{job_key}")
+        try:
+            if directory.exists():
+                shutil.rmtree(directory)
+        except OSError as error:
+            _LOGGER.exception("Unable to remove failed Job workspace storage")
+            raise self._storage_error("无法清理 Job 工作区") from error
 
     def discard_temporary_directory(self, temporary_directory: Path | None) -> None:
         """Discard one temporary directory created by this storage instance."""

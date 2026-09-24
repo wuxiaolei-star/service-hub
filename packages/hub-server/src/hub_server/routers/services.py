@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from typing import Annotated, Protocol
 
@@ -32,7 +31,9 @@ router = APIRouter(
 _SERVICE_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
-def _require_mounts_below_host_data_root(mounts: list[ServiceMount]) -> None:
+def _require_mounts_below_host_data_root(
+    mounts: list[ServiceMount], settings: HubSettings
+) -> None:
     """Allow bind mounts only below the Hub-managed host data directory.
 
     This is the architectural boundary of V3.0: a managed service container may
@@ -42,7 +43,7 @@ def _require_mounts_below_host_data_root(mounts: list[ServiceMount]) -> None:
     """
     if not mounts:
         return
-    root = os.environ.get("HUB_DOCKER_HOST_DATA_ROOT", "").rstrip("/")
+    root = (settings.docker.host_data_root or "").rstrip("/")
     if not root:
         raise HubError(
             code="SERVICE_MOUNT_FORBIDDEN",
@@ -104,7 +105,7 @@ def create_service(
 ) -> ServiceResponse:
     """Persist and deploy one admin-authorized service definition."""
     _require_valid_name(request.name)
-    _require_mounts_below_host_data_root(request.mounts)
+    _require_mounts_below_host_data_root(request.mounts, settings)
     if session.query(ServiceDef).filter_by(name=request.name).one_or_none() is not None:
         raise HubError(code="SERVICE_NAME_TAKEN", message="服务名称已存在", status_code=409)
     definition = _new_definition(request)
@@ -138,7 +139,7 @@ def update_service(
     _require_valid_name(name)
     if request.name != name:
         raise HubError(code="SERVICE_NAME_IMMUTABLE", message="服务名称不能修改", status_code=422)
-    _require_mounts_below_host_data_root(request.mounts)
+    _require_mounts_below_host_data_root(request.mounts, settings)
     definition = _get_definition(session, name)
     _apply_definition(definition, request)
     session.flush()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterable, Mapping, Sequence
 from typing import cast
 
@@ -11,10 +12,20 @@ from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session, contains_eager, joinedload
 
 from hub_server.errors import HubError
-from hub_server.models import FileRecord, Job, Plugin, PluginBuild, PluginVersion
-from hub_server.services.workspaces import JobWorkspaceService
+from hub_server.models import (
+    FileRecord,
+    Job,
+    Plugin,
+    PluginBuild,
+    PluginVersion,
+    _public_id,
+    _utc_now,
+)
+from hub_server.services.workspaces import JobWorkspaceService, StagedWorkspace
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
+
+_LOGGER = logging.getLogger(__name__)
 
 _TERMINAL_STATUSES = {
     JobStatus.SUCCESS.value,
@@ -48,7 +59,13 @@ class JobService:
         manifest = PluginManifest.model_validate(build.plugin_version.manifest_json)
         validated_params = self._validate_params(manifest, params)
         validated_inputs, input_records = self._validate_inputs(manifest, inputs)
+        # job_key and created_at are assigned up front so the potentially slow
+        # workspace staging (input copy + integrity verification) runs entirely
+        # outside the transaction. SQLite only queues behind the write lock for
+        # the fast flush/install/commit tail instead of the whole file copy.
         job = Job(
+            job_key=_public_id("job"),
+            created_at=_utc_now(),
             plugin_build=build,
             runtime_type=selected_runtime,
             runtime_fingerprint=build.runtime_fingerprint,
@@ -60,16 +77,29 @@ class JobService:
             owner_user_id=owner_user_id,
             replayed_from=replayed_from,
         )
+        workspace_service = JobWorkspaceService(self._storage)
+        try:
+            staged = workspace_service.stage(job, input_records)
+        except HubError:
+            raise
+        except Exception as error:
+            raise HubError(
+                code="JOB_CREATE_FAILED",
+                message="创建 Job 失败",
+                status_code=500,
+            ) from error
+        installed = False
         try:
             self._session.add(job)
             self._session.flush()
-            JobWorkspaceService(self._storage).prepare(job, input_records)
+            workspace_service.install(staged, job)
+            installed = True
             self._session.commit()
         except HubError:
-            self._session.rollback()
+            self._rollback_create(workspace_service, staged, job, installed)
             raise
         except Exception as error:
-            self._session.rollback()
+            self._rollback_create(workspace_service, staged, job, installed)
             raise HubError(
                 code="JOB_CREATE_FAILED",
                 message="创建 Job 失败",
@@ -77,6 +107,27 @@ class JobService:
             ) from error
         self._session.refresh(job)
         return job
+
+    def _rollback_create(
+        self,
+        workspace_service: JobWorkspaceService,
+        staged: StagedWorkspace,
+        job: Job,
+        installed: bool,
+    ) -> None:
+        """Undo the Job creation side effects: transaction, row, and workspace."""
+        self._session.rollback()
+        workspace_service.discard(staged)
+        if installed:
+            # The workspace directory was renamed into place but its Job row was
+            # rolled back; leaving it behind would be an invisible orphan.
+            try:
+                self._storage.remove_job_workspace(job.job_key)
+            except Exception:
+                _LOGGER.exception(
+                    "Unable to remove orphan Job workspace after failed creation: %s",
+                    job.job_key,
+                )
 
     def cancel(self, job_key: str) -> Job:
         job = self._get_job(job_key)

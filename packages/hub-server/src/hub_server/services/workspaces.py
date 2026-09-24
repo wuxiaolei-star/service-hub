@@ -6,8 +6,11 @@ import hashlib
 import os
 import re
 import shutil
-from collections.abc import Mapping
-from datetime import UTC
+import time
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Final
 from uuid import uuid4
@@ -29,6 +32,33 @@ from hub_server.storage import LocalStorage
 
 _CHUNK_SIZE_BYTES: Final = 1024 * 1024
 _LOGICAL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_DEFAULT_TEMPORARY_MAX_AGE: Final = timedelta(hours=24)
+
+
+@dataclass(frozen=True, slots=True)
+class StagedWorkspace:
+    """One prepared-but-not-yet-visible Job workspace waiting for install."""
+
+    temporary: Path
+    destination_relative: str
+    spec: JobRuntimeSpec
+
+
+@contextmanager
+def _no_autoflush(job: Job) -> Iterator[None]:
+    """Suppress autoflush while an unpersisted Job drives read-only lazy loads.
+
+    Building the runtime spec walks ``job.plugin_build.plugin_version`` with
+    lazy loading; the implicit autoflush would try to cascade the not-yet-added
+    Job into the session mid-read and log SAWarning noise. The owning session
+    (located through the attached build) is only borrowed for reads here.
+    """
+    session = object_session(job) or object_session(job.plugin_build)
+    if session is None:
+        yield
+        return
+    with session.no_autoflush:
+        yield
 
 
 class JobWorkspaceService:
@@ -37,27 +67,72 @@ class JobWorkspaceService:
     def __init__(self, storage: LocalStorage) -> None:
         self._storage = storage
 
-    def prepare(self, job: Job, input_files: list[FileRecord]) -> Path:
-        """Atomically prepare an immutable input snapshot and strict job.json."""
-        if job.id is None:
-            raise ValueError("job must be persisted before preparing its workspace")
+    def stage(self, job: Job, input_files: list[FileRecord]) -> StagedWorkspace:
+        """Copy inputs and build the runtime spec without holding a DB write lock.
+
+        Input files can be large, so this phase must run outside the Job creation
+        transaction: it only requires ``job.job_key`` and ``job.created_at`` to be
+        assigned and never touches the database. Call :meth:`install` inside the
+        transaction to make the workspace visible atomically.
+        """
+        if job.job_key is None or job.created_at is None:
+            raise ValueError("job must have a job_key and created_at before staging")
         destination_relative = f"jobs/{job.job_key}"
         temporary = self._storage.create_temporary_directory("jobs")
         try:
             for child in ("input", "work", "output", "logs"):
                 (temporary / child).mkdir()
-            runtime_inputs = self._prepare_inputs(temporary, job.inputs_json, input_files)
-            spec = self._runtime_spec(job, runtime_inputs)
+            with _no_autoflush(job):
+                runtime_inputs = self._prepare_inputs(temporary, job.inputs_json, input_files)
+                spec = self._runtime_spec(job, runtime_inputs)
             document = spec.model_dump_json(indent=2)
             (temporary / "job.json").write_text(document, encoding="utf-8", newline="\n")
-            workspace = self._storage.install_directory(temporary, destination_relative)
         except Exception:
             self._storage.discard_temporary_directory(temporary)
             raise
+        return StagedWorkspace(
+            temporary=temporary, destination_relative=destination_relative, spec=spec
+        )
 
-        job.workspace_path = destination_relative
-        job.job_json = spec.model_dump(mode="json")
+    def install(self, staged: StagedWorkspace, job: Job) -> Path:
+        """Atomically rename the staged workspace and write back Job metadata."""
+        try:
+            workspace = self._storage.install_directory(
+                staged.temporary, staged.destination_relative
+            )
+        except Exception:
+            self._storage.discard_temporary_directory(staged.temporary)
+            raise
+        job.workspace_path = staged.destination_relative
+        job.job_json = staged.spec.model_dump(mode="json")
         return workspace
+
+    def discard(self, staged: StagedWorkspace) -> None:
+        """Discard a staged workspace that will not be installed."""
+        self._storage.discard_temporary_directory(staged.temporary)
+
+    def sweep_stale_temporaries(self, *, max_age: timedelta = _DEFAULT_TEMPORARY_MAX_AGE) -> int:
+        """Remove ``.tmp-`` directories under ``jobs/`` older than ``max_age``.
+
+        A crash between :meth:`stage` and :meth:`install` leaves its staged copy
+        behind; this startup sweep bounds the orphan storage those leaks consume.
+        Returns the number of removed directories.
+        """
+        jobs_root = self._storage.open_relative("jobs")
+        if not jobs_root.exists():
+            return 0
+        cutoff = time.time() - max_age.total_seconds()
+        removed = 0
+        for child in jobs_root.iterdir():
+            if not child.name.startswith(".tmp-") or not child.is_dir():
+                continue
+            try:
+                if child.stat().st_mtime <= cutoff:
+                    shutil.rmtree(child, ignore_errors=True)
+                    removed += 1
+            except OSError:
+                continue
+        return removed
 
     def resolve_output(self, workspace: Path, relative_path: str) -> Path:
         """Resolve a runner path only when its final target stays below output/."""
