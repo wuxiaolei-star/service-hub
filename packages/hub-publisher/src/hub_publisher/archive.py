@@ -17,6 +17,13 @@ from python_hub_contracts import CondaPackRuntime, PluginBuildManifest
 from .project import PluginProject
 
 CHUNK_SIZE = 1024 * 1024
+# Measured on the 2-core deployment host against a 300MB slice of a docker save tar:
+# level 3 takes 5.4s / 86.6MB, level 10 takes 18.5s / 76.8MB and level 19 takes
+# 134.0s / 68.4MB. Extrapolated to a full ~1GB image that is roughly 1 minute versus
+# 7.5 minutes of pure CPU for about 12% more bytes, so 10 is the default. A build that
+# genuinely needs the last few percent can pass HUB_PLUGIN_ZSTD_LEVEL to raise it.
+DEFAULT_ZSTD_LEVEL = 10
+MAX_ZSTD_LEVEL = 22
 
 
 def create_plugin_package(
@@ -101,15 +108,39 @@ def content_sha256(content: Path | bytes) -> str:
     return sha256_file(content)
 
 
-def compress_zstd(source: Path, destination: Path) -> None:
+def zstd_level() -> int:
+    """Resolve the compression level, honouring a HUB_PLUGIN_ZSTD_LEVEL override.
+
+    An unset, unparsable or out-of-range value falls back to DEFAULT_ZSTD_LEVEL so a
+    mistyped environment variable cannot break a build.
+    """
+    raw = os.environ.get("HUB_PLUGIN_ZSTD_LEVEL", "").strip()
+    if not raw:
+        return DEFAULT_ZSTD_LEVEL
+    try:
+        level = int(raw)
+    except ValueError:
+        return DEFAULT_ZSTD_LEVEL
+    if not 1 <= level <= MAX_ZSTD_LEVEL:
+        return DEFAULT_ZSTD_LEVEL
+    return level
+
+
+def compress_zstd(source: Path, destination: Path, level: int | None = None) -> None:
+    """Compress ``source`` into ``destination``, writing atomically via a temp file.
+
+    ``level`` defaults to the resolved zstd_level(); callers that need a fixed level
+    (tests, benchmarks) can pass one explicitly.
+    """
+    chosen = zstd_level() if level is None else level
     temporary = destination.with_name(f".{destination.name}.tmp")
     try:
         with (
             source.open("rb") as input_file,
             temporary.open("wb") as output_file,
-            zstandard.ZstdCompressor(level=19, threads=0, write_checksum=True).stream_writer(
-                output_file
-            ) as compressor,
+            zstandard.ZstdCompressor(
+                level=chosen, threads=0, write_checksum=True
+            ).stream_writer(output_file) as compressor,
         ):
             shutil.copyfileobj(input_file, compressor, length=CHUNK_SIZE)
         os.replace(temporary, destination)
