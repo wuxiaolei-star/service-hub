@@ -1,8 +1,16 @@
 import logging
+import sys
 from pathlib import Path
 
 import pytest
 from python_hub_sdk import PluginCancelledError, PluginContext
+
+# Symlink escape checks depend on OS level symlink semantics (developer mode and
+# sandbox behaviour on Windows vary per machine), so they are enforced on POSIX.
+POSIX_SYMLINK = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="symlink escape checks rely on POSIX symlink semantics",
+)
 
 
 class RecordingEventSink:
@@ -179,6 +187,7 @@ def test_path_helpers_reject_non_protocol_lexical_paths(tmp_path: Path, path: st
         context.work_file(path)
 
 
+@POSIX_SYMLINK
 def test_output_file_rejects_existing_symlink_that_escapes_root(tmp_path: Path) -> None:
     context = _context(tmp_path)
     output_root = tmp_path / "output"

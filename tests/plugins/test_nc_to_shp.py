@@ -144,6 +144,34 @@ def test_converter_rejects_time_range_beyond_selected_metric(
     assert raised.value.code == "NC_TIME_RANGE_INVALID"
 
 
+def test_converter_rejects_input_that_is_not_hdf5(
+    tmp_path: Path, plugin_context: PluginContext
+) -> None:
+    """A non-NC file used to surface as a bare h5py OSError (file signature not found)."""
+    broken = tmp_path / "broken.nc"
+    broken.write_bytes(b"this is not a NetCDF file\n")
+    source = _input_file(broken, plugin_context)
+
+    with pytest.raises(PluginValidationError) as raised:
+        run(_valid_params(), {"source_nc": source}, plugin_context)
+
+    assert raised.value.code == "NC_FILE_INVALID"
+
+
+def test_converter_rejects_netcdf3_classic_input(
+    tmp_path: Path, plugin_context: PluginContext
+) -> None:
+    """NetCDF-3 is a valid NetCDF file this plugin cannot read, so it needs its own code."""
+    classic = tmp_path / "classic.nc"
+    classic.write_bytes(b"CDF\x01" + b"\x00" * 512)
+    source = _input_file(classic, plugin_context)
+
+    with pytest.raises(PluginValidationError) as raised:
+        run(_valid_params(), {"source_nc": source}, plugin_context)
+
+    assert raised.value.code == "NC_FILE_UNSUPPORTED_FORMAT"
+
+
 @pytest.mark.skipif(
     importlib.util.find_spec("osgeo") is None,
     reason="GDAL/OGR is unavailable",

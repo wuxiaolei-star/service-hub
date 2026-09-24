@@ -3,7 +3,10 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 RELEASE_ROOT = Path("deploy/release")
 SCRIPT_NAMES = {
@@ -13,6 +16,14 @@ SCRIPT_NAMES = {
     "stop.sh",
     "status.sh",
 }
+
+# The scripts under deploy/release are POSIX shell that must be executed to be
+# verified. On Windows "bash" resolves to the WSL launcher, so running them from
+# a native Windows checkout is not possible; the checks stay enforced on Linux.
+POSIX_BASH = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="release scripts need a POSIX bash; Windows maps bash to WSL",
+)
 
 
 def _read_script(name: str) -> str:
@@ -199,6 +210,7 @@ def test_install_script_preserves_existing_env_and_loads_image() -> None:
     assert "/srv/service-hub-data" in source
 
 
+@POSIX_BASH
 def test_install_writes_normalized_absolute_data_dir(tmp_path: Path) -> None:
     release_dir, fake_bin, _docker_log = _prepare_release_fixture(tmp_path)
     raw_data_dir = f"{_bash_path(tmp_path / 'data-parent')}/../normalized-data"
@@ -217,6 +229,7 @@ def test_install_writes_normalized_absolute_data_dir(tmp_path: Path) -> None:
     )
 
 
+@POSIX_BASH
 def test_install_rejects_broad_normalized_data_dir_before_installing(
     tmp_path: Path,
 ) -> None:
@@ -237,6 +250,7 @@ def test_install_rejects_broad_normalized_data_dir_before_installing(
     assert not (release_dir / ".env").exists()
 
 
+@POSIX_BASH
 def test_start_rejects_existing_env_with_broad_dotdot_path(tmp_path: Path) -> None:
     release_dir, fake_bin, docker_log = _prepare_release_fixture(tmp_path)
     (release_dir / ".env").write_text("HUB_HOST_DATA_DIR=/srv/foo/../..\n", encoding="utf-8")
@@ -265,6 +279,7 @@ def test_lifecycle_scripts_use_single_service_without_removing_data() -> None:
     assert "docker compose down" not in status
 
 
+@POSIX_BASH
 def test_status_reports_unavailable_hub_health_without_traceback(tmp_path: Path) -> None:
     release_dir, fake_bin, _docker_log = _prepare_release_fixture(tmp_path)
 

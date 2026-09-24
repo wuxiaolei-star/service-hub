@@ -17,6 +17,9 @@ from scipy import sparse  # type: ignore[import-untyped]
 INVALID_VALUE: Final = 9999.0
 OUTPUT_INVALID_VALUE: Final = -9999.0
 _EPSG_PATTERN = re.compile(r"^EPSG:([1-9][0-9]*)$", re.IGNORECASE)
+# NetCDF-3 classic / 64-bit offset / CDF-5 magic numbers: valid NetCDF files that
+# h5py cannot read at all, so they deserve their own error code.
+_NC3_SIGNATURES: Final = (b"CDF\x01", b"CDF\x02", b"CDF\x05")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +83,7 @@ def convert_nc(
     progress: Callable[[int, str], None],
 ) -> ConversionSummary:
     """Validate and convert selected metric/time slices into PointZ Shapefiles."""
+    _ensure_hdf5_source(source)
     output_dir.mkdir(parents=True, exist_ok=True)
     with h5py.File(source, "r") as nc_file:
         if group_name not in nc_file or not isinstance(nc_file[group_name], h5py.Group):
@@ -278,3 +282,42 @@ def _write_pointz(
 
 def _invalid(code: str, message: str, details: object = None) -> NoReturn:
     raise PluginValidationError(code=code, message=message, details=details)
+
+
+def _ensure_hdf5_source(source: Path) -> None:
+    """Reject non-HDF5 inputs before h5py raises a bare ``OSError``.
+
+    In production an automated schedule fed a file that was not a NetCDF-4/HDF5
+    file at all; h5py answered with ``Unable to synchronously open file (file
+    signature not found)``, which surfaced as an opaque "plugin failed" job.
+    Validating the magic number first turns that into an actionable code, and
+    NetCDF-3 classic files get their own code because they are valid NetCDF
+    files that this plugin simply cannot read.
+    """
+    if not source.is_file():
+        _invalid("NC_FILE_NOT_FOUND", "NC 输入文件不存在", {"path": str(source)})
+    size = source.stat().st_size
+    if size == 0:
+        _invalid("NC_FILE_EMPTY", "NC 输入文件为空", {"path": str(source)})
+    with source.open("rb") as handle:
+        signature = handle.read(4)
+    if signature in _NC3_SIGNATURES:
+        _invalid(
+            "NC_FILE_UNSUPPORTED_FORMAT",
+            "不支持 NetCDF-3 经典/64 位格式, 仅支持 NetCDF-4 (HDF5)",
+            {"path": str(source), "size": size},
+        )
+    try:
+        is_hdf5 = h5py.is_hdf5(source)
+    except OSError as error:  # pragma: no cover - filesystem level failure
+        _invalid(
+            "NC_FILE_UNREADABLE",
+            "NC 输入文件无法读取",
+            {"path": str(source), "reason": str(error)},
+        )
+    if not is_hdf5:
+        _invalid(
+            "NC_FILE_INVALID",
+            "输入文件不是有效的 NetCDF-4/HDF5 文件 (文件签名不匹配)",
+            {"path": str(source), "size": size},
+        )
