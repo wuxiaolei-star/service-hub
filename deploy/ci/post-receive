@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Git post-receive hook: deploy whatever ref was pushed to the bare repo.
+#
+# Install (once, on the deployment host):
+#   git init --bare /opt/service-hub/repo.git
+#   cp deploy/ci/post-receive /opt/service-hub/repo.git/hooks/post-receive
+#   chmod +x /opt/service-hub/repo.git/hooks/post-receive
+#
+# Developer side:
+#   git remote add deploy ssh://root@<host>/opt/service-hub/repo.git
+#   git push deploy main
+#
+# Only branches listed in DEPLOY_BRANCHES trigger a deployment; other refs are ignored.
+set -u
+
+REMOTE_DIR="${REMOTE_DIR:-/opt/service-hub}"
+DEPLOY_BRANCHES="${DEPLOY_BRANCHES:-main master}"
+LOG_DIR="$REMOTE_DIR/logs"
+mkdir -p "$LOG_DIR"
+
+while read -r _oldrev _newrev refname; do
+  branch="${refname#refs/heads/}"
+  match=0
+  for allowed in $DEPLOY_BRANCHES; do
+    [ "$branch" = "$allowed" ] && match=1
+  done
+  if [ "$match" -ne 1 ]; then
+    echo "post-receive: $branch is not a deploy branch, skipping"
+    continue
+  fi
+
+  run_log="$LOG_DIR/deploy-$(date +%Y%m%d-%H%M%S).log"
+  # The pipeline checks out the ref itself, so export the work tree first.
+  if [ -x "$REMOTE_DIR/deploy/ci/deploy-pipeline.sh" ]; then
+    pipeline="$REMOTE_DIR/deploy/ci/deploy-pipeline.sh"
+  else
+    git --work-tree="$REMOTE_DIR/src" --git-dir="$REMOTE_DIR/repo.git" \
+      checkout -f "$branch" -- deploy/ci 2>/dev/null || true
+    pipeline="$REMOTE_DIR/src/deploy/ci/deploy-pipeline.sh"
+  fi
+
+  echo "post-receive: deploying $branch -> logging to $run_log"
+  if bash "$pipeline" "$_newrev" 2>&1 | tee "$run_log"; then
+    echo "post-receive: deployment SUCCEEDED"
+  else
+    echo "post-receive: deployment FAILED, see $run_log"
+  fi
+done
