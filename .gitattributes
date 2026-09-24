@@ -12,3 +12,4 @@
 tools/hubctl     text eol=lf
 Dockerfile       text eol=lf
 **/Dockerfile    text eol=lf
+deploy/ci/post-receive text eol=lf
