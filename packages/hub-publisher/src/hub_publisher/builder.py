@@ -8,14 +8,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import IO, Protocol
 
 from python_hub_contracts import PluginBuildManifest
 
-from .archive import compress_zstd, create_plugin_package, sha256_file
+from .archive import compress_zstd, compress_zstd_stream, create_plugin_package, sha256_file
 from .project import (
     Architecture,
     PluginProject,
@@ -41,8 +42,9 @@ class CommandRunner(Protocol):
         env: dict[str, str] | None = None,
         stdout: Path | None = None,
         capture_stdout: bool = False,
+        stream: Callable[[IO[bytes]], None] | None = None,
     ) -> CommandResult:
-        """Run a command and optionally stream stdout to a file."""
+        """Run a command, optionally spooling stdout to a file or into a consumer."""
 
 
 def build_plugin(
@@ -242,16 +244,24 @@ def _build_docker_runtime(
     pip_index_url = os.environ.get("HUB_PLUGIN_PIP_INDEX_URL", "").strip()
     if pip_index_url:
         command += ["--build-arg", f"PIP_INDEX_URL={pip_index_url}"]
+    # Same for the distro archive: the apt layer is the other slow download, spending
+    # ~350 s per package against the default mirror on the reference host.
+    apt_mirror = os.environ.get("HUB_PLUGIN_APT_MIRROR", "").strip()
+    if apt_mirror:
+        command += ["--build-arg", f"APT_MIRROR={apt_mirror}"]
     command += ["--tag", image, str(context)]
     runner(command)
     digest = runner(
         ["docker", "image", "inspect", "--format", "{{.Id}}", image],
         capture_stdout=True,
     ).stdout.strip()
-    raw_archive = temporary / "image.tar"
-    runner(["docker", "image", "save", image], stdout=raw_archive)
+    # Stream docker save straight into the zstd frame: spooling the ~1GB tar first
+    # costs a full write plus a full read of it.
     archive = temporary / "image.tar.zst"
-    compress_zstd(raw_archive, archive)
+    runner(
+        ["docker", "image", "save", image],
+        stream=lambda source: compress_zstd_stream(source, archive),
+    )
     return archive, _sha256_value(digest.removeprefix("sha256:"))
 
 
@@ -261,7 +271,21 @@ def _run_command(
     env: dict[str, str] | None = None,
     stdout: Path | None = None,
     capture_stdout: bool = False,
+    stream: Callable[[IO[bytes]], None] | None = None,
 ) -> CommandResult:
+    if stream is not None:
+        with subprocess.Popen(command, env=env, stdout=subprocess.PIPE) as process:
+            assert process.stdout is not None
+            try:
+                stream(process.stdout)
+            except BaseException:
+                process.kill()
+                raise
+            returncode = process.wait()
+        # A failed producer must not leave its truncated output committed.
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, command)
+        return CommandResult(stdout="")
     if stdout is None:
         result = subprocess.run(
             command,

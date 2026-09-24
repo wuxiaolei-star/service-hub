@@ -10,6 +10,7 @@ import re
 import shutil
 import tarfile
 from pathlib import Path, PurePosixPath
+from typing import IO
 
 import zstandard
 from python_hub_contracts import CondaPackRuntime, PluginBuildManifest
@@ -132,17 +133,29 @@ def compress_zstd(source: Path, destination: Path, level: int | None = None) -> 
     ``level`` defaults to the resolved zstd_level(); callers that need a fixed level
     (tests, benchmarks) can pass one explicitly.
     """
+    with source.open("rb") as input_file:
+        compress_zstd_stream(input_file, destination, level=level)
+
+
+def compress_zstd_stream(
+    source: IO[bytes], destination: Path, level: int | None = None
+) -> None:
+    """Compress an already open byte stream into ``destination``.
+
+    Lets a producer (``docker image save``) stream straight into the zstd frame instead
+    of spooling a ~1GB tar to disk first, which saves one full write plus one full read
+    of that tar and keeps peak disk usage down by the same amount.
+    """
     chosen = zstd_level() if level is None else level
     temporary = destination.with_name(f".{destination.name}.tmp")
     try:
         with (
-            source.open("rb") as input_file,
             temporary.open("wb") as output_file,
             zstandard.ZstdCompressor(
                 level=chosen, threads=0, write_checksum=True
             ).stream_writer(output_file) as compressor,
         ):
-            shutil.copyfileobj(input_file, compressor, length=CHUNK_SIZE)
+            shutil.copyfileobj(source, compressor, length=CHUNK_SIZE)
         os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)

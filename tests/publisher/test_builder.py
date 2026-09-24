@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import IO
 
 import pytest
 from hub_publisher.builder import CommandResult, build_plugin
@@ -13,6 +16,7 @@ from tests.publisher.test_project import _write_project
 class FakeCommandRunner:
     def __init__(self, tmp_path: Path, digest: str = "d" * 64) -> None:
         self.calls: list[tuple[list[str], dict[str, str] | None, bool]] = []
+        self.streamed: list[list[str]] = []
         self.tmp_path = tmp_path
         self.digest = digest
 
@@ -23,6 +27,7 @@ class FakeCommandRunner:
         env: dict[str, str] | None = None,
         stdout: Path | None = None,
         capture_stdout: bool = False,
+        stream: Callable[[IO[bytes]], None] | None = None,
     ) -> CommandResult:
         self.calls.append((command, env, capture_stdout))
         if command[:4] == [sys.executable, "-m", "pip", "wheel"]:
@@ -36,8 +41,13 @@ class FakeCommandRunner:
         elif command[:4] == ["docker", "image", "inspect", "--format"]:
             return CommandResult(stdout=f"sha256:{self.digest}\n")
         elif command[:3] == ["docker", "image", "save"]:
-            assert stdout is not None
-            stdout.write_bytes(b"docker image")
+            assert stdout is not None or stream is not None
+            self.streamed.append(command)
+            if stream is not None:
+                stream(io.BytesIO(b"docker image"))
+            else:
+                assert stdout is not None
+                stdout.write_bytes(b"docker image")
         return CommandResult(stdout="")
 
 
@@ -157,3 +167,61 @@ def test_docker_builder_passes_the_pip_mirror_when_configured(
         command for command, _env, _cap in runner.calls if command[:2] == ["docker", "build"]
     )
     assert "PIP_INDEX_URL=https://mirrors.example.com/pypi/simple" in docker_build
+
+
+def test_docker_builder_omits_the_apt_mirror_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unset mirror must leave the build arg out, keeping offline builds identical."""
+    monkeypatch.delenv("HUB_PLUGIN_APT_MIRROR", raising=False)
+    _write_project(tmp_path / "project")
+    (tmp_path / "project" / "Dockerfile").write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    project = PluginProject.load(tmp_path / "project")
+    runner = FakeCommandRunner(tmp_path)
+
+    build_plugin(
+        project, "docker", "amd64", tmp_path / "out", command_runner=runner, source_date_epoch=0
+    )
+
+    docker_build = next(
+        command for command, _env, _cap in runner.calls if command[:2] == ["docker", "build"]
+    )
+    assert not any("APT_MIRROR" in part for part in docker_build)
+
+
+def test_docker_builder_passes_the_apt_mirror_when_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The apt layer is the other multi-minute download; the mirror has to reach it."""
+    monkeypatch.setenv("HUB_PLUGIN_APT_MIRROR", "https://mirrors.example.com")
+    _write_project(tmp_path / "project")
+    (tmp_path / "project" / "Dockerfile").write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    project = PluginProject.load(tmp_path / "project")
+    runner = FakeCommandRunner(tmp_path)
+
+    build_plugin(
+        project, "docker", "amd64", tmp_path / "out", command_runner=runner, source_date_epoch=0
+    )
+
+    docker_build = next(
+        command for command, _env, _cap in runner.calls if command[:2] == ["docker", "build"]
+    )
+    assert "APT_MIRROR=https://mirrors.example.com" in docker_build
+
+
+def test_docker_save_streams_straight_into_the_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spooling a ~1GB tar to disk costs a full write plus a full read of it."""
+    monkeypatch.delenv("HUB_PLUGIN_APT_MIRROR", raising=False)
+    _write_project(tmp_path / "project")
+    (tmp_path / "project" / "Dockerfile").write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    project = PluginProject.load(tmp_path / "project")
+    runner = FakeCommandRunner(tmp_path)
+
+    package = build_plugin(
+        project, "docker", "amd64", tmp_path / "out", command_runner=runner, source_date_epoch=0
+    )
+
+    assert runner.streamed == [["docker", "image", "save", "sample_plugin:1.2.3-linux-amd64"]]
+    assert package.exists()

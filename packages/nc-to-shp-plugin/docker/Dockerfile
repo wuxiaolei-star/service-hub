@@ -7,8 +7,14 @@ ARG SOURCE_SHA256
 # pypi.org served these wheels at ~34 kB/s while mirrors.aliyun.com managed ~13 MB/s,
 # turning a ~40 minute dependency install into roughly one minute.
 ARG PIP_INDEX_URL=""
+# Same idea for the distro archive. The base image is Ubuntu, whose sources point at
+# archive.ubuntu.com; on the reference host that mirror answers at a few tens of kB/s
+# (~350 s per package), while a regional mirror finishes the apt layer in seconds.
+# Only the host part is rewritten, so APT_MIRROR stays a mirror root exactly like in
+# the main Dockerfile (https://mirrors.aliyun.com, not .../ubuntu).
+ARG APT_MIRROR=""
 LABEL org.opencontainers.image.title="nc_to_shp" \
-      org.opencontainers.image.version="1.0.0" \
+      org.opencontainers.image.version="1.0.1" \
       io.python-service-hub.plugin-source-sha256="${SOURCE_SHA256}"
 
 # The base image provides the GDAL Python bindings (osgeo) through the distro, but it
@@ -21,7 +27,18 @@ LABEL org.opencontainers.image.title="nc_to_shp" \
 # installs, the distro's numpy is shadowed instead of uninstalled, and osgeo stays
 # importable from the parent interpreter.
 USER root
-RUN apt-get update \
+# Ubuntu 24.04 keeps its sources in the deb822 ubuntu.sources file; older or slim
+# variants use /etc/apt/sources.list instead. Both are rewritten when a mirror is set,
+# and an unset mirror leaves the layer byte-identical to an offline build.
+RUN set -eux; \
+    if [ -n "$APT_MIRROR" ]; then \
+      for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do \
+        if [ -f "$f" ]; then \
+          sed -i -E "s#https?://(archive|ports|security)\.ubuntu\.com#${APT_MIRROR}#g" "$f"; \
+        fi; \
+      done; \
+    fi; \
+    apt-get update \
     && apt-get install --no-install-recommends -y python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv --system-site-packages /opt/venv

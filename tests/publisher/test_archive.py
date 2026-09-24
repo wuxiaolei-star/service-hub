@@ -13,6 +13,7 @@ import zstandard
 from hub_publisher.archive import (
     DEFAULT_ZSTD_LEVEL,
     compress_zstd,
+    compress_zstd_stream,
     create_plugin_package,
     validate_package_member_name,
     zstd_level,
@@ -217,6 +218,26 @@ def test_compress_zstd_roundtrip_uses_default_level(
     ).read() == source.read_bytes()
     # Level 10 must actually be in use: it beats level 3 on size.
     assert destination.stat().st_size < slower.stat().st_size
+
+
+def test_compress_zstd_stream_matches_file_compression(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Streaming a producer straight into zstd must produce the same payload."""
+    monkeypatch.delenv("HUB_PLUGIN_ZSTD_LEVEL", raising=False)
+    source = tmp_path / "payload.bin"
+    source.write_bytes(_mixed_payload())
+
+    from_file = tmp_path / "from-file.zst"
+    from_stream = tmp_path / "from-stream.zst"
+    compress_zstd(source, from_file)
+    with source.open("rb") as stream:
+        compress_zstd_stream(stream, from_stream)
+
+    assert zstandard.ZstdDecompressor().stream_reader(
+        io.BytesIO(from_stream.read_bytes())
+    ).read() == source.read_bytes()
+    assert from_stream.stat().st_size == from_file.stat().st_size
 
 
 def test_compress_zstd_explicit_level_overrides_environment(
