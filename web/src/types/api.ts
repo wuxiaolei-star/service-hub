@@ -173,4 +173,17 @@ export interface JobListResponse {
   total: number
 }
 
+export interface JobStatsBucket {
+  date: string
+  count: number
+  success_count: number
+  p50_ms: number | null
+  p95_ms: number | null
+}
+
+export interface JobStatsResponse {
+  days: number
+  buckets: JobStatsBucket[]
+}
+
 export type UploadProgressHandler = (percent: number) => void

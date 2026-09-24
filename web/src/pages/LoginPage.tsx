@@ -25,7 +25,7 @@ export default function LoginPage() {
         display: 'grid',
         placeItems: 'center',
         minHeight: '100vh',
-        background: '#f4f8fd',
+        background: 'var(--app-bg-layout)',
       }}
     >
       <Card style={{ width: 380 }}>

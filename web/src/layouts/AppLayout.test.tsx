@@ -1,8 +1,13 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { vi } from 'vitest'
+import { beforeEach, vi } from 'vitest'
 import App from '../App'
 import '../styles.css'
+
+beforeEach(() => {
+  window.localStorage.clear()
+  document.documentElement.dataset.theme = 'light'
+})
 
 vi.mock('../api/auth', () => ({
   fetchMe: vi.fn().mockResolvedValue({
@@ -65,4 +70,36 @@ test('renders a pale, accessible, collapsible service navigation shell', async (
   expect(toggle).toHaveAccessibleName('展开侧边栏')
   expect(toggle).toHaveAttribute('aria-expanded', 'false')
   expect(sidebar).toHaveClass('ant-layout-sider-collapsed')
+})
+
+test('mirrors an explicit dark-mode choice onto the document and persists it', async () => {
+  render(<App />)
+
+  await screen.findByText(/admin/)
+  expect(document.documentElement.dataset.theme).toBe('light')
+
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '切换为深色' }))
+
+  expect(document.documentElement.dataset.theme).toBe('dark')
+  expect(window.localStorage.getItem('service-hub.theme-mode')).toBe('dark')
+  expect(screen.getByRole('button', { name: '切换为浅色' })).toBeInTheDocument()
+})
+
+test('starts dark when the OS prefers dark and no choice was made', async () => {
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes('prefers-color-scheme: dark'),
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia
+
+  render(<App />)
+
+  await screen.findByText(/admin/)
+  expect(document.documentElement.dataset.theme).toBe('dark')
 })

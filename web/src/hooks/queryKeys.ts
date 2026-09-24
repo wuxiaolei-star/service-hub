@@ -42,6 +42,7 @@ export const queryKeys = {
       ['jobs', 'logs', jobId, { cursor, limit }] as const,
     outputs: (jobId: string) => ['jobs', 'outputs', jobId] as const,
     callbacks: (jobKey: string) => ['jobs', 'callbacks', jobKey] as const,
+    stats: (days = 14) => ['jobs', 'stats', { days }] as const,
   },
   schedules: {
     list: (filters: QueryFilters = {}) => ['schedules', 'list', filters] as const,

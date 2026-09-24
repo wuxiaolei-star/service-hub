@@ -9,8 +9,9 @@ import {
 } from '@ant-design/icons'
 import { Card, Empty, Segmented, Skeleton, Statistic, Table, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { listJobs } from '../api/jobs'
+import { getJobStats, listJobs } from '../api/jobs'
 import { listPluginBuilds, listPlugins } from '../api/plugins'
+import DurationTrendChart from '../components/DurationTrendChart'
 import HubErrorAlert from '../components/HubErrorAlert'
 import PageHeader from '../components/PageHeader'
 import StatusTag from '../components/StatusTag'
@@ -41,6 +42,7 @@ export default function DashboardPage() {
   const plugins = useQuery({ queryKey: queryKeys.plugins.list(), queryFn: listPlugins })
   const builds = useQuery({ queryKey: queryKeys.plugins.builds(), queryFn: () => listPluginBuilds() })
   const jobs = useQuery({ queryKey: queryKeys.jobs.list(), queryFn: () => listJobs() })
+  const stats = useQuery({ queryKey: queryKeys.jobs.stats(), queryFn: () => getJobStats() })
   const isLoading = plugins.isLoading || builds.isLoading || jobs.isLoading
   const error = plugins.error ?? builds.error ?? jobs.error
   const summary = useMemo(() => {
@@ -147,6 +149,16 @@ export default function DashboardPage() {
               <Statistic title="已注册插件" value={summary.pluginCount} />
             </Card>
           </div>
+          <Card style={{ marginTop: 16 }}>
+            <Typography.Title level={4} style={{ margin: 0, marginBottom: 8 }}>任务耗时趋势</Typography.Title>
+            {stats.isLoading ? (
+              <Skeleton active paragraph={{ rows: 4 }} style={{ marginTop: 8 }} />
+            ) : stats.error !== null && stats.error !== undefined ? (
+              <HubErrorAlert error={dashboardError(stats.error)} onRetry={() => void stats.refetch()} />
+            ) : (
+              <DurationTrendChart buckets={stats.data?.buckets ?? []} />
+            )}
+          </Card>
           <Card style={{ marginTop: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
               <Typography.Title level={4} style={{ margin: 0 }}>最近任务（最多 100 条）</Typography.Title>

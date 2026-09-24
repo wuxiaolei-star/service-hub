@@ -1,5 +1,7 @@
 import {
   AppstoreOutlined,
+  BulbFilled,
+  BulbOutlined,
   DeploymentUnitOutlined,
   CloudOutlined,
   CloudDownloadOutlined,
@@ -24,6 +26,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { getHealth } from '../api/system'
 import { fetchMe, logout } from '../api/auth'
 import { queryKeys } from '../hooks/queryKeys'
+import { useThemeMode } from '../theme/themeMode'
 
 const menuItems: MenuProps['items'] = [
   {
@@ -143,6 +146,8 @@ export default function AppLayout() {
     queryFn: getHealth,
     refetchInterval: (query) => (query.state.error !== null ? 60_000 : 30_000),
   })
+  const { mode, toggleMode } = useThemeMode()
+  const isDark = mode === 'dark'
   const healthLabel = health.data?.status === 'UP' ? '服务正常' : health.isError ? '服务离线' : '状态未知'
   const healthStatus = health.data?.status === 'UP' ? 'success' : health.isError ? 'error' : 'default'
 
@@ -202,6 +207,14 @@ export default function AppLayout() {
         <Layout.Header className="app-header">
           <Breadcrumb items={breadcrumbItems(pathname)} />
           <Space>
+            <Tooltip title={isDark ? '切换为浅色' : '切换为深色'}>
+              <Button
+                type="text"
+                aria-label={isDark ? '切换为浅色' : '切换为深色'}
+                icon={isDark ? <BulbFilled /> : <BulbOutlined />}
+                onClick={toggleMode}
+              />
+            </Tooltip>
             <Typography.Text type="secondary">服务状态</Typography.Text>
             <Badge status={healthStatus} text={healthLabel} />
             {me.data !== undefined && (

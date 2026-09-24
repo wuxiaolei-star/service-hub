@@ -5,6 +5,7 @@ import type {
   JobListResponse,
   JobLogResponse,
   JobOutputsResponse,
+  JobStatsResponse,
 } from '../types/api'
 import { apiClient } from './client'
 
@@ -75,6 +76,12 @@ export async function rerunJob(jobKey: string): Promise<Job> {
 
 export async function getJob(jobId: string): Promise<Job> {
   const response = await apiClient.get<Job>(`/jobs/${encodeURIComponent(jobId)}`)
+  return response.data
+}
+
+/** Daily job-count and duration percentiles for the dashboard trend chart. */
+export async function getJobStats(days = 14): Promise<JobStatsResponse> {
+  const response = await apiClient.get<JobStatsResponse>('/jobs/stats', { params: { days } })
   return response.data
 }
 

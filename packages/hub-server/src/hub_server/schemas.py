@@ -124,6 +124,21 @@ class JobListResponse(BaseModel):
     total: int = 0
 
 
+class JobStatsBucket(BaseModel):
+    """Per-day Job volume and duration percentiles for one UTC calendar day."""
+
+    date: str
+    count: int
+    success_count: int
+    p50_ms: int | None = None
+    p95_ms: int | None = None
+
+
+class JobStatsResponse(BaseModel):
+    days: int
+    buckets: list[JobStatsBucket]
+
+
 class FileListResponse(BaseModel):
     items: list[FileResponse]
 

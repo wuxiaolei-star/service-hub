@@ -3,13 +3,14 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { vi } from 'vitest'
 import DashboardPage from './DashboardPage'
-import { listJobs } from '../api/jobs'
+import { getJobStats, listJobs } from '../api/jobs'
 import { listPluginBuilds, listPlugins } from '../api/plugins'
 
-vi.mock('../api/jobs', () => ({ listJobs: vi.fn() }))
+vi.mock('../api/jobs', () => ({ listJobs: vi.fn(), getJobStats: vi.fn() }))
 vi.mock('../api/plugins', () => ({ listPlugins: vi.fn(), listPluginBuilds: vi.fn() }))
 
 const mockedListJobs = vi.mocked(listJobs)
+const mockedGetJobStats = vi.mocked(getJobStats)
 const mockedListPlugins = vi.mocked(listPlugins)
 const mockedListPluginBuilds = vi.mocked(listPluginBuilds)
 
@@ -36,6 +37,7 @@ describe('DashboardPage', () => {
       { build_id: 'build-2', plugin_id: 'nc-to-shp', version: '1.0.0', runtime_type: 'conda-pack', target_os: 'linux', target_arch: 'amd64', status: 'READY', package_sha256: 'a', runtime_fingerprint: 'b', error_summary: null },
     ] })
     mockedListJobs.mockResolvedValue({ items: [{ job_id: 'job-1', plugin_id: 'nc-to-shp', version: '1.0.0', build_id: 'build-1', runtime_type: 'docker', status: 'SUCCESS', cancel_requested: false, error_summary: null, created_at: '2026-09-13T08:00:00Z', started_at: null, finished_at: null, replayed_from: null }], total: 1 })
+    mockedGetJobStats.mockResolvedValue({ days: 14, buckets: [] })
 
     renderPage()
 
@@ -48,10 +50,29 @@ describe('DashboardPage', () => {
     expect(screen.getByLabelText('状态：成功')).toBeInTheDocument()
   })
 
+  test('shows the duration trend card when job stats load', async () => {
+    mockedListPlugins.mockResolvedValue({ items: [] })
+    mockedListPluginBuilds.mockResolvedValue({ items: [] })
+    mockedListJobs.mockResolvedValue({ items: [], total: 0 })
+    mockedGetJobStats.mockResolvedValue({
+      days: 14,
+      buckets: [
+        { date: '2026-09-11', count: 5, success_count: 3, p50_ms: 1000, p95_ms: 5000 },
+        { date: '2026-09-12', count: 2, success_count: 2, p50_ms: null, p95_ms: null },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByRole('heading', { name: '任务耗时趋势' })).toBeInTheDocument()
+    expect(screen.getByTestId('duration-trend-chart')).toBeInTheDocument()
+  })
+
   test('shows loading placeholders while summary queries are pending', () => {
     mockedListPlugins.mockReturnValue(new Promise(() => {}))
     mockedListPluginBuilds.mockReturnValue(new Promise(() => {}))
     mockedListJobs.mockReturnValue(new Promise(() => {}))
+    mockedGetJobStats.mockReturnValue(new Promise(() => {}))
 
     renderPage()
 
@@ -62,6 +83,7 @@ describe('DashboardPage', () => {
     mockedListPlugins.mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce({ items: [] })
     mockedListPluginBuilds.mockResolvedValue({ items: [] })
     mockedListJobs.mockResolvedValue({ items: [], total: 0 })
+    mockedGetJobStats.mockResolvedValue({ days: 14, buckets: [] })
 
     const { user } = renderPage() as ReturnType<typeof render> & { user?: never }
     expect(await screen.findByRole('alert')).toHaveTextContent('network down')

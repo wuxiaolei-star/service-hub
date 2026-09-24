@@ -5,7 +5,8 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Iterator, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from statistics import quantiles
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -26,6 +27,8 @@ from hub_server.schemas import (
     JobLogResponse,
     JobOutputsResponse,
     JobResponse,
+    JobStatsBucket,
+    JobStatsResponse,
 )
 from hub_server.services.audit import record as audit
 from hub_server.services.jobs import JobService
@@ -124,6 +127,48 @@ def list_jobs(
         offset=offset,
     )
     return JobListResponse(items=[_job_response(job) for job in jobs], total=total)
+
+
+# Registered before the "/{job_key}" routes so "stats" is never read as a key.
+@router.get("/stats", response_model=JobStatsResponse)
+def job_stats(
+    session: Annotated[Session, Depends(get_session)],
+    days: Annotated[int, Query(ge=1, le=90)] = 14,
+) -> JobStatsResponse:
+    """Aggregate per-day Job volume and duration percentiles over the last N days."""
+    today = datetime.now(UTC).date()
+    start_day = today - timedelta(days=days - 1)
+    day_keys = [(start_day + timedelta(days=offset)).isoformat() for offset in range(days)]
+    cutoff = datetime(start_day.year, start_day.month, start_day.day, tzinfo=UTC)
+
+    counts: dict[str, int] = {}
+    success_counts: dict[str, int] = {}
+    durations: dict[str, list[int]] = {}
+    for job in session.scalars(select(Job).where(Job.created_at >= cutoff)):
+        day_key = _utc_timestamp(job.created_at).date().isoformat()
+        if day_key not in day_keys:
+            continue
+        counts[day_key] = counts.get(day_key, 0) + 1
+        if job.status == JobStatus.SUCCESS.value:
+            success_counts[day_key] = success_counts.get(day_key, 0) + 1
+        if job.started_at is not None and job.finished_at is not None:
+            durations.setdefault(day_key, []).append(
+                _duration_ms(job.started_at, job.finished_at)
+            )
+
+    buckets: list[JobStatsBucket] = []
+    for day_key in day_keys:
+        p50, p95 = _percentiles_ms(durations.get(day_key, []))
+        buckets.append(
+            JobStatsBucket(
+                date=day_key,
+                count=counts.get(day_key, 0),
+                success_count=success_counts.get(day_key, 0),
+                p50_ms=p50,
+                p95_ms=p95,
+            )
+        )
+    return JobStatsResponse(days=days, buckets=buckets)
 
 
 # Registered before the "/{job_key}" routes so "export" is never read as a key.
@@ -342,6 +387,23 @@ def _utc_timestamp(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _duration_ms(started_at: datetime, finished_at: datetime) -> int:
+    """Elapsed time between two lifecycle timestamps, in whole milliseconds."""
+    start = _utc_timestamp(started_at)
+    finish = _utc_timestamp(finished_at)
+    return round((finish - start).total_seconds() * 1000)
+
+
+def _percentiles_ms(durations: Sequence[int]) -> tuple[int | None, int | None]:
+    """Return rounded P50/P95 for a day, or nulls when no task completed."""
+    if not durations:
+        return None, None
+    if len(durations) == 1:
+        return durations[0], durations[0]
+    points = quantiles(durations, n=20, method="inclusive")
+    return round(points[9]), round(points[18])
 
 
 def _file_summary(record: FileRecord) -> FileResponse:

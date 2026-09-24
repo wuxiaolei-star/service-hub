@@ -438,7 +438,7 @@ export default function ServicesPage() {
               overflow: 'auto',
               margin: 0,
               padding: 12,
-              background: '#f6f8fa',
+              background: 'var(--app-bg-subtle)',
               whiteSpace: 'pre-wrap',
             }}
           >
