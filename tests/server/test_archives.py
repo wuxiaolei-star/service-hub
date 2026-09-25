@@ -114,6 +114,25 @@ def test_valid_docker_package_selects_top_level_image_archive(tmp_path: Path) ->
     assert verified.archive.read_bytes() == b"runtime archive"
 
 
+def test_package_with_malformed_plugin_yaml_is_rejected_not_500(tmp_path: Path) -> None:
+    """A YAML error inside plugin.yaml is a client error, not an unexpected one.
+
+    Observed during B1: the capture set missed yaml.YAMLError, so a package whose
+    manifest breaks YAML parsing escaped as an unhandled 500 instead of 422.
+    """
+    upload, package_sha256 = _make_pypkg(
+        extra_members={"plugin.yaml": b"plugin:
+  id: [unclosed
+"}
+    )
+
+    with pytest.raises(HubError) as raised:
+        PluginArchiveService(tmp_path / "data").verify_and_install(upload, package_sha256)
+
+    assert raised.value.status_code == 422
+    assert raised.value.code == "PLUGIN_PACKAGE_INVALID"
+
+
 def test_package_rejects_member_not_listed_in_checksums(tmp_path: Path) -> None:
     """An unlisted regular member bypasses the package integrity allowlist."""
     upload, package_sha256 = _make_pypkg(

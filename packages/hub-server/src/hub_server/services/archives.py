@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Final
 from uuid import uuid4
 
+import yaml
 import zstandard
 from pydantic import ValidationError
 from python_hub_contracts import PluginBuildManifest, PluginManifest, load_plugin_manifest
@@ -108,7 +109,14 @@ class PluginArchiveService:
         except HubError:
             self._storage.discard_temporary_directory(temporary)
             raise
-        except (OSError, UnicodeError, ValueError, ValidationError, tarfile.TarError) as error:
+        except (
+            OSError,
+            UnicodeError,
+            ValueError,
+            yaml.YAMLError,  # a malformed plugin.yaml inside an otherwise valid layout
+            ValidationError,
+            tarfile.TarError,
+        ) as error:
             self._storage.discard_temporary_directory(temporary)
             raise self._invalid_error() from error
         except zstandard.ZstdError as error:
