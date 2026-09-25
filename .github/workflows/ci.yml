@@ -58,13 +58,29 @@ jobs:
       - name: pytest
         run: |
           python -m pytest -q | tee /tmp/pytest.log; exit ${PIPESTATUS[0]}
-      - name: Publish failing tests to the check summary
+      - name: Annotate failing tests (publicly readable via the checks API)
         if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          {
-            echo "### pytest tail (last 150 lines)"
-            tail -150 /tmp/pytest.log
-          } >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs"             --jq '.check_runs[] | select(.name=="Backend gate") | .id' > /tmp/check_id
+          python - <<'PY'
+          import json, os, urllib.request
+          failed = [line.split()[1] for line in open("/tmp/pytest.log") if line.startswith("FAILED ")]
+          check_id = open("/tmp/check_id").read().strip()
+          body = json.dumps({"annotations": [
+              {"path": ".github", "start_line": 1, "end_line": 1,
+               "annotation_level": "failure", "message": f"pytest failed: {name}"[:250],
+               "title": name[:60]}
+              for name in failed[:50]
+          ]})
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/check-runs/{check_id}/annotations",
+              data=body.encode(), method="POST",
+              headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                       "Accept": "application/vnd.github+json"})
+          urllib.request.urlopen(req)
+          PY
 
   # ---------------------------------------------------------------- web
   web:
