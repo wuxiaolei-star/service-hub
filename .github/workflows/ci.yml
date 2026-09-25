@@ -59,24 +59,10 @@ jobs:
       - name: pytest
         run: |
           python -m pytest -q | tee /tmp/pytest.log; exit ${PIPESTATUS[0]}
-      - name: Annotate failing tests (publicly readable via the checks API)
+      - name: Dump pytest tail into an issue (anonymous-diagnosis channel)
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python - <<'PY'
-          import json, urllib.request, os
-          token = os.environ['GH_TOKEN']
-          repo = os.environ['GITHUB_REPOSITORY']
-          sha = os.environ['GITHUB_SHA']
-          hdr = {'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json'}
-          req = urllib.request.Request('https://api.github.com/repos/' + repo + '/commits/' + sha + '/check-runs', headers=hdr)
-          runs = json.load(urllib.request.urlopen(req))['check_runs']
-          cid = [r['id'] for r in runs if r['name'] == 'Backend gate'][0]
-          failed = [l.split()[1] for l in open('/tmp/pytest.log', encoding='utf-8', errors='replace') if l.startswith('FAILED ')]
-          ann = [{'path': '.github', 'start_line': 1, 'end_line': 1, 'annotation_level': 'failure',
-                  'title': n[:60], 'message': ('pytest failed: ' + n)[:250]} for n in failed[:50]]
-          body = json.dumps({'annotations': ann}).encode()
-          req = urllib.request.Request('https://api.github.com/repos/' + repo + '/check-runs/' + str(cid) + '/annotations', data=body, method='POST', headers=hdr)
-          urllib.request.urlopen(req)
-          PY
+          python -c "import json; body = open('/tmp/pytest.log', encoding='utf-8', errors='replace').read()[-60000:]; open('/tmp/issue-body.json', 'w', encoding='utf-8').write(json.dumps({'title': 'CI pytest failure ' + __import__('os').environ['GITHUB_SHA'][:7], 'body': body}))"
+          curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" --data @/tmp/issue-body.json "https://api.github.com/repos/$GITHUB_REPOSITORY/issues"
