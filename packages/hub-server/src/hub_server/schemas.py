@@ -86,6 +86,7 @@ class PluginListResponse(BaseModel):
 
 class PluginBuildListResponse(BaseModel):
     items: list[PluginBuildResponse]
+    total: int = 0
 
 
 class JobCallbackRequest(BaseModel):

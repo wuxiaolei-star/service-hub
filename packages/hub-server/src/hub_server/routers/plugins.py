@@ -5,9 +5,9 @@ from __future__ import annotations
 import hashlib
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from python_hub_contracts import RuntimeType
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from hub_server.dependencies import get_session, get_settings, get_storage
@@ -119,21 +119,42 @@ def get_plugin_detail(
 @router.get("/plugin-builds", response_model=PluginBuildListResponse)
 def list_plugin_builds(
     session: Annotated[Session, Depends(get_session)],
-    plugin_id: str | None = None,
+    plugin_id: Annotated[str | None, Query(max_length=64)] = None,
+    runtime_type: Annotated[RuntimeType | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> PluginBuildListResponse:
-    """Return up to 100 plugin Builds, optionally for one plugin."""
+    """Return a page of plugin Builds newest-first plus the total matching the filters.
+
+    The default limit stays at 100 (not the 50 used by /jobs) on purpose: this
+    endpoint predates pagination and returned up to 100 Builds, so parameterless
+    callers keep seeing the same newest-100 window.
+    """
+    conditions: list[ColumnElement[bool]] = []
     query = (
         select(PluginBuild)
         .join(PluginBuild.plugin_version)
         .join(PluginVersion.plugin)
         .options(selectinload(PluginBuild.plugin_version).selectinload(PluginVersion.plugin))
-        .order_by(PluginBuild.created_at.desc(), PluginBuild.build_key.desc())
-        .limit(100)
     )
     if plugin_id is not None:
-        query = query.where(Plugin.plugin_key == plugin_id)
-    builds = session.scalars(query).all()
-    return PluginBuildListResponse(items=[_build_response(build) for build in builds])
+        conditions.append(Plugin.plugin_key == plugin_id)
+    if runtime_type is not None:
+        conditions.append(PluginBuild.runtime_type == runtime_type)
+    if conditions:
+        query = query.where(*conditions)
+    # The total counts every Build matching the filters, independent of the page
+    # window (same pattern as JobService.list_jobs).
+    total = session.scalar(select(func.count()).select_from(query.subquery()))
+    builds = session.scalars(
+        query.order_by(PluginBuild.created_at.desc(), PluginBuild.build_key.desc())
+        .limit(limit)
+        .offset(offset)
+    ).all()
+    return PluginBuildListResponse(
+        items=[_build_response(build) for build in builds],
+        total=int(total or 0),
+    )
 
 
 @router.get("/plugin-builds/{build_key}", response_model=PluginBuildResponse)
