@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .archive import sha256_file
 from .builder import build_plugin
+from .dev import run_dev
 from .package_check import verify_plugin_package
 from .project import PluginProject
 
@@ -26,6 +27,35 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument("project", type=Path)
     validate.add_argument("--runtime", choices=("conda-pack", "docker"))
     validate.add_argument("--package", type=Path)
+    dev = subcommands.add_parser(
+        "dev",
+        help="run a plugin project locally against a synthesized job (no Hub required)",
+    )
+    dev.add_argument("project", type=Path)
+    dev.add_argument(
+        "--input",
+        action="append",
+        default=[],
+        metavar="NAME=FILE",
+        help="job input file; repeatable; NAME is matched from the manifest when omitted",
+    )
+    dev.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="plugin parameter; repeatable; coerced to the manifest parameter type",
+    )
+    dev.add_argument(
+        "--mode",
+        choices=("python", "docker"),
+        help="execution mode: local interpreter or docker job container (default: python)",
+    )
+    dev.add_argument(
+        "--keep",
+        action="store_true",
+        help="keep the temporary job workspace instead of deleting it",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "build":
@@ -44,6 +74,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "validate":
         return _validate(args.project, args.runtime, args.package)
+    if args.command == "dev":
+        return run_dev(
+            project_dir=args.project,
+            inputs=args.input,
+            params=args.param,
+            mode=args.mode,
+            keep=args.keep,
+        )
     return 1
 
 
