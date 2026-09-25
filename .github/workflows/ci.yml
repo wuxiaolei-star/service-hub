@@ -15,6 +15,10 @@ env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   # ---------------------------------------------------------------- secrets
   # Fast gate that stops credentials from ever reaching the remote.
