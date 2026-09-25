@@ -64,7 +64,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ID=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs" --jq '.check_runs[] | select(.name=="Backend gate") | .id')
-          grep "^FAILED " /tmp/pytest.log | head -50 | jq -R '{path: ".github", start_line: 1, end_line: 1, annotation_level: "failure", title: (. | .[0:60]), message: ("pytest failed: " + .)}' | jq -s '{annotations: .}' > /tmp/annotations.json
-          gh api "repos/$GITHUB_REPOSITORY/check-runs/$ID/annotations" --input /tmp/annotations.json
-          grep -c "^FAILED " /tmp/pytest.log || true
+          python - <<'PY'
+          import json, urllib.request, os
+          token = os.environ['GH_TOKEN']
+          repo = os.environ['GITHUB_REPOSITORY']
+          sha = os.environ['GITHUB_SHA']
+          hdr = {'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json'}
+          req = urllib.request.Request('https://api.github.com/repos/' + repo + '/commits/' + sha + '/check-runs', headers=hdr)
+          runs = json.load(urllib.request.urlopen(req))['check_runs']
+          cid = [r['id'] for r in runs if r['name'] == 'Backend gate'][0]
+          failed = [l.split()[1] for l in open('/tmp/pytest.log', encoding='utf-8', errors='replace') if l.startswith('FAILED ')]
+          ann = [{'path': '.github', 'start_line': 1, 'end_line': 1, 'annotation_level': 'failure',
+                  'title': n[:60], 'message': ('pytest failed: ' + n)[:250]} for n in failed[:50]]
+          body = json.dumps({'annotations': ann}).encode()
+          req = urllib.request.Request('https://api.github.com/repos/' + repo + '/check-runs/' + str(cid) + '/annotations', data=body, method='POST', headers=hdr)
+          urllib.request.urlopen(req)
+          PY
