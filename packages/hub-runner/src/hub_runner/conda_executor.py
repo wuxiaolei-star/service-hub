@@ -195,6 +195,18 @@ class CondaExecutor:
             "HUB_LOG_DIR": str(workspace_root / "logs"),
             "PYTHONUNBUFFERED": "1",
         }
+        # conda-pack relocates the environment tree, but PROJ and GDAL locate
+        # their data files through environment variables that conda activation
+        # scripts would set and a bare exec does not. Without them the first
+        # EPSG lookup fails with "PROJ: Cannot find proj.db" (observed as
+        # SHAPEFILE_WRITE_FAILED on the first conda-runtime job).
+        gdal_data = environment_root / "share" / "gdal"
+        proj_data = environment_root / "share" / "proj"
+        if gdal_data.is_dir():
+            env["GDAL_DATA"] = str(gdal_data)
+        if proj_data.is_dir():
+            env["PROJ_DATA"] = str(proj_data)
+            env["PROJ_LIB"] = str(proj_data)
         try:
             result = self._job_process_runner(
                 command,

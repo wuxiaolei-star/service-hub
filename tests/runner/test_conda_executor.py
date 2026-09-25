@@ -271,6 +271,42 @@ def test_conda_executor_executes_hub_runner_with_limited_job_environment(
     ]
 
 
+def test_conda_executor_exposes_proj_and_gdal_data_paths(tmp_path: Path) -> None:
+    """PROJ/GDAL find their data only via env vars conda activation would set.
+
+    Without GDAL_DATA/PROJ_DATA the first EPSG lookup inside the unpacked
+    environment fails with "Cannot find proj.db", which surfaces as
+    SHAPEFILE_WRITE_FAILED in the plugin.
+    """
+    fake_runner = FakeCommandRunner()
+    env_root = tmp_path / "environments" / "plugin_build_123"
+    (env_root / "share" / "gdal").mkdir(parents=True)
+    (env_root / "share" / "proj").mkdir(parents=True)
+    job = RunnerJob(
+        id="job_123",
+        runtime_type="conda-pack",
+        workspace="jobs/job_123",
+        job_path="jobs/job_123/job.json",
+        manifest_path="plugins/plugin_build_123/plugin.yaml",
+        plugin_root="plugins/plugin_build_123/plugin",
+        result_path="jobs/job_123/result.json",
+        environment_path="environments/plugin_build_123",
+        timeout_seconds=30,
+        cancel_requested=False,
+    )
+
+    result = CondaExecutor(
+        data_root=tmp_path,
+        command_runner=fake_runner,
+        job_process_runner=fake_runner,
+    ).execute(job)
+
+    assert result.status is JobStatus.SUCCESS
+    assert fake_runner.environments[0]["GDAL_DATA"] == str(env_root / "share" / "gdal")
+    assert fake_runner.environments[0]["PROJ_DATA"] == str(env_root / "share" / "proj")
+    assert fake_runner.environments[0]["PROJ_LIB"] == str(env_root / "share" / "proj")
+
+
 def test_conda_executor_rejects_cancelled_job_before_start(tmp_path: Path) -> None:
     """A pre-cancelled claim should not launch plugin code."""
     fake_runner = FakeCommandRunner()
