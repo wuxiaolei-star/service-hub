@@ -1,0 +1,4042 @@
+{
+ "components": {
+  "schemas": {
+   "Body_install_plugin_api_v1_plugins_install_post": {
+    "properties": {
+     "file": {
+      "contentMediaType": "application/octet-stream",
+      "title": "File",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file"
+    ],
+    "title": "Body_install_plugin_api_v1_plugins_install_post",
+    "type": "object"
+   },
+   "ChangePasswordRequest": {
+    "properties": {
+     "new_password": {
+      "minLength": 10,
+      "title": "New Password",
+      "type": "string"
+     },
+     "old_password": {
+      "title": "Old Password",
+      "type": "string"
+     }
+    },
+    "required": [
+     "old_password",
+     "new_password"
+    ],
+    "title": "ChangePasswordRequest",
+    "type": "object"
+   },
+   "ChunkCompleteRequest": {
+    "description": "Body for merging staged chunks into one available Hub file.",
+    "properties": {
+     "filename": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Filename",
+      "type": "string"
+     },
+     "total_chunks": {
+      "maximum": 10000.0,
+      "minimum": 1.0,
+      "title": "Total Chunks",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "filename",
+     "total_chunks"
+    ],
+    "title": "ChunkCompleteRequest",
+    "type": "object"
+   },
+   "ChunkInitRequest": {
+    "description": "Body for opening one chunked upload staging session.",
+    "properties": {
+     "filename": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Filename",
+      "type": "string"
+     },
+     "total_size": {
+      "minimum": 0.0,
+      "title": "Total Size",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "filename",
+     "total_size"
+    ],
+    "title": "ChunkInitRequest",
+    "type": "object"
+   },
+   "ChunkInitResponse": {
+    "properties": {
+     "upload_id": {
+      "title": "Upload Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "upload_id"
+    ],
+    "title": "ChunkInitResponse",
+    "type": "object"
+   },
+   "ChunkUploadedResponse": {
+    "properties": {
+     "chunk_index": {
+      "title": "Chunk Index",
+      "type": "integer"
+     },
+     "size": {
+      "title": "Size",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "chunk_index",
+     "size"
+    ],
+    "title": "ChunkUploadedResponse",
+    "type": "object"
+   },
+   "CreateApiKeyRequest": {
+    "properties": {
+     "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "role": {
+      "pattern": "^(viewer|operator|publisher|admin)$",
+      "title": "Role",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "role"
+    ],
+    "title": "CreateApiKeyRequest",
+    "type": "object"
+   },
+   "CreateUserRequest": {
+    "properties": {
+     "password": {
+      "minLength": 10,
+      "title": "Password",
+      "type": "string"
+     },
+     "role": {
+      "pattern": "^(viewer|operator|publisher|admin)$",
+      "title": "Role",
+      "type": "string"
+     },
+     "username": {
+      "maxLength": 64,
+      "minLength": 2,
+      "title": "Username",
+      "type": "string"
+     }
+    },
+    "required": [
+     "username",
+     "password",
+     "role"
+    ],
+    "title": "CreateUserRequest",
+    "type": "object"
+   },
+   "FileListResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/FileResponse"
+      },
+      "title": "Items",
+      "type": "array"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "FileListResponse",
+    "type": "object"
+   },
+   "FileResponse": {
+    "description": "Public metadata for an available Hub file.",
+    "properties": {
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "extension": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Extension"
+     },
+     "file_id": {
+      "title": "File Id",
+      "type": "string"
+     },
+     "mime_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mime Type"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "sha256": {
+      "title": "Sha256",
+      "type": "string"
+     },
+     "size": {
+      "title": "Size",
+      "type": "integer"
+     },
+     "status": {
+      "const": "AVAILABLE",
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file_id",
+     "name",
+     "size",
+     "sha256",
+     "extension",
+     "mime_type",
+     "status",
+     "created_at"
+    ],
+    "title": "FileResponse",
+    "type": "object"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "title": "Detail",
+      "type": "array"
+     }
+    },
+    "title": "HTTPValidationError",
+    "type": "object"
+   },
+   "HealthResponse": {
+    "properties": {
+     "status": {
+      "const": "UP",
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "status"
+    ],
+    "title": "HealthResponse",
+    "type": "object"
+   },
+   "JobCallbackRequest": {
+    "description": "Optional terminal-state webhook registration for one Job.",
+    "properties": {
+     "secret": {
+      "anyOf": [
+       {
+        "maxLength": 255,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Secret"
+     },
+     "url": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "Url",
+      "type": "string"
+     }
+    },
+    "required": [
+     "url"
+    ],
+    "title": "JobCallbackRequest",
+    "type": "object"
+   },
+   "JobCancelResponse": {
+    "properties": {
+     "cancel_requested": {
+      "title": "Cancel Requested",
+      "type": "boolean"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "status": {
+      "$ref": "#/components/schemas/JobStatus"
+     }
+    },
+    "required": [
+     "job_id",
+     "status",
+     "cancel_requested"
+    ],
+    "title": "JobCancelResponse",
+    "type": "object"
+   },
+   "JobCreateRequest": {
+    "properties": {
+     "callback": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/JobCallbackRequest"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "inputs": {
+      "additionalProperties": true,
+      "title": "Inputs",
+      "type": "object"
+     },
+     "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+     },
+     "plugin_id": {
+      "title": "Plugin Id",
+      "type": "string"
+     },
+     "runtime_type": {
+      "anyOf": [
+       {
+        "enum": [
+         "conda-pack",
+         "docker"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Runtime Type"
+     },
+     "version": {
+      "title": "Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plugin_id",
+     "version",
+     "inputs"
+    ],
+    "title": "JobCreateRequest",
+    "type": "object"
+   },
+   "JobListResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/JobResponse"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "JobListResponse",
+    "type": "object"
+   },
+   "JobLogResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "next_cursor": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Next Cursor"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "JobLogResponse",
+    "type": "object"
+   },
+   "JobOutputsResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/FileResponse"
+      },
+      "title": "Items",
+      "type": "array"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "JobOutputsResponse",
+    "type": "object"
+   },
+   "JobResponse": {
+    "properties": {
+     "build_id": {
+      "title": "Build Id",
+      "type": "string"
+     },
+     "cancel_requested": {
+      "default": false,
+      "title": "Cancel Requested",
+      "type": "boolean"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "error_summary": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Summary"
+     },
+     "finished_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Finished At"
+     },
+     "job_id": {
+      "title": "Job Id",
+      "type": "string"
+     },
+     "plugin_id": {
+      "title": "Plugin Id",
+      "type": "string"
+     },
+     "replayed_from": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Replayed From"
+     },
+     "runtime_type": {
+      "enum": [
+       "conda-pack",
+       "docker"
+      ],
+      "title": "Runtime Type",
+      "type": "string"
+     },
+     "started_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Started At"
+     },
+     "status": {
+      "$ref": "#/components/schemas/JobStatus"
+     },
+     "version": {
+      "title": "Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "job_id",
+     "plugin_id",
+     "version",
+     "build_id",
+     "runtime_type",
+     "status",
+     "created_at"
+    ],
+    "title": "JobResponse",
+    "type": "object"
+   },
+   "JobStatsBucket": {
+    "description": "Per-day Job volume and duration percentiles for one UTC calendar day.",
+    "properties": {
+     "count": {
+      "title": "Count",
+      "type": "integer"
+     },
+     "date": {
+      "title": "Date",
+      "type": "string"
+     },
+     "p50_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "P50 Ms"
+     },
+     "p95_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "P95 Ms"
+     },
+     "success_count": {
+      "title": "Success Count",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "date",
+     "count",
+     "success_count"
+    ],
+    "title": "JobStatsBucket",
+    "type": "object"
+   },
+   "JobStatsResponse": {
+    "properties": {
+     "buckets": {
+      "items": {
+       "$ref": "#/components/schemas/JobStatsBucket"
+      },
+      "title": "Buckets",
+      "type": "array"
+     },
+     "days": {
+      "title": "Days",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "days",
+     "buckets"
+    ],
+    "title": "JobStatsResponse",
+    "type": "object"
+   },
+   "JobStatus": {
+    "description": "Lifecycle states used by the Hub job state machine.",
+    "enum": [
+     "PENDING",
+     "PREPARING",
+     "RUNNING",
+     "SUCCESS",
+     "FAILED",
+     "CANCELLED",
+     "TIMED_OUT"
+    ],
+    "title": "JobStatus",
+    "type": "string"
+   },
+   "LoginRequest": {
+    "properties": {
+     "password": {
+      "title": "Password",
+      "type": "string"
+     },
+     "username": {
+      "title": "Username",
+      "type": "string"
+     }
+    },
+    "required": [
+     "username",
+     "password"
+    ],
+    "title": "LoginRequest",
+    "type": "object"
+   },
+   "PipelineCreateRequest": {
+    "properties": {
+     "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "steps": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Steps",
+      "type": "array"
+     }
+    },
+    "required": [
+     "name",
+     "steps"
+    ],
+    "title": "PipelineCreateRequest",
+    "type": "object"
+   },
+   "PlatformResponse": {
+    "properties": {
+     "arch": {
+      "enum": [
+       "amd64",
+       "arm64"
+      ],
+      "title": "Arch",
+      "type": "string"
+     },
+     "os": {
+      "const": "linux",
+      "title": "Os",
+      "type": "string"
+     }
+    },
+    "required": [
+     "os",
+     "arch"
+    ],
+    "title": "PlatformResponse",
+    "type": "object"
+   },
+   "PluginBuildListResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/PluginBuildResponse"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "PluginBuildListResponse",
+    "type": "object"
+   },
+   "PluginBuildResponse": {
+    "properties": {
+     "build_id": {
+      "title": "Build Id",
+      "type": "string"
+     },
+     "error_summary": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Summary"
+     },
+     "package_sha256": {
+      "title": "Package Sha256",
+      "type": "string"
+     },
+     "plugin_id": {
+      "title": "Plugin Id",
+      "type": "string"
+     },
+     "runtime_fingerprint": {
+      "title": "Runtime Fingerprint",
+      "type": "string"
+     },
+     "runtime_type": {
+      "enum": [
+       "conda-pack",
+       "docker"
+      ],
+      "title": "Runtime Type",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "target_arch": {
+      "title": "Target Arch",
+      "type": "string"
+     },
+     "target_os": {
+      "title": "Target Os",
+      "type": "string"
+     },
+     "version": {
+      "title": "Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "build_id",
+     "plugin_id",
+     "version",
+     "runtime_type",
+     "target_os",
+     "target_arch",
+     "status",
+     "package_sha256",
+     "runtime_fingerprint"
+    ],
+    "title": "PluginBuildResponse",
+    "type": "object"
+   },
+   "PluginDetailResponse": {
+    "properties": {
+     "author": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Author"
+     },
+     "category": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Category"
+     },
+     "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "latest_version": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Latest Version"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "versions": {
+      "items": {
+       "$ref": "#/components/schemas/PluginVersionDetail"
+      },
+      "title": "Versions",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "versions"
+    ],
+    "title": "PluginDetailResponse",
+    "type": "object"
+   },
+   "PluginListResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/PluginSummary"
+      },
+      "title": "Items",
+      "type": "array"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "PluginListResponse",
+    "type": "object"
+   },
+   "PluginSummary": {
+    "properties": {
+     "category": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Category"
+     },
+     "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "latest_version": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Latest Version"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name"
+    ],
+    "title": "PluginSummary",
+    "type": "object"
+   },
+   "PluginVersionDetail": {
+    "properties": {
+     "manifest": {
+      "additionalProperties": true,
+      "title": "Manifest",
+      "type": "object"
+     },
+     "sdk_version": {
+      "title": "Sdk Version",
+      "type": "string"
+     },
+     "source_sha256": {
+      "title": "Source Sha256",
+      "type": "string"
+     },
+     "spec_version": {
+      "title": "Spec Version",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "version": {
+      "title": "Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "version",
+     "spec_version",
+     "sdk_version",
+     "source_sha256",
+     "status",
+     "manifest"
+    ],
+    "title": "PluginVersionDetail",
+    "type": "object"
+   },
+   "RegistryBuildItem": {
+    "description": "One downloadable Build row of the flat registry listing.",
+    "properties": {
+     "build_key": {
+      "title": "Build Key",
+      "type": "string"
+     },
+     "package_sha256": {
+      "title": "Package Sha256",
+      "type": "string"
+     },
+     "plugin_id": {
+      "title": "Plugin Id",
+      "type": "string"
+     },
+     "plugin_name": {
+      "title": "Plugin Name",
+      "type": "string"
+     },
+     "runtime_type": {
+      "title": "Runtime Type",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "target_arch": {
+      "title": "Target Arch",
+      "type": "string"
+     },
+     "version": {
+      "title": "Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plugin_id",
+     "plugin_name",
+     "version",
+     "build_key",
+     "runtime_type",
+     "target_arch",
+     "status",
+     "package_sha256"
+    ],
+    "title": "RegistryBuildItem",
+    "type": "object"
+   },
+   "RegistryListResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/RegistryBuildItem"
+      },
+      "title": "Items",
+      "type": "array"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "RegistryListResponse",
+    "type": "object"
+   },
+   "ScheduleCreateRequest": {
+    "properties": {
+     "cron_expr": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cron Expr"
+     },
+     "inputs": {
+      "additionalProperties": true,
+      "title": "Inputs",
+      "type": "object"
+     },
+     "interval_minutes": {
+      "anyOf": [
+       {
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Interval Minutes"
+     },
+     "missed_run_policy": {
+      "default": "skip",
+      "enum": [
+       "skip",
+       "catch_up",
+       "latest"
+      ],
+      "title": "Missed Run Policy",
+      "type": "string"
+     },
+     "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+     },
+     "plugin_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Plugin Id",
+      "type": "string"
+     },
+     "runtime_type": {
+      "pattern": "^(conda-pack|docker)$",
+      "title": "Runtime Type",
+      "type": "string"
+     },
+     "version": {
+      "maxLength": 32,
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "plugin_id",
+     "version",
+     "runtime_type"
+    ],
+    "title": "ScheduleCreateRequest",
+    "type": "object"
+   },
+   "ServiceCreateRequest": {
+    "description": "Configuration for a managed service; accepted from administrators only.",
+    "properties": {
+     "command": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 64,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Command"
+     },
+     "env": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Env",
+      "type": "object"
+     },
+     "image": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Image",
+      "type": "string"
+     },
+     "mounts": {
+      "items": {
+       "$ref": "#/components/schemas/ServiceMount"
+      },
+      "maxItems": 32,
+      "title": "Mounts",
+      "type": "array"
+     },
+     "name": {
+      "maxLength": 63,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "ports": {
+      "items": {
+       "$ref": "#/components/schemas/ServicePort"
+      },
+      "maxItems": 32,
+      "title": "Ports",
+      "type": "array"
+     },
+     "user_label": {
+      "default": "65532:65532",
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "User Label",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "image"
+    ],
+    "title": "ServiceCreateRequest",
+    "type": "object"
+   },
+   "ServiceListResponse": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/ServiceResponse"
+      },
+      "title": "Items",
+      "type": "array"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "title": "ServiceListResponse",
+    "type": "object"
+   },
+   "ServiceMount": {
+    "description": "One admin-supplied bind mount forwarded only to service-manager.",
+    "properties": {
+     "read_only": {
+      "default": false,
+      "title": "Read Only",
+      "type": "boolean"
+     },
+     "source": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "Source",
+      "type": "string"
+     },
+     "target": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "Target",
+      "type": "string"
+     }
+    },
+    "required": [
+     "source",
+     "target"
+    ],
+    "title": "ServiceMount",
+    "type": "object"
+   },
+   "ServicePort": {
+    "description": "One host-loopback port mapping approved for a service container.",
+    "properties": {
+     "container": {
+      "maximum": 65535.0,
+      "minimum": 1.0,
+      "title": "Container",
+      "type": "integer"
+     },
+     "host": {
+      "maximum": 65535.0,
+      "minimum": 1024.0,
+      "title": "Host",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "host",
+     "container"
+    ],
+    "title": "ServicePort",
+    "type": "object"
+   },
+   "ServiceResponse": {
+    "description": "Public service state, deliberately excluding environment and mount secrets.",
+    "properties": {
+     "container_name": {
+      "title": "Container Name",
+      "type": "string"
+     },
+     "desired_state": {
+      "title": "Desired State",
+      "type": "string"
+     },
+     "image": {
+      "title": "Image",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "runtime": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ServiceRuntimeResponse"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "name",
+     "image",
+     "container_name",
+     "desired_state",
+     "runtime"
+    ],
+    "title": "ServiceResponse",
+    "type": "object"
+   },
+   "ServiceRuntimeResponse": {
+    "description": "Live state sourced from service-manager rather than persisted input.",
+    "properties": {
+     "health": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Health"
+     },
+     "ports": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ports"
+     },
+     "state": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "State"
+     }
+    },
+    "title": "ServiceRuntimeResponse",
+    "type": "object"
+   },
+   "SystemInfoResponse": {
+    "properties": {
+     "deployment_mode": {
+      "const": "offline",
+      "title": "Deployment Mode",
+      "type": "string"
+     },
+     "hub_version": {
+      "title": "Hub Version",
+      "type": "string"
+     },
+     "platform": {
+      "$ref": "#/components/schemas/PlatformResponse"
+     },
+     "python_version": {
+      "title": "Python Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "hub_version",
+     "platform",
+     "python_version",
+     "deployment_mode"
+    ],
+    "title": "SystemInfoResponse",
+    "type": "object"
+   },
+   "ValidationError": {
+    "properties": {
+     "ctx": {
+      "title": "Context",
+      "type": "object"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "title": "Location",
+      "type": "array"
+     },
+     "msg": {
+      "title": "Message",
+      "type": "string"
+     },
+     "type": {
+      "title": "Error Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError",
+    "type": "object"
+   }
+  }
+ },
+ "info": {
+  "title": "Python Service Hub",
+  "version": "0.1.0"
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/api/v1/api-keys": {
+   "get": {
+    "operationId": "list_api_keys_api_v1_api_keys_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Api Keys Api V1 Api Keys Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Api Keys",
+    "tags": [
+     "api-keys"
+    ]
+   },
+   "post": {
+    "operationId": "create_api_key_api_v1_api_keys_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CreateApiKeyRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Api Key Api V1 Api Keys Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create Api Key",
+    "tags": [
+     "api-keys"
+    ]
+   }
+  },
+  "/api/v1/api-keys/{key_id}/revoke": {
+   "post": {
+    "operationId": "revoke_api_key_api_v1_api_keys__key_id__revoke_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "key_id",
+      "required": true,
+      "schema": {
+       "title": "Key Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Revoke Api Key Api V1 Api Keys  Key Id  Revoke Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Revoke Api Key",
+    "tags": [
+     "api-keys"
+    ]
+   }
+  },
+  "/api/v1/audit-logs": {
+   "get": {
+    "description": "Return newest audit entries with optional action/actor filtering.",
+    "operationId": "list_audit_logs_api_v1_audit_logs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "action",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Action"
+      }
+     },
+     {
+      "in": "query",
+      "name": "actor_name",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Actor Name"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "exclusiveMinimum": 0,
+       "maximum": 500,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Audit Logs Api V1 Audit Logs Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "List Audit Logs",
+    "tags": [
+     "audit-logs"
+    ]
+   }
+  },
+  "/api/v1/audit-logs/export": {
+   "get": {
+    "description": "Stream every audit entry as a CSV attachment for spreadsheet consumers.",
+    "operationId": "export_audit_logs_api_v1_audit_logs_export_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Export Audit Logs",
+    "tags": [
+     "audit-logs"
+    ]
+   }
+  },
+  "/api/v1/auth/change-password": {
+   "post": {
+    "description": "Rotate the current user's password and clear the bootstrap flag.",
+    "operationId": "change_password_api_v1_auth_change_password_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ChangePasswordRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Change Password Api V1 Auth Change Password Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Change Password",
+    "tags": [
+     "auth"
+    ]
+   }
+  },
+  "/api/v1/auth/login": {
+   "post": {
+    "description": "Verify credentials and issue a session cookie plus bearer token.",
+    "operationId": "login_api_v1_auth_login_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/LoginRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Login Api V1 Auth Login Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Login",
+    "tags": [
+     "auth"
+    ]
+   }
+  },
+  "/api/v1/auth/logout": {
+   "post": {
+    "description": "Revoke the presented session token and clear the cookie.",
+    "operationId": "logout_api_v1_auth_logout_post",
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Logout",
+    "tags": [
+     "auth"
+    ]
+   }
+  },
+  "/api/v1/auth/me": {
+   "get": {
+    "description": "Return the authenticated identity and its bootstrap password flag.",
+    "operationId": "me_api_v1_auth_me_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Me Api V1 Auth Me Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Me",
+    "tags": [
+     "auth"
+    ]
+   }
+  },
+  "/api/v1/files": {
+   "get": {
+    "description": "Return the 100 most recently created public file records.",
+    "operationId": "list_files_api_v1_files_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FileListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Files",
+    "tags": [
+     "files"
+    ]
+   },
+   "post": {
+    "description": "Parse one bounded multipart upload directly into Hub-managed storage.",
+    "operationId": "upload_file_api_v1_files_post",
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FileResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Upload File",
+    "tags": [
+     "files"
+    ]
+   }
+  },
+  "/api/v1/files/by-sha256/{sha256}": {
+   "get": {
+    "description": "Return metadata for the newest available upload matching one checksum.",
+    "operationId": "get_file_by_sha256_api_v1_files_by_sha256__sha256__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "sha256",
+      "required": true,
+      "schema": {
+       "pattern": "^[0-9a-f]{64}$",
+       "title": "Sha256",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FileResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get File By Sha256",
+    "tags": [
+     "files"
+    ]
+   }
+  },
+  "/api/v1/files/chunk/init": {
+   "post": {
+    "description": "Reserve a staging directory for one large multi-request upload.",
+    "operationId": "init_chunked_upload_api_v1_files_chunk_init_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ChunkInitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChunkInitResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Init Chunked Upload",
+    "tags": [
+     "files"
+    ]
+   }
+  },
+  "/api/v1/files/chunk/{upload_id}/complete": {
+   "post": {
+    "description": "Merge staged chunks into one FileRecord under the usual upload quota.",
+    "operationId": "complete_chunked_upload_api_v1_files_chunk__upload_id__complete_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "upload_id",
+      "required": true,
+      "schema": {
+       "title": "Upload Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ChunkCompleteRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FileResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Complete Chunked Upload",
+    "tags": [
+     "files"
+    ]
+   }
+  },
+  "/api/v1/files/chunk/{upload_id}/{chunk_index}": {
+   "put": {
+    "description": "Store one raw chunk below its staging directory, bounded by the file cap.",
+    "operationId": "upload_chunk_api_v1_files_chunk__upload_id___chunk_index__put",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "upload_id",
+      "required": true,
+      "schema": {
+       "title": "Upload Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "chunk_index",
+      "required": true,
+      "schema": {
+       "maximum": 9999,
+       "minimum": 0,
+       "title": "Chunk Index",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChunkUploadedResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Upload Chunk",
+    "tags": [
+     "files"
+    ]
+   }
+  },
+  "/api/v1/files/{file_key}": {
+   "delete": {
+    "description": "Delete one available file that no Job still references.",
+    "operationId": "delete_file_api_v1_files__file_key__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "file_key",
+      "required": true,
+      "schema": {
+       "title": "File Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete File",
+    "tags": [
+     "files"
+    ]
+   },
+   "get": {
+    "description": "Return metadata for one available Hub file.",
+    "operationId": "get_file_metadata_api_v1_files__file_key__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "file_key",
+      "required": true,
+      "schema": {
+       "title": "File Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FileResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get File Metadata",
+    "tags": [
+     "files"
+    ]
+   }
+  },
+  "/api/v1/files/{file_key}/download": {
+   "get": {
+    "description": "Download the available payload with a safe attachment filename.",
+    "operationId": "download_file_api_v1_files__file_key__download_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "file_key",
+      "required": true,
+      "schema": {
+       "title": "File Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Download File",
+    "tags": [
+     "files"
+    ]
+   }
+  },
+  "/api/v1/jobs": {
+   "get": {
+    "description": "Return filtered Jobs newest-first with the total matching the filters.",
+    "operationId": "list_jobs_api_v1_jobs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "status",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "in": "query",
+      "name": "plugin_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 64,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Plugin Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "List Jobs",
+    "tags": [
+     "jobs"
+    ]
+   },
+   "post": {
+    "description": "Create a pending Job for one exact enabled runtime Build.",
+    "operationId": "create_job_api_v1_jobs_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/JobCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create Job",
+    "tags": [
+     "jobs"
+    ]
+   }
+  },
+  "/api/v1/jobs/export": {
+   "get": {
+    "description": "Stream the 10000 newest Jobs as a CSV attachment for spreadsheet consumers.",
+    "operationId": "export_jobs_api_v1_jobs_export_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Export Jobs",
+    "tags": [
+     "jobs"
+    ]
+   }
+  },
+  "/api/v1/jobs/stats": {
+   "get": {
+    "description": "Aggregate per-day Job volume and duration percentiles over the last N days.",
+    "operationId": "job_stats_api_v1_jobs_stats_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+       "default": 14,
+       "maximum": 90,
+       "minimum": 1,
+       "title": "Days",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobStatsResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Job Stats",
+    "tags": [
+     "jobs"
+    ]
+   }
+  },
+  "/api/v1/jobs/{job_key}": {
+   "get": {
+    "description": "Return one Job summary.",
+    "operationId": "get_job_api_v1_jobs__job_key__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_key",
+      "required": true,
+      "schema": {
+       "title": "Job Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Job",
+    "tags": [
+     "jobs"
+    ]
+   }
+  },
+  "/api/v1/jobs/{job_key}/callbacks": {
+   "get": {
+    "description": "List every webhook callback registered for one Job.",
+    "operationId": "list_job_callbacks_api_v1_jobs__job_key__callbacks_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_key",
+      "required": true,
+      "schema": {
+       "title": "Job Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Job Callbacks Api V1 Jobs  Job Key  Callbacks Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "List Job Callbacks",
+    "tags": [
+     "webhooks"
+    ]
+   }
+  },
+  "/api/v1/jobs/{job_key}/callbacks/{callback_id}/deliveries": {
+   "get": {
+    "description": "List the delivery attempts of one callback, newest first (max 100).",
+    "operationId": "list_callback_deliveries_api_v1_jobs__job_key__callbacks__callback_id__deliveries_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_key",
+      "required": true,
+      "schema": {
+       "title": "Job Key",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "callback_id",
+      "required": true,
+      "schema": {
+       "title": "Callback Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Callback Deliveries Api V1 Jobs  Job Key  Callbacks  Callback Id  Deliveries Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "List Callback Deliveries",
+    "tags": [
+     "webhooks"
+    ]
+   }
+  },
+  "/api/v1/jobs/{job_key}/callbacks/{callback_id}/replay": {
+   "post": {
+    "description": "Reset one FAILED or EXHAUSTED callback so the scheduler redelivers it.",
+    "operationId": "replay_job_callback_api_v1_jobs__job_key__callbacks__callback_id__replay_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_key",
+      "required": true,
+      "schema": {
+       "title": "Job Key",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "callback_id",
+      "required": true,
+      "schema": {
+       "title": "Callback Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Replay Job Callback Api V1 Jobs  Job Key  Callbacks  Callback Id  Replay Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Replay Job Callback",
+    "tags": [
+     "webhooks"
+    ]
+   }
+  },
+  "/api/v1/jobs/{job_key}/cancel": {
+   "post": {
+    "description": "Request idempotent cancellation; the runner owns terminal completion.",
+    "operationId": "cancel_job_api_v1_jobs__job_key__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_key",
+      "required": true,
+      "schema": {
+       "title": "Job Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobCancelResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Cancel Job",
+    "tags": [
+     "jobs"
+    ]
+   }
+  },
+  "/api/v1/jobs/{job_key}/logs": {
+   "get": {
+    "description": "Return cursor-based runner events for a Job.",
+    "operationId": "get_job_logs_api_v1_jobs__job_key__logs_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_key",
+      "required": true,
+      "schema": {
+       "title": "Job Key",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "cursor",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Cursor",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "maximum": 500,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobLogResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Job Logs",
+    "tags": [
+     "jobs"
+    ]
+   }
+  },
+  "/api/v1/jobs/{job_key}/logs/stream": {
+   "get": {
+    "description": "Stream runner events for one Job until it reaches a terminal state.",
+    "operationId": "stream_job_logs_api_v1_jobs__job_key__logs_stream_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_key",
+      "required": true,
+      "schema": {
+       "title": "Job Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Stream Job Logs",
+    "tags": [
+     "logs-stream"
+    ]
+   }
+  },
+  "/api/v1/jobs/{job_key}/outputs": {
+   "get": {
+    "description": "Return output file summaries only after successful completion.",
+    "operationId": "get_job_outputs_api_v1_jobs__job_key__outputs_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_key",
+      "required": true,
+      "schema": {
+       "title": "Job Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobOutputsResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Job Outputs",
+    "tags": [
+     "jobs"
+    ]
+   }
+  },
+  "/api/v1/jobs/{job_key}/rerun": {
+   "post": {
+    "description": "Replay one terminal Job's snapshot as a fresh pending Job.",
+    "operationId": "rerun_job_api_v1_jobs__job_key__rerun_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "job_key",
+      "required": true,
+      "schema": {
+       "title": "Job Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Rerun Job",
+    "tags": [
+     "jobs"
+    ]
+   }
+  },
+  "/api/v1/pipelines": {
+   "get": {
+    "description": "Return every registered pipeline ordered by id.",
+    "operationId": "list_pipelines_api_v1_pipelines_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Pipelines Api V1 Pipelines Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Pipelines",
+    "tags": [
+     "pipelines"
+    ]
+   },
+   "post": {
+    "description": "Register one linear pipeline of at least one validated step.",
+    "operationId": "create_pipeline_api_v1_pipelines_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PipelineCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Pipeline Api V1 Pipelines Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create Pipeline",
+    "tags": [
+     "pipelines"
+    ]
+   }
+  },
+  "/api/v1/pipelines/runs": {
+   "get": {
+    "description": "Return the most recent 100 runs, newest first, optionally per pipeline.",
+    "operationId": "list_pipeline_runs_api_v1_pipelines_runs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "pipeline_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Pipeline Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Pipeline Runs Api V1 Pipelines Runs Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "List Pipeline Runs",
+    "tags": [
+     "pipelines"
+    ]
+   }
+  },
+  "/api/v1/pipelines/{pipeline_id}": {
+   "get": {
+    "description": "Return one pipeline row.",
+    "operationId": "get_pipeline_api_v1_pipelines__pipeline_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "pipeline_id",
+      "required": true,
+      "schema": {
+       "title": "Pipeline Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Pipeline Api V1 Pipelines  Pipeline Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Pipeline",
+    "tags": [
+     "pipelines"
+    ]
+   }
+  },
+  "/api/v1/pipelines/{pipeline_id}/execute": {
+   "post": {
+    "description": "Start one run and create the Job for its first step.",
+    "operationId": "execute_pipeline_api_v1_pipelines__pipeline_id__execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "pipeline_id",
+      "required": true,
+      "schema": {
+       "title": "Pipeline Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Execute Pipeline Api V1 Pipelines  Pipeline Id  Execute Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Execute Pipeline",
+    "tags": [
+     "pipelines"
+    ]
+   }
+  },
+  "/api/v1/plugin-builds": {
+   "get": {
+    "description": "Return a page of plugin Builds newest-first plus the total matching the filters.\n\nThe default limit stays at 100 (not the 50 used by /jobs) on purpose: this\nendpoint predates pagination and returned up to 100 Builds, so parameterless\ncallers keep seeing the same newest-100 window.",
+    "operationId": "list_plugin_builds_api_v1_plugin_builds_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "plugin_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 64,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Plugin Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "runtime_type",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "enum": [
+          "conda-pack",
+          "docker"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Runtime Type"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "maximum": 200,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PluginBuildListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "List Plugin Builds",
+    "tags": [
+     "plugins"
+    ]
+   }
+  },
+  "/api/v1/plugin-builds/{build_key}": {
+   "get": {
+    "description": "Return one Plugin Build summary.",
+    "operationId": "get_build_api_v1_plugin_builds__build_key__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "build_key",
+      "required": true,
+      "schema": {
+       "title": "Build Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PluginBuildResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Build",
+    "tags": [
+     "plugins"
+    ]
+   }
+  },
+  "/api/v1/plugin-builds/{build_key}/disable": {
+   "post": {
+    "description": "Disable a Build when it has no active Jobs.",
+    "operationId": "disable_build_api_v1_plugin_builds__build_key__disable_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "build_key",
+      "required": true,
+      "schema": {
+       "title": "Build Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PluginBuildResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Disable Build",
+    "tags": [
+     "plugins"
+    ]
+   }
+  },
+  "/api/v1/plugin-builds/{build_key}/enable": {
+   "post": {
+    "description": "Enable one READY Build explicitly.",
+    "operationId": "enable_build_api_v1_plugin_builds__build_key__enable_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "build_key",
+      "required": true,
+      "schema": {
+       "title": "Build Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PluginBuildResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Enable Build",
+    "tags": [
+     "plugins"
+    ]
+   }
+  },
+  "/api/v1/plugins": {
+   "get": {
+    "description": "Return installed plugin summaries.",
+    "operationId": "list_plugins_api_v1_plugins_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PluginListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Plugins",
+    "tags": [
+     "plugins"
+    ]
+   }
+  },
+  "/api/v1/plugins/install": {
+   "post": {
+    "description": "Verify and register one uploaded `.pypkg` Build package.",
+    "operationId": "install_plugin_api_v1_plugins_install_post",
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_install_plugin_api_v1_plugins_install_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PluginBuildResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Install Plugin",
+    "tags": [
+     "plugins"
+    ]
+   }
+  },
+  "/api/v1/plugins/{plugin_id}": {
+   "get": {
+    "description": "Return one installed plugin and the public manifests of its versions.",
+    "operationId": "get_plugin_detail_api_v1_plugins__plugin_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "plugin_id",
+      "required": true,
+      "schema": {
+       "title": "Plugin Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PluginDetailResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Plugin Detail",
+    "tags": [
+     "plugins"
+    ]
+   }
+  },
+  "/api/v1/registry/download/{build_key}": {
+   "get": {
+    "description": "Stream one Build package as an attachment and audit the download.",
+    "operationId": "download_registry_package_api_v1_registry_download__build_key__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "build_key",
+      "required": true,
+      "schema": {
+       "title": "Build Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Download Registry Package",
+    "tags": [
+     "registry"
+    ]
+   }
+  },
+  "/api/v1/registry/plugins": {
+   "get": {
+    "description": "Return every Build as one flat row ordered by plugin, version, and runtime.",
+    "operationId": "list_registry_plugins_api_v1_registry_plugins_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RegistryListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Registry Plugins",
+    "tags": [
+     "registry"
+    ]
+   }
+  },
+  "/api/v1/schedules": {
+   "get": {
+    "description": "Return every registered schedule ordered by id.",
+    "operationId": "list_schedules_api_v1_schedules_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Schedules Api V1 Schedules Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Schedules",
+    "tags": [
+     "schedules"
+    ]
+   },
+   "post": {
+    "description": "Register one periodic job creation rule (interval or cron driven).",
+    "operationId": "create_schedule_api_v1_schedules_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ScheduleCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Schedule Api V1 Schedules Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create Schedule",
+    "tags": [
+     "schedules"
+    ]
+   }
+  },
+  "/api/v1/schedules/{schedule_id}": {
+   "delete": {
+    "description": "Permanently remove one schedule (admin only).",
+    "operationId": "delete_schedule_api_v1_schedules__schedule_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "schedule_id",
+      "required": true,
+      "schema": {
+       "title": "Schedule Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Delete Schedule Api V1 Schedules  Schedule Id  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Schedule",
+    "tags": [
+     "schedules"
+    ]
+   }
+  },
+  "/api/v1/schedules/{schedule_id}/disable": {
+   "post": {
+    "description": "Disable one schedule so the scheduler skips it.",
+    "operationId": "disable_schedule_api_v1_schedules__schedule_id__disable_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "schedule_id",
+      "required": true,
+      "schema": {
+       "title": "Schedule Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Disable Schedule Api V1 Schedules  Schedule Id  Disable Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Disable Schedule",
+    "tags": [
+     "schedules"
+    ]
+   }
+  },
+  "/api/v1/schedules/{schedule_id}/enable": {
+   "post": {
+    "description": "Enable one schedule so the scheduler may trigger it again.",
+    "operationId": "enable_schedule_api_v1_schedules__schedule_id__enable_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "schedule_id",
+      "required": true,
+      "schema": {
+       "title": "Schedule Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Enable Schedule Api V1 Schedules  Schedule Id  Enable Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Enable Schedule",
+    "tags": [
+     "schedules"
+    ]
+   }
+  },
+  "/api/v1/services": {
+   "get": {
+    "description": "List saved definitions with their current manager-reported state.\n\nA saved definition can legitimately have no container (its image was refused,\nor it was never started). Whatever the manager says about one entry, it must\nnot blank the catalogue: the failing entry is rendered as unknown and the\nrest of the list still answers.",
+    "operationId": "list_services_api_v1_services_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ServiceListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Services",
+    "tags": [
+     "services"
+    ]
+   },
+   "post": {
+    "description": "Persist and deploy one admin-authorized service definition.",
+    "operationId": "create_service_api_v1_services_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ServiceCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ServiceResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create Service",
+    "tags": [
+     "services"
+    ]
+   }
+  },
+  "/api/v1/services/{name}": {
+   "delete": {
+    "description": "Remove a service container first, then its persisted definition.",
+    "operationId": "delete_service_api_v1_services__name__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "title": "Name",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Delete Service Api V1 Services  Name  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Service",
+    "tags": [
+     "services"
+    ]
+   },
+   "put": {
+    "description": "Replace configuration and the same-name container idempotently.",
+    "operationId": "update_service_api_v1_services__name__put",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "title": "Name",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ServiceCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ServiceResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Update Service",
+    "tags": [
+     "services"
+    ]
+   }
+  },
+  "/api/v1/services/{name}/logs": {
+   "get": {
+    "description": "Return a bounded service log tail without exposing Docker directly.",
+    "operationId": "get_service_logs_api_v1_services__name__logs_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "title": "Name",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "tail",
+      "required": false,
+      "schema": {
+       "default": 200,
+       "maximum": 1000,
+       "minimum": 1,
+       "title": "Tail",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "text/plain": {
+        "schema": {
+         "type": "string"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Service Logs",
+    "tags": [
+     "services"
+    ]
+   }
+  },
+  "/api/v1/services/{name}/{action}": {
+   "post": {
+    "description": "Execute one admin-authorized lifecycle action through the manager.",
+    "operationId": "lifecycle_action_api_v1_services__name___action__post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "title": "Name",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "action",
+      "required": true,
+      "schema": {
+       "title": "Action",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ServiceResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Lifecycle Action",
+    "tags": [
+     "services"
+    ]
+   }
+  },
+  "/api/v1/system/backup": {
+   "post": {
+    "description": "Create a crash-consistent backup archive under the data directory (admin only).",
+    "operationId": "create_backup_api_v1_system_backup_post",
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Backup Api V1 System Backup Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Create Backup",
+    "tags": [
+     "system"
+    ]
+   }
+  },
+  "/api/v1/system/health": {
+   "get": {
+    "operationId": "get_health_api_v1_system_health_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HealthResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Get Health",
+    "tags": [
+     "system"
+    ]
+   }
+  },
+  "/api/v1/system/info": {
+   "get": {
+    "operationId": "get_info_api_v1_system_info_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SystemInfoResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Get Info",
+    "tags": [
+     "system"
+    ]
+   }
+  },
+  "/api/v1/system/metrics": {
+   "get": {
+    "description": "Prometheus text exposition (admin only).",
+    "operationId": "get_metrics_api_v1_system_metrics_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Get Metrics",
+    "tags": [
+     "system"
+    ]
+   }
+  },
+  "/api/v1/users": {
+   "get": {
+    "operationId": "list_users_api_v1_users_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Users Api V1 Users Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "List Users",
+    "tags": [
+     "users"
+    ]
+   },
+   "post": {
+    "operationId": "create_user_api_v1_users_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CreateUserRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create User Api V1 Users Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create User",
+    "tags": [
+     "users"
+    ]
+   }
+  },
+  "/api/v1/users/{user_id}/disable": {
+   "post": {
+    "operationId": "disable_user_api_v1_users__user_id__disable_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "user_id",
+      "required": true,
+      "schema": {
+       "title": "User Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Disable User Api V1 Users  User Id  Disable Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Disable User",
+    "tags": [
+     "users"
+    ]
+   }
+  },
+  "/api/v1/users/{user_id}/reset-password": {
+   "post": {
+    "description": "Reset one user's password and return the one-time plaintext.",
+    "operationId": "reset_password_api_v1_users__user_id__reset_password_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "user_id",
+      "required": true,
+      "schema": {
+       "title": "User Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Reset Password Api V1 Users  User Id  Reset Password Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Reset Password",
+    "tags": [
+     "users"
+    ]
+   }
+  },
+  "/api/v1/users/{user_id}/usage": {
+   "get": {
+    "description": "Return per-user storage and job usage for the admin console.",
+    "operationId": "user_usage_api_v1_users__user_id__usage_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "user_id",
+      "required": true,
+      "schema": {
+       "title": "User Id",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": {
+          "type": "integer"
+         },
+         "title": "Response User Usage Api V1 Users  User Id  Usage Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "User Usage",
+    "tags": [
+     "users"
+    ]
+   }
+  }
+ }
+}

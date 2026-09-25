@@ -1,18 +1,28 @@
 # Python Service Hub：构建、部署、使用与 NC 插件注册指南
 
-> **历史文档（旧拓扑，不再作为部署入口）**：本文描述 hub / hub-conda-runner /
-> hub-docker-runner 三个独立 Compose 服务的部署方式，仅作历史参考。当前部署请使用
-> [单容器部署与脚本插件使用](单容器部署与脚本插件使用.md)，其中 hubctl 与插件构建
-> 流程仍然适用。
+> ⚠️ **历史文档（旧拓扑），当前流程以[《插件开发者指南》](插件开发者指南.md)与
+> [《CI-CD-GitHub流水线说明》](CI-CD-GitHub流水线说明.md)为准。**
+>
+> 本文描述 hub / hub-conda-runner / hub-docker-runner 三个独立 Compose 服务的旧部署
+> 方式，且写作时 `hub-server` 尚未实现——该前提已过时：单容器拓扑（含插件安装器、
+> 文件/作业 REST API、认证、配额等）均已上线，`.pypkg` 可实际安装执行。本文仅作
+> 历史参考；当前部署见[单容器部署与脚本插件使用](单容器部署与脚本插件使用.md)，
+> 插件开发流程见[插件开发者指南](插件开发者指南.md)。
 
 ## 1. 适用范围与当前状态
 
+> ⚠️ 本节描述的"尚未实现"阶段是历史状态：`hub-server`、插件安装器、文件 API 与
+> REST API 现已全部实现并上线。第 4 节的平台使用流程与 API 路径，请以
+> [插件开发者指南](插件开发者指南.md) §6.4/§6.5 的现行版本为准。
+
 本文分为两个层次：
 
-1. **当前可执行：协议基础阶段。** 本仓库已提供 `python-hub-contracts` 与 `python-hub-sdk`，可构建 wheel、校验 `plugin.yaml`/`build.json`、验证 Job/Runner 协议并供插件代码引用。
-2. **完整 Hub V1 目标流程。** `hub-server`、`hub-runner`、`ProcessExecutor`、插件安装器、文件 API 和 REST API 尚未在当前分支实现。本文对应步骤以“完整 V1 实现后”标注，严格遵循 [V1 设计基线](../design/python-service-hub-v1-design.md)。不能把示例 API 当作当前仓库已经可启动的服务。
+1. **协议基础。** 本仓库提供 `python-hub-contracts`、`python-hub-sdk`（以及
+   `hub-publisher`、`hub-runner`、`hub-server`），可构建 wheel、校验
+   `plugin.yaml`/`build.json`、验证 Job/Runner 协议并供插件代码引用。
+2. **完整 Hub V1 目标流程。** ~~`hub-server`、`hub-runner`、`ProcessExecutor`、插件安装器、文件 API 和 REST API 尚未在当前分支实现~~（已过时：均已实现）。本文对应步骤以“完整 V1 实现后”标注，严格遵循 [V1 设计基线](../design/python-service-hub-v1-design.md)。
 
-当前阶段不提供 `pip install` 后直接启动的 Hub HTTP 服务，也不能实际安装或执行 `.pypkg`。它先固定后续各阶段必须遵守的协议和 SDK 边界。
+~~当前阶段不提供 `pip install` 后直接启动的 Hub HTTP 服务，也不能实际安装或执行 `.pypkg`。~~（已过时：Hub 服务与 `.pypkg` 安装执行均已可用。）
 
 ## 2. 当前仓库：本地构建与验证
 
