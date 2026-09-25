@@ -1,0 +1,17 @@
+[Unit]
+Description=Service Hub pull-based deployment (fetch GitHub tip, run pipeline)
+After=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/service-hub
+Environment=REMOTE_DIR=/opt/service-hub
+Environment=DEPLOY_BRANCH=main
+Environment=DEPLOY_MODE=branch
+ExecStart=/usr/bin/bash /opt/service-hub/deploy/ci/pull-deploy.sh
+TimeoutStartSec=45min
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=service-hub-deploy

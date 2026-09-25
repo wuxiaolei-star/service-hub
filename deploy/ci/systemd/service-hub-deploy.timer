@@ -1,0 +1,12 @@
+[Unit]
+Description=Check GitHub for a new Service Hub release every 3 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=service-hub-deploy.service
+
+[Install]
+WantedBy=timers.target

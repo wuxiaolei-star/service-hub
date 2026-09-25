@@ -4,6 +4,19 @@
 # Local deployment helper: holds the SSH key and host credentials for the trial
 # server. Never commit these.
 .deploy-tools/
+# Local-only notes and credentials. These stay on this machine and must never
+# be pushed to GitHub (see docs/guides/CI-CD-GitHub流水线说明.md).
+.workbuddy/
+.agent-browser/
+登录账号密码.txt
+*.key
+*.pem
+*.p12
+*.tar
+*.tar.gz
+*.hpk
+*.local.md
+
 __pycache__/
 .pytest_cache/
 .mypy_cache/

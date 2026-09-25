@@ -13,3 +13,9 @@ tools/hubctl     text eol=lf
 Dockerfile       text eol=lf
 **/Dockerfile    text eol=lf
 deploy/ci/post-receive text eol=lf
+*.py             text eol=lf
+*.yaml           text eol=lf
+*.yml            text eol=lf
+# systemd parses units line by line; CRLF makes a directive value end in \r.
+*.service        text eol=lf
+*.timer          text eol=lf
