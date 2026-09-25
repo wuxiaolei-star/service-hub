@@ -1,6 +1,6 @@
 # Python Service Hub：构建、部署、使用与 NC 插件注册指南
 
-> ⚠️ **历史文档（旧拓扑），当前流程以[《插件开发者指南》](插件开发者指南.md)与
+> ⚠️ **历史文档（旧拓扑），**不再作为部署入口**，当前流程以[《插件开发者指南》](插件开发者指南.md)与
 > [《CI-CD-GitHub流水线说明》](CI-CD-GitHub流水线说明.md)为准。**
 >
 > 本文描述 hub / hub-conda-runner / hub-docker-runner 三个独立 Compose 服务的旧部署
