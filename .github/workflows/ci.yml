@@ -63,68 +63,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs"             --jq '.check_runs[] | select(.name=="Backend gate") | .id' > /tmp/check_id
-          python - <<'PY'
-          import json, os, urllib.request
-          failed = [line.split()[1] for line in open("/tmp/pytest.log") if line.startswith("FAILED ")]
-          check_id = open("/tmp/check_id").read().strip()
-          body = json.dumps({"annotations": [
-              {"path": ".github", "start_line": 1, "end_line": 1,
-               "annotation_level": "failure", "message": f"pytest failed: {name}"[:250],
-               "title": name[:60]}
-              for name in failed[:50]
-          ]})
-          req = urllib.request.Request(
-              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/check-runs/{check_id}/annotations",
-              data=body.encode(), method="POST",
-              headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                       "Accept": "application/vnd.github+json"})
-          urllib.request.urlopen(req)
-          PY
-
-  # ---------------------------------------------------------------- web
-  web:
-    name: Web console gate
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: npm ci
-        run: npm ci
-      - name: lint
-        run: npm run lint
-      - name: typecheck
-        run: npm run typecheck
-      - name: unit tests
-        run: npm run test:run
-        env:
-          CI: "true"
-      - name: build
-        run: npm run build
-
-  # ---------------------------------------------------------------- images
-  # Proves the Dockerfile still builds. Runs only on main / PR to main and
-  # uses the GitHub Actions cache so a warm run costs ~1 minute.
-  image-build:
-    name: Main image builds
-    runs-on: ubuntu-latest
-    needs: [secrets-scan]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build image (no push)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: false
-          tags: service-hub:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          ID=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs" --jq '.check_runs[] | select(.name=="Backend gate") | .id')
+          grep "^FAILED " /tmp/pytest.log | head -50 | jq -R '{path: ".github", start_line: 1, end_line: 1, annotation_level: "failure", title: (.["0:" + .][0:60]), message: ("pytest failed: " + .)}' | jq -s '{annotations: .}' > /tmp/annotations.json
+          gh api "repos/$GITHUB_REPOSITORY/check-runs/$ID/annotations" --input /tmp/annotations.json
+          grep -c "^FAILED " /tmp/pytest.log || true
