@@ -291,7 +291,11 @@ for repo in "$API_IMAGE" "$WEB_IMAGE"; do
     fi
   done
 done
-docker image prune -f >/dev/null 2>&1 || true
+# NOTE: no `docker image prune` here, ever. The hub registry addresses plugin
+# images by digest, and a re-tagged build leaves the attested image dangling —
+# a prune then deletes it and every new job on that build fails instantly with
+# "Runner failed" (observed 2026-09-25). Superseded main-image commit tags are
+# removed explicitly above; every other docker object stays.
 
 ls -1t "$REMOTE_DIR"/data-cold-*.tar.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | while read -r old; do
   log "removing old backup $old"
