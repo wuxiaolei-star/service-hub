@@ -75,12 +75,12 @@ if [ ! -f "$SAMPLE" ]; then
   fi
 fi
 
-FILE_KEY=$(curl -fsS -X POST -H "$AUTH" -F "file=@$SAMPLE" "$API_BASE/files" \
-  | python3 -c 'import json, sys; print(json.load(sys.stdin)["file_key"])') \
+FILE_ID=$(curl -fsS -X POST -H "$AUTH" -F "file=@$SAMPLE" "$API_BASE/files" \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["file_id"])') \
   || { log "sample upload failed"; exit 1; }
 
 JOB=$(curl -fsS -X POST -H "$AUTH" -H 'Content-Type: application/json' \
-  -d "{\"plugin_id\":\"$PLUGIN_ID\",\"version\":\"$PLUGIN_VERSION\",\"inputs\":{\"source_nc\":\"$FILE_KEY\"}}" \
+  -d "{\"plugin_id\":\"$PLUGIN_ID\",\"version\":\"$PLUGIN_VERSION\",\"inputs\":{\"source_nc\":\"$FILE_ID\"}}" \
   "$API_BASE/jobs") \
   || { log "job creation failed"; exit 1; }
 JOB_KEY=$(echo "$JOB" | python3 -c 'import json, sys; print(json.load(sys.stdin)["job_id"])')
@@ -100,7 +100,7 @@ done
 
 # The uploaded sample has served its purpose either way; leaving it behind would
 # grow storage quota on every deploy.
-curl -fsS -X DELETE -H "$AUTH" "$API_BASE/files/$FILE_KEY" >/dev/null 2>&1 \
+curl -fsS -X DELETE -H "$AUTH" "$API_BASE/files/$FILE_ID" >/dev/null 2>&1 \
   || log "sample cleanup failed (non-fatal)"
 
 if [ "$STATUS" != "SUCCESS" ]; then
