@@ -56,7 +56,17 @@ jobs:
       - name: mypy
         run: mypy
       - name: pytest
-        run: python -m pytest -q
+        run: |
+          python -m pytest -q | tee /tmp/pytest.log; exit ${PIPESTATUS[0]}
+      - name: Publish failing tests to the check summary
+        if: failure()
+        run: |
+          {
+            echo "### pytest failures"
+            grep -E "^(FAILED|ERROR) " /tmp/pytest.log | head -60
+            echo
+            grep -B 5 -A 20 "= FAILURES =" /tmp/pytest.log | head -150
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------- web
   web:
