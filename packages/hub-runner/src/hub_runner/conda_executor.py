@@ -18,6 +18,13 @@ from typing import IO, Literal
 import zstandard
 from python_hub_contracts import JobStatus, RunnerEvent, RuntimeType, parse_runner_line
 
+# Windows-only signal constants: typeshed only declares them for win32, so on a
+# Linux CI mypy (which analyses with --platform linux) rejects a direct module
+# attribute access. Resolving through getattr keeps the runtime behaviour on
+# both platforms while staying platform-neutral for the type checker.
+_NEW_PROCESS_GROUP: int = getattr(signal, "CREATE_NEW_PROCESS_GROUP", 0)
+_CTRL_BREAK_EVENT: int = getattr(signal, "CTRL_BREAK_EVENT", 0)
+
 
 @dataclass(frozen=True, slots=True)
 class CommandResult:
@@ -312,7 +319,7 @@ def _run_job_process(
         bufsize=1,
         start_new_session=(os.name != "nt"),
         creationflags=(
-            subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            _NEW_PROCESS_GROUP if os.name == "nt" else 0
         ),
     )
     if process.stdout is None or process.stderr is None:
@@ -414,7 +421,7 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
         return
     try:
         if os.name == "nt":
-            process.send_signal(signal.CTRL_BREAK_EVENT)
+            process.send_signal(_CTRL_BREAK_EVENT)
         else:
             kill_process_group = os.__dict__["killpg"]
             kill_process_group(process.pid, signal.SIGTERM)
