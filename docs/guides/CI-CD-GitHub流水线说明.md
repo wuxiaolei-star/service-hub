@@ -120,7 +120,30 @@ HUB_SECRET_LITERALS='Hub-2026-...' python deploy/ci/check_secrets.py
 
 把真实口令放进 `HUB_SECRET_LITERALS` 而不是写进脚本，就能在不泄露明文的前提下验证「这串值绝对没有进仓库」。
 
-## 5. 常见问题
+## 5. 首跑实测（2026-09-25，2 核 3.4 G）
+
+| 阶段 | 耗时 |
+| --- | --- |
+| stage 2 质量门（容器内 pytest） | **481 s**（953 passed / 2 skipped / 0 failed） |
+| stage 3 热备 + 冷备（data ~490 M） | 约 45 s |
+| stage 4 镜像构建（温缓存） | 约 75 s |
+| stage 5-8 上线 / 健康检查 / 记录 | 约 20 s |
+| **合计（带质量门）** | **约 10 分钟** |
+| 合计（`--skip-gate`） | **157 s** |
+
+日常提交如果只改脚本/文档，可以用 `PIPELINE_ARGS=--skip-gate` 走快通道（质量门已在 GitHub Actions 跑过一遍）；改业务 code 时务必保留质量门。
+
+## 6. 踩过的坑（都已在脚本里修掉）
+
+| 症状 | 根因 | 修法 |
+| --- | --- | --- |
+| 质量门报 `KeyError: HUB_HOST_DATA_DIR`，但日志里没有任何 pytest 输出 | 镜像 `ENTRYPOINT` 是 `service-hub-entrypoint`，`docker run <cmd>` 先走数据目录自举，pytest 根本没被执行 | `docker run --entrypoint bash` 绕开入口脚本 |
+| 容器里 pytest 报 `FileNotFoundError: 'git'`（用例要用 `git check-attr`） | 运行时镜像不含 git | 该用例加 `skipif shutil.which("git") is None`；GitHub Actions 上有 git，保护仍在 |
+| 备份阶段"失败并回滚"，实际容器没停 | `compose.yaml` 用 `${HUB_HOST_DATA_DIR:?}` 插值，缺失时 compose 直接报错；`set -e` 把它显示成备份失败 | 流水线里 `export HUB_HOST_DATA_DIR="$DATA_DIR"` |
+| 改了流水线脚本本身的那次提交，跑的还是旧逻辑 | bash 按字节偏移读正在运行的脚本，checkout 换掉文件后新旧混杂 | `pull-deploy.sh` 先 `git checkout --detach <sha>` 再 `exec` 流水线 |
+| 服务器 `git fetch` 报 Permission denied | 机器上有多把 key，默认没用 deploy key | `~/.ssh/config` 把 `github.com` 绑到 `id_ed25519_service_hub_deploy` |
+
+## 7. 常见问题
 
 | 现象 | 原因 / 处理 |
 | --- | --- |
