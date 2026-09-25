@@ -86,10 +86,13 @@ else
   GATE_LOG="$LOG_DIR/gate-$COMMIT.log"
   # Backend gate runs inside the API image: it already has the dependency set and a
   # POSIX environment (Windows hosts cannot run the deploy/ and sdk/ POSIX cases).
+  # --entrypoint bash is mandatory: the image entrypoint (service-hub-entrypoint)
+  # bootstraps the data directory first and exits with KeyError: HUB_HOST_DATA_DIR
+  # before ever reaching pytest, which looks exactly like a failing gate.
   if docker image inspect python-service-hub:1.0.0-linux-amd64 >/dev/null 2>&1; then
-    docker run --rm -v "$SRC_DIR:/src" -w /src python-service-hub:1.0.0-linux-amd64 \
-      bash -lc 'pip install -q -i https://mirrors.aliyun.com/pypi/simple/ pytest && \
-                python -m pytest -m "not integration" -q' 2>&1 | tee "$GATE_LOG" \
+    docker run --rm --entrypoint bash -v "$SRC_DIR:/src" -w /src python-service-hub:1.0.0-linux-amd64 \
+      -c 'pip install -q -i https://mirrors.tencent.com/pypi/simple/ pytest && \
+          python -m pytest -m "not integration" -q' 2>&1 | tee "$GATE_LOG" \
       || { fail "backend gate failed, see $GATE_LOG"; exit 1; }
   else
     fail "base image missing, cannot run the container gate; re-run with --skip-gate"
