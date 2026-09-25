@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import logging
+import sys
 import zipfile
 from pathlib import Path
 
@@ -12,6 +13,13 @@ import pytest
 h5py = pytest.importorskip("h5py", reason="h5py is a heavy plugin-only dependency")
 np = pytest.importorskip("numpy", reason="numpy is a heavy plugin-only dependency")
 pytest.importorskip("scipy", reason="scipy is a heavy plugin-only dependency")
+
+# This module drives the plugin package and its scripts directly (the conformance
+# harness in this directory goes through the runner protocol instead and needs
+# none of these paths).
+PLUGIN_ROOT = Path(__file__).resolve().parents[2] / "packages" / "nc-to-shp-plugin"
+sys.path.insert(0, str(PLUGIN_ROOT / "src"))
+sys.path.insert(0, str(PLUGIN_ROOT))
 
 from nc_to_shp_plugin.convert import map_cell_values_to_points  # noqa: E402
 from nc_to_shp_plugin.main import run  # noqa: E402

@@ -3,14 +3,21 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import sys
 import tarfile
 from pathlib import Path
 
 import pytest
 import zstandard
-from hub_server.services.archives import PluginArchiveService
-from python_hub_contracts import PluginBuildManifest
-from scripts.package_build import build_package
+
+# The NC plugin's packaging wrapper lives in its scripts/ package (see the
+# conformance harness note in test_nc_to_shp.py for the path-free alternative).
+PLUGIN_ROOT = Path(__file__).resolve().parents[2] / "packages" / "nc-to-shp-plugin"
+sys.path.insert(0, str(PLUGIN_ROOT))
+
+from hub_server.services.archives import PluginArchiveService  # noqa: E402
+from python_hub_contracts import PluginBuildManifest  # noqa: E402
+from scripts.package_build import build_package  # noqa: E402
 
 
 def _members(package: Path) -> dict[str, bytes]:

@@ -16,6 +16,12 @@ Protocol sources mirrored here (conflicts resolve to those sources):
 
 Limitation: conda-pack runtimes are not emulated. A conda-only project is refused
 with a readable message unless ``--mode python`` is requested explicitly.
+
+The programmatic core behind the CLI is :func:`run_plugin_job`: it stages the
+same workspace, executes the same runner subprocess and parses the same
+``result.json``, returning a structured outcome instead of printing a report.
+The plugin conformance harness (``tests/plugins/harness.py``) builds on it
+instead of re-implementing the orchestration.
 """
 
 from __future__ import annotations
@@ -141,6 +147,83 @@ def run_dev(
         else:
             shutil.rmtree(temporary, ignore_errors=True)
     return exit_code
+
+
+@dataclass(frozen=True, slots=True)
+class LocalJobOutcome:
+    """Structured outcome of one local plugin trial run (``run_plugin_job``)."""
+
+    workspace: Path
+    job_id: str
+    #: 0 only when result.json was valid and the job reported SUCCESS.
+    exit_code: int
+    #: The parsed result.json, or ``None`` when it was missing or invalid.
+    result: JobResult | None
+    #: Why result.json was missing/invalid, or why the run timed out.
+    contract_error: str | None
+    runner_stdout: str = ""
+    runner_stderr: str = ""
+
+
+def run_plugin_job(
+    *,
+    project: PluginProject,
+    workspace_root: Path,
+    params: dict[str, object],
+    inputs: list[Path | str],
+) -> LocalJobOutcome:
+    """Run one plugin job through the real runner protocol in python mode.
+
+    The programmatic core behind ``hub-plugin dev``: it stages the same synthetic
+    job workspace, executes ``python -m hub_runner`` against the project sources
+    and parses the written ``result.json``. Docker/conda runtime execution is not
+    provided here; runtime-level output comparison stays with the integration
+    suite (``tests/integration/test_dual_runtime_nc_to_shp.py``).
+
+    ``workspace_root`` must be an existing empty directory and is kept for
+    inspection (the caller owns its lifetime). ``inputs`` are staged through the
+    manifest's input declaration exactly like ``--input`` arguments;
+    ``params`` must already carry typed values — the Hub's default filling and
+    ``NAME=VALUE`` coercion are CLI concerns.
+    """
+    planned_inputs = _plan_inputs(project.manifest, [str(item) for item in inputs])
+    job_id = f"dev-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    workspace = _stage_workspace(workspace_root, project, job_id, params, planned_inputs)
+    timeout = project.manifest.execution.timeout
+    stdout = stderr = ""
+    try:
+        returncode, stdout, stderr = _execute_python(
+            project=project, workspace=workspace, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        return LocalJobOutcome(
+            workspace=workspace_root,
+            job_id=job_id,
+            exit_code=1,
+            result=None,
+            contract_error=(
+                f"作业超时:超过 manifest execution.timeout={timeout} 秒,进程已终止"
+            ),
+            runner_stdout=stdout,
+            runner_stderr=stderr,
+        )
+    result, contract_error = _read_result(workspace)
+    failed = (
+        contract_error is not None
+        or result is None
+        or returncode != 0
+        or result.status is not JobStatus.SUCCESS
+    )
+    exit_code = 1 if failed else 0
+    return LocalJobOutcome(
+        workspace=workspace_root,
+        job_id=job_id,
+        exit_code=exit_code,
+        result=result,
+        contract_error=contract_error,
+        runner_stdout=stdout,
+        runner_stderr=stderr,
+    )
 
 
 def _run_in_workspace(
@@ -577,24 +660,30 @@ def _bind_path(path: Path) -> str:
     return path.resolve().as_posix()
 
 
+def _read_result(workspace: _Workspace) -> tuple[JobResult | None, str | None]:
+    """Parse ``output/result.json`` against the job protocol contract.
+
+    Returns ``(result, None)`` on success and ``(None, problem)`` when the file
+    is missing or violates the contract; shared by the CLI report path and
+    :func:`run_plugin_job`.
+    """
+    if not workspace.result_path.is_file():
+        return None, f"result.json 缺失(作业未执行到写结果阶段): {workspace.result_path}"
+    try:
+        return JobResult.model_validate_json(workspace.result_path.read_text("utf-8")), None
+    except ValidationError as error:
+        details = "; ".join(
+            f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
+            for item in error.errors()
+        )
+        return None, f"result.json 契约校验失败: {details}"
+
+
 def _finish(workspace: _Workspace, returncode: int) -> int:
     """Validate ``result.json`` against the contract and print the run report."""
-    if not workspace.result_path.is_file():
-        print(
-            f"dev: result.json 缺失(作业未执行到写结果阶段): {workspace.result_path}",
-            file=sys.stderr,
-        )
-        _print_log_tail(workspace.logs_dir)
-        return 1
-    try:
-        result = JobResult.model_validate_json(workspace.result_path.read_text("utf-8"))
-    except ValidationError as error:
-        for item in error.errors():
-            location = ".".join(str(part) for part in item["loc"])
-            print(
-                f"dev: result.json 契约校验失败: {location}: {item['msg']}",
-                file=sys.stderr,
-            )
+    result, problem = _read_result(workspace)
+    if problem is not None or result is None:
+        print(f"dev: {problem}", file=sys.stderr)
         _print_log_tail(workspace.logs_dir)
         return 1
     _report(result, workspace.logs_dir)

@@ -1,36 +1,59 @@
-"""Compare two plugin ZIP outputs by OGR geometry, CRS, schema, and SMID values."""
+"""Compare two plugin ZIP outputs by OGR geometry, CRS, schema, and SMID values.
+
+Thin wrapper around the platform comparator ``hub_publisher.conformance``: the
+structural layer (safe extraction, component sets, manifest equality and
+per-file byte/record summaries) lives there. This script keeps the plugin's
+deep semantic pass — OGR geometry type, CRS, field schema and per-SMID geometry
+and attribute values — which needs the plugin's own ``osgeo`` dependency. When
+``osgeo`` is unavailable the wrapper still reports structural differences
+(record counts, geometry types, byte differences) and simply skips the
+per-feature detail.
+
+CLI behavior is unchanged: differences go to stderr with exit code 1; equal
+archives print "Shapefile ZIP outputs are semantically equal" with exit code 0.
+"""
 
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 from typing import Any
+
+_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+_REPOSITORY_ROOT = _PACKAGE_ROOT.parents[1]
+_PUBLISHER_SRC = _REPOSITORY_ROOT / "packages" / "hub-publisher" / "src"
+if _PUBLISHER_SRC.is_dir() and str(_PUBLISHER_SRC) not in sys.path:
+    sys.path.insert(0, str(_PUBLISHER_SRC))
+
+from hub_publisher.conformance import compare_output_archives, extract_archive_flat  # noqa: E402
 
 
 def compare_archives(
     left: Path, right: Path, *, expected_features: int | None = None
 ) -> list[str]:
     """Return semantic differences; an empty list means equality."""
+    structural = compare_output_archives(left, right)
+    if structural.only_in_left or structural.only_in_right:
+        return [
+            f"component sets differ: {sorted(structural.left_names)}"
+            f" != {sorted(structural.right_names)}"
+        ]
+    differences = ["manifest.json differs"] if structural.manifest_differs else []
+    if expected_features is None and not structural.differing:
+        # Byte-identical archives and no feature-count expectation: the deep
+        # pass cannot add information, so skip the extraction entirely.
+        return differences
     with (
         tempfile.TemporaryDirectory(prefix="nc-shp-left-") as left_name,
         tempfile.TemporaryDirectory(prefix="nc-shp-right-") as right_name,
     ):
         left_root = Path(left_name)
         right_root = Path(right_name)
-        left_names = _extract_flat(left, left_root)
-        right_names = _extract_flat(right, right_root)
-        if left_names != right_names:
-            return [f"component sets differ: {sorted(left_names)} != {sorted(right_names)}"]
-        differences: list[str] = []
-        left_manifest = json.loads((left_root / "manifest.json").read_text("utf-8"))
-        right_manifest = json.loads((right_root / "manifest.json").read_text("utf-8"))
-        if left_manifest != right_manifest:
-            differences.append("manifest.json differs")
+        left_names = extract_archive_flat(left, left_root)
+        extract_archive_flat(right, right_root)
         for name in sorted(item for item in left_names if item.endswith(".shp")):
             differences.extend(
                 _compare_shapefile(
@@ -39,21 +62,7 @@ def compare_archives(
                     expected_features=expected_features,
                 )
             )
-        return differences
-
-
-def _extract_flat(archive: Path, destination: Path) -> set[str]:
-    with zipfile.ZipFile(archive) as source:
-        names = source.namelist()
-        if (
-            len(names) != len(set(names))
-            or "manifest.json" not in names
-            or any(not name or name != Path(name).name for name in names)
-        ):
-            raise ValueError(f"unsafe or invalid plugin ZIP: {archive}")
-        for name in names:
-            (destination / name).write_bytes(source.read(name))
-    return set(names)
+    return differences
 
 
 def _compare_shapefile(
