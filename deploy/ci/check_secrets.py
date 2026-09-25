@@ -128,6 +128,9 @@ def is_reserved_ip(ip: str) -> bool:
     # Loopback + RFC 1918 private ranges.
     if a in (10, 127) or (a == 192 and b == 168) or (a == 172 and 16 <= b <= 31):
         return True
+    # RFC 6598 Carrier-Grade NAT (shared address space, not a public host).
+    if a == 100 and 64 <= b <= 127:
+        return True
     # RFC 5737 documentation ranges: 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
     return (a, b, c) in {(192, 0, 2), (198, 51, 100), (203, 0, 113)}
 
@@ -172,9 +175,12 @@ def scan(
                 findings.append(Finding("warning", rel, number, "assignment", label))
 
             for ip in PUBLIC_IP_RE.findall(line):
-                if noisy or ip in ignore_ips or is_reserved_ip(ip):
+                if ip in ignore_ips or is_reserved_ip(ip):
                     continue
-                findings.append(Finding("warning", rel, number, "public-ip", ip))
+                # The repository is public: a routable host address in any tracked
+                # file is exactly the leak this gate exists to stop, so this rule
+                # is deliberately never muted by the docs/tests noise suppression.
+                findings.append(Finding("error", rel, number, "public-ip", ip))
     return findings
 
 

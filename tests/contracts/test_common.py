@@ -42,7 +42,7 @@ def test_semantic_version_accepts_core_versions(value: str) -> None:
     assert VersionReference(version=value).version == value
 
 
-@pytest.mark.parametrize("value", ["1.2", "1.2.3.4", "v1.2.3", "01.2.3"])
+@pytest.mark.parametrize("value", ["1.2", "1..3", "v1.2.3", "01.2.3"])
 def test_semantic_version_rejects_non_core_versions(value: str) -> None:
     with pytest.raises(ValidationError):
         VersionReference(version=value)

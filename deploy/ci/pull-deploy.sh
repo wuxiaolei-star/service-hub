@@ -16,6 +16,9 @@
 #   DEPLOY_BRANCH   branch to follow         (default main)
 #   DEPLOY_MODE     branch | tag             (default branch)
 #   DEPLOY_TAG_GLOB tag pattern for tag mode (default 'v*')
+#   DEPLOY_REPO_SLUG GitHub owner/repo used by the CI gate
+#   HUB_CI_GATE     wait (default) | strict | off — hold deployment until the
+#                   commit's GitHub Actions checks conclude (see below)
 #   PIPELINE_ARGS   extra flags for deploy-pipeline.sh, e.g. "--skip-gate"
 #
 # Exit codes: 0 nothing to do or deploy succeeded, 1 deploy failed,
@@ -97,6 +100,67 @@ log "remote tip=$TARGET_SHA (mode=$MODE) deployed=$CURRENT"
 if [ "$TARGET_SHA" = "$CURRENT" ] && [ "$FORCE" -ne 1 ]; then
   log "already up to date, nothing to deploy"
   exit 0
+fi
+
+# ---------------------------------------------------------------- CI gate
+# The full quality gate runs in GitHub Actions; deploying before it finishes
+# ships unverified code and deploying after it failed ships known-broken code.
+# For a public repo the check-runs API is readable without credentials, so the
+# poller itself can hold until the commit's checks conclude.
+#   HUB_CI_GATE = wait (default) | strict | off
+#     wait:   deploy on green, hold while pending or red, deploy if the API is
+#             unreachable (a broken API must not brick deployments)
+#     strict: additionally hold when the API is unreachable
+#     off:    never query (e.g. while the repository is private)
+if [ "${HUB_CI_GATE:-wait}" != "off" ]; then
+  REPO_SLUG="${DEPLOY_REPO_SLUG:-wuxiaolei-star/service-hub}"
+  GATE_PAYLOAD=$(curl -fsS -m 20 -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$REPO_SLUG/commits/$TARGET_SHA/check-runs" 2>/dev/null || echo "")
+  if [ -z "$GATE_PAYLOAD" ]; then
+    log "CI gate: check-runs API unreachable"
+    if [ "${HUB_CI_GATE:-wait}" = "strict" ]; then
+      log "CI gate: strict mode, holding this tick"
+      exit 0
+    fi
+    log "CI gate: deploying anyway (wait mode tolerates API failures)"
+  else
+    GATE_VERDICT=$(python3 - "$GATE_PAYLOAD" <<'PY'
+import json, sys
+
+try:
+    runs = (json.loads(sys.argv[1]) or {}).get("check_runs") or []
+except Exception:
+    print("error")
+    raise SystemExit
+if not runs:
+    print("pending")
+    raise SystemExit
+if any(run.get("status") != "completed" for run in runs):
+    print("pending")
+elif any(run.get("conclusion") not in (None, "success", "skipped") for run in runs):
+    print("red")
+else:
+    print("green")
+PY
+)
+    case "$GATE_VERDICT" in
+      green)
+        log "CI gate: green, deploying" ;;
+      pending)
+        log "CI gate: checks still running for $TARGET_SHA, holding this tick"
+        exit 0 ;;
+      red)
+        log "CI gate: CHECKS RED for $TARGET_SHA, holding deployment (push a fix or set HUB_CI_GATE=off to override)"
+        exit 0 ;;
+      *)
+        log "CI gate: API response unreadable"
+        if [ "${HUB_CI_GATE:-wait}" = "strict" ]; then
+          log "CI gate: strict mode, holding this tick"
+          exit 0
+        fi
+        log "CI gate: deploying anyway (wait mode tolerates API failures)" ;;
+    esac
+  fi
 fi
 
 if [ "$CHECK_ONLY" -eq 1 ]; then

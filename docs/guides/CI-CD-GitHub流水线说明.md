@@ -1,30 +1,36 @@
-# CI/CD 流水线说明（GitHub 私有仓库 + 服务器主动拉取）
+# CI/CD 流水线说明（GitHub 公开仓库 + 服务器主动拉取）
 
-> 目标仓库：`https://github.com/wuxiaolei-star/service-hub.git`（私有）
-> 目标实例：`${HUB_HOST}`（Ubuntu 24.04 / 2 核 3.4 G）
+> 目标仓库：`https://github.com/wuxiaolei-star/service-hub.git`（**公开**，2026-09-25 起）
+> 目标实例：`${HUB_HOST}`（Ubuntu 24.04 / 2 核 3.4 G；真实地址只存本机 `.deploy-tools/ssh_env.json`）
 > 编写日期：2026-09-25
+
+> **公开仓库纪律**：全历史已于 2026-09-25 完成敏感信息重写（服务器 IP → `${HUB_HOST}` 占位符）。
+> `check_secrets.py` 对非保留段公网 IP 直接判 **error**。任何新文档/代码不得出现真实 IP /
+> 域名 / 口令；真实值只存本机（gitignored）。
 
 ## 1. 分工：谁做什么
 
 | 环节 | 执行位置 | 产物 |
 | --- | --- | --- |
-| 密钥扫描 | GitHub Actions | 阻断带凭证的提交 |
+| 密钥扫描（公网 IP = error） | GitHub Actions | 阻断凭证与真实 IP 入库 |
 | 后端质量门（ruff / mypy / pytest） | GitHub Actions（ubuntu-latest） | 全绿才允许部署 |
 | 前端质量门（eslint / tsc / vitest / build） | GitHub Actions | 同上 |
 | 主镜像可构建校验 | GitHub Actions（buildx + GHA 缓存） | 确认 Dockerfile 没坏 |
+| **CI 门禁（绿灯才部署）** | 服务器 `pull-deploy.sh` 查公开 check-runs API | 红色/进行中一律扣住 |
 | **构建与上线** | **服务器本地** | 镜像不跨网传输（1 GB 级） |
 | 健康检查、自动回滚、走查 | 服务器本地 `deploy/ci/deploy-pipeline.sh` | 8 阶段流水线 |
 
-服务器**主动拉取**而不是 GitHub 反向 SSH 进来：服务器不需要开放任何入站端口，也不必把 GitHub Actions 的出口 IP 段加进防火墙。代价是延迟约 1-3 分钟（轮询间隔）。
+服务器**主动拉取**而不是 GitHub 反向 SSH 进来：服务器不需要开放任何入站端口，也不必把 GitHub Actions 的出口 IP 段加进防火墙。代价是延迟约 1-3 分钟（轮询间隔）+ CI 跑完的等待时间（约 10-15 分钟）。
 
 ```
 git push ──▶ GitHub Actions (质量门) ──▶ 分支前进
                                             │
                       服务器 systemd timer 每 3 分钟轮询
                                             ▼
-                    git fetch → 与 .deployed-commit 比对
+              git fetch → 与 .deployed-commit 比对 → 查 CI check-runs
                                             ▼
-              有新提交 → deploy-pipeline.sh <sha>（构建/备份/上线/回滚）
+        绿 = deploy-pipeline.sh <sha>（构建/备份/上线/回滚）
+        黄 = 本轮跳过，下轮再看；红 = 扣住不部署
 ```
 
 ## 2. 首次接入（一次性）
@@ -89,6 +95,8 @@ tail -f /opt/service-hub/deploy/ci/releases.log   # 每次上线：commit / 耗�
 
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
+| `HUB_CI_GATE` | `wait` | `wait`：查公开 check-runs API，绿才部署、黄/红扣住、API 失败放行；`strict`：API 失败也扣住；`off`：不查 |
+| `DEPLOY_REPO_SLUG` | `wuxiaolei-star/service-hub` | CI 门禁查询的 GitHub 仓库 |
 | `HUB_PIPELINE_GATE` | `0`（跳过） | `1`/`true`/`run` 时在服务器容器内补跑 pytest 质量门；`--run-gate` / `--skip-gate` 参数可逐次覆盖 |
 | `HUB_MIN_FREE_MB` | `2048` | 部署前磁盘水位，低于阈值直接拒绝部署（防备份把盘写满） |
 | `HUB_DEPLOY_WEBHOOK_URL` | 空 | 部署成功/失败都 POST 一条 `{"text": ...}` JSON（企业微信/钉钉等 bot 均可接）；通知失败不影响部署本身 |
