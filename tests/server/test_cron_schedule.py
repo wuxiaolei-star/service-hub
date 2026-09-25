@@ -421,7 +421,10 @@ def _seed_build(session: Session) -> None:
             "parameters": [],
             "inputs": [],
             "outputs": [],
-            "execution": {"timeout": 30, "concurrency": 1},
+            # B5 per-build gate: catch_up policy replays several missed fires as
+            # concurrent PENDING Jobs on one Build; these tests exercise the
+            # missed-run policy, not the concurrency gate, so allow headroom.
+            "execution": {"timeout": 30, "concurrency": 16},
             "environment_variables": {"required": []},
             "healthcheck": {"enabled": True, "type": "import"},
         },

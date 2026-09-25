@@ -382,6 +382,11 @@ def test_job_event_starts_job_and_completion_records_terminal_state(
             },
         },
     )
+    # The fixture manifest declares a required files output (result_files);
+    # a SUCCESS completion must register it to satisfy the G6 output contract.
+    output = client.app.state.storage.open_relative(f"jobs/{job_key}/output/shapefile.zip")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(b"shapefile-bytes")
     now = datetime.now(UTC)
     completion = _runner_post(
         client,
@@ -398,7 +403,15 @@ def test_job_event_starts_job_and_completion_records_terminal_state(
                 "duration_ms": 1000,
                 "message": "complete",
                 "data": {},
-                "files": [],
+                "files": [
+                    {
+                        "name": "result_files",
+                        "path": "shapefile.zip",
+                        "format": "zip",
+                        "size": len(b"shapefile-bytes"),
+                        "sha256": "0" * 64,
+                    }
+                ],
                 "error": None,
             },
         },

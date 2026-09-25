@@ -174,6 +174,74 @@ def test_trigger_due_isolates_failing_schedules(
     assert _reload_schedule(session, good.id).last_job_id is not None
 
 
+def test_trigger_due_recovers_after_build_concurrency_409(
+    environment: tuple[Session, LocalStorage, HubSettings],
+) -> None:
+    """G5/R7 (B5): the per-build gate covers the scheduler path too.
+
+    While one active job saturates the build (concurrency 1), the due schedule
+    is denied with 409 PLUGIN_CONCURRENCY_LIMIT and keeps its pending fire
+    time. Once the blocking job reaches a terminal state, the very next pass
+    creates the scheduled job and advances next_run_at — automatic recovery.
+    """
+    session, storage, settings = environment
+    _seed_build(session)
+    build = session.query(PluginBuild).filter_by(build_key="plugin_build_docker").one()
+    blocker = _seed_active_job(session, build)
+    schedule = _seed_schedule(
+        session, name="gated", next_run_at=datetime.now(UTC) - timedelta(minutes=1)
+    )
+    seeded_next_run_at = schedule.next_run_at
+
+    triggered = trigger_due(session, storage, settings, now=datetime.now(UTC))
+
+    assert triggered == 0
+    assert session.query(Job).count() == 1  # only the blocking job exists
+    refreshed = _reload_schedule(session, schedule.id)
+    assert refreshed.next_run_at == seeded_next_run_at
+    entry = session.query(AuditLogRecord).filter_by(action="schedule.trigger").one()
+    assert entry.result == "denied"
+    assert entry.detail is not None
+    assert entry.detail["code"] == "PLUGIN_CONCURRENCY_LIMIT"
+
+    blocker.status = "SUCCESS"
+    session.commit()
+
+    triggered_again = trigger_due(
+        session, storage, settings, now=datetime.now(UTC) + timedelta(seconds=30)
+    )
+
+    assert triggered_again == 1
+    refreshed = _reload_schedule(session, schedule.id)
+    assert refreshed.next_run_at == seeded_next_run_at + timedelta(
+        minutes=refreshed.interval_minutes
+    )
+    created_job = session.query(Job).filter(Job.id != blocker.id).one()
+    assert refreshed.last_job_id == created_job.job_key
+    ok_entry = (
+        session.query(AuditLogRecord)
+        .filter_by(action="schedule.trigger", result="ok")
+        .one()
+    )
+    assert ok_entry.resource_id == created_job.job_key
+
+
+def _seed_active_job(session: Session, build: PluginBuild) -> Job:
+    """Insert one active (PENDING) job row that occupies the build slot."""
+    job = Job(
+        plugin_build=build,
+        runtime_type=build.runtime_type,
+        runtime_fingerprint=build.runtime_fingerprint,
+        status="PENDING",
+        params_json={},
+        inputs_json={},
+        timeout_seconds=30,
+    )
+    session.add(job)
+    session.commit()
+    return job
+
+
 def _reload_schedule(session: Session, schedule_id: int) -> Schedule:
     session.expire_all()
     refreshed = session.get(Schedule, schedule_id)

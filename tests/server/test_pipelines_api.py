@@ -419,7 +419,9 @@ def _manifest() -> dict[str, object]:
             }
         ],
         "outputs": [{"name": "result_files", "label": "Result", "type": "file", "required": True}],
-        "execution": {"timeout": 30, "concurrency": 1},
+        # B5 per-build gate: run-listing tests stage several active pipeline
+        # runs (each holding a PENDING job) on one Build, so allow headroom.
+        "execution": {"timeout": 30, "concurrency": 16},
         "environment_variables": {"required": []},
         "healthcheck": {"enabled": True, "type": "import"},
     }

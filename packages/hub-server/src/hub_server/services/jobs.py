@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
 from typing import cast
 
 from python_hub_contracts import JobStatus, PluginManifest, RuntimeType
@@ -34,6 +35,12 @@ _TERMINAL_STATUSES = {
     JobStatus.TIMED_OUT.value,
 }
 
+# Active states counted by the per-build concurrency gate (G5/R7). Deliberately
+# narrower than quotas.ACTIVE_JOB_STATUSES: the reviewed B5 spec counts jobs
+# that occupy or will occupy the build's execution slot (PENDING/PREPARING/
+# RUNNING), while CANCEL_REQUESTED is a user-quota concept only.
+_BUILD_ACTIVE_JOB_STATUSES = ("PENDING", "PREPARING", "RUNNING")
+
 
 class JobService:
     """Create and expose Jobs through the public API."""
@@ -57,6 +64,7 @@ class JobService:
         selected_runtime: RuntimeType = runtime_type or "docker"
         build = self._resolve_enabled_build(plugin_id, version, selected_runtime)
         manifest = PluginManifest.model_validate(build.plugin_version.manifest_json)
+        self._enforce_build_concurrency(build, manifest)
         validated_params = self._validate_params(manifest, params)
         validated_inputs, input_records = self._validate_inputs(manifest, inputs)
         # job_key and created_at are assigned up front so the potentially slow
@@ -233,6 +241,44 @@ class JobService:
         ]
         return records
 
+    def _enforce_build_concurrency(
+        self, build: PluginBuild, manifest: PluginManifest
+    ) -> None:
+        """Reject creation beyond the build's declared ``execution.concurrency``.
+
+        Job creation is guarded by two independent gates. The per-user
+        concurrent-job quota (``QuotaService.enforce_job_creation``, called by
+        the public router) is the anti-abuse layer and exempts anonymous/admin
+        actors — and therefore the system scheduler. This per-build gate is the
+        anti-overload layer: it applies to every actor including scheduled
+        triggers (G5/R7), because only the plugin manifest knows how much
+        concurrent work one build can absorb. Placing it inside ``create``
+        makes the scheduler path (the only other ``JobService.create`` caller)
+        covered by construction, with no bypass point.
+
+        Like the quota check, the count-then-insert window is not serialized;
+        SQLite's single-writer commits make simultaneous over-admission a
+        transient, self-limiting race rather than a sustained overload.
+
+        ``execution.concurrency`` is a required manifest field (contracts:
+        ``int, gt=0``) — there is no implicit default, and a declared ``1``
+        behaves exactly like any other declared limit.
+        """
+        limit = manifest.execution.concurrency
+        active = self._session.scalar(
+            select(func.count(Job.id)).where(
+                Job.plugin_build_id == build.id,
+                Job.status.in_(_BUILD_ACTIVE_JOB_STATUSES),
+            )
+        )
+        if active is not None and active + 1 > limit:
+            raise HubError(
+                code="PLUGIN_CONCURRENCY_LIMIT",
+                message="插件 Build 并发作业数已达上限",
+                status_code=409,
+                details={"build_key": build.build_key, "active": int(active), "limit": limit},
+            )
+
     def _resolve_enabled_build(
         self, plugin_id: str, version: str, runtime_type: RuntimeType
     ) -> PluginBuild:
@@ -279,6 +325,8 @@ class JobService:
                 resolved[name] = None
                 continue
             if not _matches_type(value, spec.type):
+                if spec.type == "datetime" and isinstance(value, str):
+                    raise _validation_error("插件 datetime 参数不是合法的 ISO8601 时间")
                 raise _validation_error("插件参数类型无效")
             if spec.type == "enum" and value not in (spec.options or []):
                 raise _validation_error("插件参数枚举值无效")
@@ -373,8 +421,13 @@ def _matches_type(value: object, parameter_type: str) -> bool:
         return isinstance(value, int | float) and not isinstance(value, bool)
     if parameter_type == "boolean":
         return isinstance(value, bool)
-    if parameter_type in {"enum", "datetime"}:
+    if parameter_type == "enum":
         return isinstance(value, str)
+    if parameter_type == "datetime":
+        # G6 (B5): datetime parameters must be parseable ISO8601, not just any
+        # string — a malformed timestamp would otherwise surface inside the
+        # plugin as a confusing runtime error instead of a 422 at creation.
+        return isinstance(value, str) and _is_iso8601_datetime(value)
     if parameter_type == "string_list":
         return (
             isinstance(value, list)
@@ -382,6 +435,21 @@ def _matches_type(value: object, parameter_type: str) -> bool:
             and all(isinstance(item, str) and bool(item) for item in value)
         )
     return False
+
+
+def _is_iso8601_datetime(value: str) -> bool:
+    """Whether the string parses as an ISO8601 datetime.
+
+    A trailing ``Z`` (RFC 3339 UTC designator) is normalized to ``+00:00``
+    before ``datetime.fromisoformat`` runs. Date-only strings parse as
+    midnight, which is valid ISO8601.
+    """
+    normalized = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    try:
+        datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    return True
 
 
 def _validation_error(message: str) -> HubError:

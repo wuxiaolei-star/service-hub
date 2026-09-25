@@ -175,6 +175,50 @@ def test_create_job_rejects_invalid_metrics_string_list(
     assert response.json()["error"]["code"] == "JOB_REQUEST_INVALID"
 
 
+@pytest.mark.parametrize(
+    ("value", "valid"),
+    [
+        ("2026-09-25T10:30:00Z", True),  # RFC 3339 Z suffix
+        ("2026-09-25t10:30:00z", True),  # lowercase designators are normalized too
+        ("2026-09-25T10:30:00+08:00", True),  # explicit offset
+        ("2026-09-25T10:30:00", True),  # naive local timestamp
+        ("2026-09-25", True),  # date-only parses as midnight (valid ISO8601)
+        ("2026-13-45T10:30:00", False),  # impossible calendar values
+        ("25/09/2026 10:30", False),  # not ISO8601
+        ("yesterday", False),
+        ("", False),
+        (20260925, False),  # even an int is the wrong type
+    ],
+)
+def test_create_job_validates_datetime_params(
+    client: TestClient, value: object, valid: bool
+) -> None:
+    """G6 (B5): datetime params must parse as ISO8601, or creation is a 422."""
+    _seed_build(client, runtime_type="docker", include_datetime=True)
+    file_id = _upload_nc(client)
+
+    response = client.post(
+        "/api/v1/jobs",
+        json={
+            "plugin_id": "nc_to_shp",
+            "version": "1.0.0",
+            "inputs": {"source_nc": file_id},
+            "params": {"obs_time": value},
+        },
+    )
+
+    assert response.status_code == (201 if valid else 422), response.text
+    if valid:
+        with client.app.state.session_factory() as session:
+            job = session.query(Job).filter_by(job_key=response.json()["job_id"]).one()
+            assert job.params_json == {"obs_time": value}
+    else:
+        body = response.json()["error"]
+        assert body["code"] == "JOB_REQUEST_INVALID"
+        if isinstance(value, str):
+            assert body["message"] == "插件 datetime 参数不是合法的 ISO8601 时间"
+
+
 def test_cancel_marks_request_without_completing_job(client: TestClient) -> None:
     _seed_build(client, runtime_type="docker")
     file_id = _upload_nc(client)
@@ -268,7 +312,10 @@ def _runner_post(client: TestClient, path: str, payload: dict[str, object]) -> o
     )
 
 
-def _seed_build(client: TestClient, *, runtime_type: str, include_metrics: bool = False) -> None:
+def _seed_build(
+    client: TestClient, *, runtime_type: str, include_metrics: bool = False,
+    include_datetime: bool = False,
+) -> None:
     with client.app.state.session_factory() as session:
         plugin = Plugin(plugin_key="nc_to_shp", name="NC to Shapefile")
         version = PluginVersion(
@@ -277,7 +324,9 @@ def _seed_build(client: TestClient, *, runtime_type: str, include_metrics: bool 
             spec_version="1.0",
             sdk_version="1.0",
             source_sha256="a" * 64,
-            manifest_json=_manifest(include_metrics=include_metrics),
+            manifest_json=_manifest(
+                include_metrics=include_metrics, include_datetime=include_datetime
+            ),
             status="INSTALLED",
         )
         runtime_metadata = (
@@ -331,7 +380,9 @@ def _seed_build(client: TestClient, *, runtime_type: str, include_metrics: bool 
         session.commit()
 
 
-def _manifest(*, include_metrics: bool = False) -> dict[str, object]:
+def _manifest(
+    *, include_metrics: bool = False, include_datetime: bool = False
+) -> dict[str, object]:
     parameters: list[dict[str, object]] = []
     if include_metrics:
         parameters.append(
@@ -344,6 +395,15 @@ def _manifest(*, include_metrics: bool = False) -> dict[str, object]:
                 "options": ["depth", "stage"],
                 "min": 1,
                 "max": 2,
+            }
+        )
+    if include_datetime:
+        parameters.append(
+            {
+                "name": "obs_time",
+                "label": "Observed At",
+                "type": "datetime",
+                "required": False,
             }
         )
     return {
@@ -363,7 +423,10 @@ def _manifest(*, include_metrics: bool = False) -> dict[str, object]:
             }
         ],
         "outputs": [{"name": "result_files", "label": "Result", "type": "file", "required": True}],
-        "execution": {"timeout": 30, "concurrency": 1},
+        # B5 per-build gate counts active Jobs per Build; the listing/filter
+        # tests (test_job_list_filters.py) reuse this fixture to stage several
+        # PENDING Jobs on one Build, so the fixture declares headroom.
+        "execution": {"timeout": 30, "concurrency": 16},
         "environment_variables": {"required": []},
         "healthcheck": {"enabled": True, "type": "import"},
     }

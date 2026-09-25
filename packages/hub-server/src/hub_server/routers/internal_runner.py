@@ -8,7 +8,7 @@ import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Response, status
-from python_hub_contracts import JobRuntimeSpec, JobStatus, PluginBuildManifest
+from python_hub_contracts import JobRuntimeSpec, JobStatus, PluginBuildManifest, PluginManifest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -182,6 +182,15 @@ def complete_job(
     session: Annotated[Session, Depends(get_session)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
 ) -> RunnerCompletionResponse:
+    """Record the runner-reported terminal result for one Job.
+
+    A SUCCESS result first registers every self-reported output file, then the
+    Hub enforces the Build manifest's output contract (G6/R5): a required
+    ``file``/``files`` output with no registered file turns the reported
+    SUCCESS into FAILED with the stable ``PLUGIN_OUTPUT_MISSING`` error code.
+    ``object`` outputs are explicitly exempt — see
+    :func:`_missing_required_file_outputs`.
+    """
     job = _matching_job(session, job_key, request.runtime_type)
     if request.result.job_id != job_key:
         raise HubError(
@@ -193,7 +202,9 @@ def complete_job(
         job = HubRepository(session).transition_job(
             job, JobStatus.RUNNING, expected_status=JobStatus.PREPARING
         )
-    if request.result.status == JobStatus.SUCCESS:
+    terminal_status = JobStatus(request.result.status)
+    error_summary = request.result.error.message if request.result.error else None
+    if terminal_status is JobStatus.SUCCESS:
         for output in request.result.files:
             JobWorkspaceService(storage).register_output(
                 job,
@@ -201,11 +212,18 @@ def complete_job(
                 relative_path=output.path,
                 mime_type="application/octet-stream",
             )
+        missing = _missing_required_file_outputs(job)
+        if missing:
+            # The runner reported SUCCESS, but the manifest output contract is
+            # not satisfied: flip to FAILED through the same state machine as
+            # any other failure instead of trusting the self-reported status.
+            terminal_status = JobStatus.FAILED
+            error_summary = f"PLUGIN_OUTPUT_MISSING: {', '.join(missing)}"
     try:
         completed = HubRepository(session).transition_job(
             job,
-            JobStatus(request.result.status),
-            error_summary=(request.result.error.message if request.result.error else None),
+            terminal_status,
+            error_summary=error_summary,
             exit_code=request.exit_code,
         )
     except ValueError as error:
@@ -213,6 +231,30 @@ def complete_job(
     return RunnerCompletionResponse.model_validate(
         {"id": completed.job_key, "status": completed.status}
     )
+
+
+def _missing_required_file_outputs(job: Job) -> list[str]:
+    """Return required ``file``/``files`` outputs for which no file was registered.
+
+    G6 (R5): only file-producing outputs are enforced, by "the file has been
+    registered" — a required output whose name never appeared among the
+    runner-registered OUTPUT files fails the job. ``object`` outputs are
+    explicitly exempt: they never produce a file (they are structured values
+    inside ``PluginResult.data``), and manifest v1.0 defines no server-side
+    contract for validating that structure. Enforcing them would silently fail
+    every honest plugin; the semantics await the post-B8 contract version.
+    """
+    manifest = PluginManifest.model_validate(job.plugin_build.plugin_version.manifest_json)
+    registered = {
+        association.logical_name for association in job.files if association.role == "OUTPUT"
+    }
+    return [
+        output.name
+        for output in manifest.outputs
+        if output.required
+        and output.type in {"file", "files"}
+        and output.name not in registered
+    ]
 
 
 def _build_claim(build: PluginBuild) -> RunnerBuildClaim:
