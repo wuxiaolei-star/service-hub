@@ -62,10 +62,8 @@ jobs:
         if: failure()
         run: |
           {
-            echo "### pytest failures"
-            grep -E "^(FAILED|ERROR) " /tmp/pytest.log | head -60
-            echo
-            grep -B 5 -A 20 "= FAILURES =" /tmp/pytest.log | head -150
+            echo "### pytest tail (last 150 lines)"
+            tail -150 /tmp/pytest.log
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------- web
