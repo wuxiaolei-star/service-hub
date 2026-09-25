@@ -107,7 +107,48 @@ fi
 log "checking out $TARGET_SHA before handing over"
 git -C "$SRC_DIR" checkout --detach "$TARGET_SHA" 2>&1 | sed 's/^/  git: /'
 
+# ---------------------------------------------------------------- lightweight path
+# A commit that only touches documentation or repository metadata cannot change
+# runtime behaviour, but the full pipeline would still spend ~8 min on the gate
+# and take the stack down for 1-2 min to rebuild identical images. Such changes
+# are recorded and released without a rebuild. Set DEPLOY_ALWAYS_BUILD=1 (or pass
+# --force) to override.
+is_docs_only() {
+  local files="$1" f
+  [ -n "$files" ] || return 1
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in
+      docs/* | *.md | README* | LICENSE | .gitignore | .gitattributes) ;;
+      *) return 1 ;;
+    esac
+  done <<< "$files"
+  return 0
+}
+
+CHANGED=""
+if [ "$CURRENT" != "unknown" ] && git -C "$SRC_DIR" rev-parse --verify --quiet "$CURRENT^{commit}" >/dev/null; then
+  CHANGED="$(git -C "$SRC_DIR" diff --name-only "$CURRENT" "$TARGET_SHA" 2>/dev/null || true)"
+fi
+
+if [ "${DEPLOY_ALWAYS_BUILD:-0}" != "1" ] && [ "$FORCE" -ne 1 ] && is_docs_only "$CHANGED"; then
+  log "docs-only change ($(wc -l <<< "$CHANGED") files), recording without rebuild"
+  # The scheduled timer executes the stable copy under $REMOTE_DIR, not $SRC_DIR,
+  # so refresh it here; otherwise deploy/ci fixes would only land on the next
+  # install-poller.sh run.
+  mkdir -p "$REMOTE_DIR/deploy/ci"
+  cp -a "$SRC_DIR"/deploy/ci/. "$REMOTE_DIR"/deploy/ci/
+  echo "$TARGET_SHA" > "$STATE_FILE"
+  echo "$(stamp) commit=$TARGET_SHA previous=$CURRENT elapsed=0s result=SUCCESS-LIGHTWEIGHT" \
+    >> "$REMOTE_DIR/deploy/ci/releases.log"
+  log "=== LIGHTWEIGHT DEPLOY FINISHED: $TARGET_SHA (no rebuild) ==="
+  exit 0
+fi
+
 log "deploying $TARGET_SHA via $PIPELINE"
 
 # shellcheck disable=SC2086 # PIPELINE_ARGS is intentionally word-split.
-exec bash "$PIPELINE" "$TARGET_SHA" $PIPELINE_ARGS
+# Note: ${PIPELINE_ARGS:-} (not $PIPELINE_ARGS) -- under `set -u` an unset
+# variable aborts the script before the pipeline ever starts, which is exactly
+# what happened on the first scheduled run (timer has no env, manual runs did).
+exec bash "$PIPELINE" "$TARGET_SHA" ${PIPELINE_ARGS:-}
