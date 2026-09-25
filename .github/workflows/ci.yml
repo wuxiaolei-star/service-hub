@@ -64,7 +64,10 @@ jobs:
         run: mypy
       - name: pytest
         run: |
-          python -m pytest -q | tee /tmp/pytest.log; exit ${PIPESTATUS[0]}
+          rc=0
+          python -m pytest -q --tb=line -rf | tee /tmp/pytest.log || rc=$?
+          echo "pytest_exit=$rc" >> /tmp/pytest.log
+          exit $rc
       - name: Dump pytest tail into an issue (anonymous-diagnosis channel)
         if: failure()
         env:
