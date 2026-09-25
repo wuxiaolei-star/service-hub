@@ -121,9 +121,7 @@ def test_package_with_malformed_plugin_yaml_is_rejected_not_500(tmp_path: Path) 
     manifest breaks YAML parsing escaped as an unhandled 500 instead of 422.
     """
     upload, package_sha256 = _make_pypkg(
-        extra_members={"plugin.yaml": b"plugin:
-  id: [unclosed
-"}
+        extra_members={"plugin.yaml": b"plugin:\n  id: [unclosed\n"}
     )
 
     with pytest.raises(HubError) as raised:
