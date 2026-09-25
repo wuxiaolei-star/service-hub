@@ -34,13 +34,14 @@ jobs:
   # ---------------------------------------------------------------- backend
   backend:
     name: Backend gate
+    # Run inside the exact base image the deployment uses: the suite passed in
+    # a python:3.12-slim/bookworm container on the deployment host but failed on
+    # the bare ubuntu runner, and the container is the environment that matters.
     runs-on: ubuntu-latest
+    container:
+      image: python:3.12-bookworm
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
       - name: Install workspace and dev dependencies
         run: |
           python -m pip install --upgrade pip
@@ -64,6 +65,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ID=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs" --jq '.check_runs[] | select(.name=="Backend gate") | .id')
-          grep "^FAILED " /tmp/pytest.log | head -50 | jq -R '{path: ".github", start_line: 1, end_line: 1, annotation_level: "failure", title: (.["0:" + .][0:60]), message: ("pytest failed: " + .)}' | jq -s '{annotations: .}' > /tmp/annotations.json
+          grep "^FAILED " /tmp/pytest.log | head -50 | jq -R '{path: ".github", start_line: 1, end_line: 1, annotation_level: "failure", title: (. | .[0:60]), message: ("pytest failed: " + .)}' | jq -s '{annotations: .}' > /tmp/annotations.json
           gh api "repos/$GITHUB_REPOSITORY/check-runs/$ID/annotations" --input /tmp/annotations.json
           grep -c "^FAILED " /tmp/pytest.log || true
