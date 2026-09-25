@@ -64,6 +64,15 @@ fi
 cd "$SRC_DIR"
 git fetch --quiet --prune "$REMOTE" 2>&1 | sed 's/^/  git: /'
 
+# A deployment checkout must stay pristine: hand-edits leave tracked drift that
+# makes `git checkout <sha>` refuse to switch, which fails every timer tick
+# until someone notices (observed 2026-09-25 as three consecutive failed units).
+# Untracked files cannot block a checkout, so only tracked drift is reset.
+if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  log "tracked local changes detected in $SRC_DIR; resetting them (deploy checkouts are read-only)"
+  git reset --hard HEAD 2>&1 | sed 's/^/  git: /'
+fi
+
 if [ -n "$EXPLICIT_REF" ]; then
   TARGET="$EXPLICIT_REF"
 elif [ "$MODE" = "tag" ]; then

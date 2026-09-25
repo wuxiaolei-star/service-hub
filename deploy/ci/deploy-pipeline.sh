@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# service-hub release pipeline: quality gate -> backup -> build -> up -> health -> rollback.
+# service-hub release pipeline: checkout -> watermark -> gate(opt) -> hot backup
+# -> build (live) -> switch over (down -> cold backup -> up) -> health -> walkthrough.
 #
 # Designed to run ON the deployment host (where Docker and the data volume live), so the
 # images are built exactly where they are deployed and no 1 GB image crosses the network.
@@ -105,6 +106,7 @@ STARTED=$(date +%s)
 # Images live before this build, recorded as IDs. They are re-tagged to
 # *:$ROLLBACK_TAG only after the new build succeeded, so a broken build leaves
 # the previous state untouched.
+REACHED_DOWN=0
 PREV_API_ID=""
 PREV_WEB_ID=""
 record_current_images() {
@@ -137,6 +139,13 @@ rollback() {
   fail "rolling back: $reason"
   if [ "$NO_ROLLBACK" -eq 1 ]; then
     fail "--no-rollback given, leaving the system as-is"
+    return 0
+  fi
+  if [ "$REACHED_DOWN" -ne 1 ]; then
+    # Failure before the switch-over: the previous version is still serving and
+    # its data is untouched, so there is nothing to roll back. Stopping the
+    # stack here would turn a failed build into a live outage.
+    fail "failure happened before the switch-over; the previous version keeps serving"
     return 0
   fi
   if [ -n "${COLD_BACKUP:-}" ] && [ -f "${COLD_BACKUP:-}" ]; then
@@ -211,8 +220,8 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------- 4. backup
-log "=== stage 4/8: backup data/ ==="
+# ---------------------------------------------------------------- 4. hot backup
+log "=== stage 4/8: hot backup (live) ==="
 STAMP_ID=$(date +%Y%m%d-%H%M)
 HOT_BACKUP="$REMOTE_DIR/data-hot-$STAMP_ID.tar.gz"
 COLD_BACKUP="$REMOTE_DIR/data-cold-$STAMP_ID.tar.gz"
@@ -220,14 +229,12 @@ tar -czf "$HOT_BACKUP" -C "$REMOTE_DIR" --exclude='data/backups' data \
   || log "hot backup returned non-zero (files changed while reading; expected on a live system)"
 log "hot backup: $HOT_BACKUP"
 
+# ---------------------------------------------------------------- 5. build (stack still live)
+# Building before the switch-over keeps the outage window down to
+# down -> cold backup -> up (~1 min) instead of including the whole build.
+log "=== stage 5/8: build images (commit tag $VERSION_TAG-$COMMIT; stack still live) ==="
+# Snapshot the previous images BEFORE the build re-points the moving tags.
 record_current_images
-"${COMPOSE[@]}" down
-tar -czf "$COLD_BACKUP" -C "$REMOTE_DIR" --exclude='data/backups' data
-tar -tzf "$COLD_BACKUP" > /dev/null || { fail "cold backup integrity check failed"; exit 1; }
-log "cold backup: $COLD_BACKUP (integrity OK)"
-
-# ---------------------------------------------------------------- 5. build
-log "=== stage 5/8: build images (commit tag $VERSION_TAG-$COMMIT) ==="
 # Prefer the freshly checked-out build script so build improvements ship with the
 # code that uses them; fall back to the host copy for older checkouts.
 if [ -f "$SRC_DIR/deploy/ci/build-images.sh" ]; then
@@ -243,8 +250,14 @@ if [ -n "$PREV_API_ID" ]; then
   log "previous images kept as $ROLLBACK_TAG tags (api=$PREV_API_ID web=$PREV_WEB_ID)"
 fi
 
-# ---------------------------------------------------------------- 6. up (Alembic runs on start)
-log "=== stage 6/8: containers up ==="
+# ---------------------------------------------------------------- 6. switch over (the only outage window)
+log "=== stage 6/8: switch over (down -> cold backup -> up) ==="
+REACHED_DOWN=1
+"${COMPOSE[@]}" down
+tar -czf "$COLD_BACKUP" -C "$REMOTE_DIR" --exclude='data/backups' data
+tar -tzf "$COLD_BACKUP" > /dev/null || { fail "cold backup integrity check failed"; exit 1; }
+log "cold backup: $COLD_BACKUP (integrity OK)"
+# up runs Alembic migrations on start
 "${COMPOSE[@]}" up -d --remove-orphans
 "${COMPOSE[@]}" ps
 
