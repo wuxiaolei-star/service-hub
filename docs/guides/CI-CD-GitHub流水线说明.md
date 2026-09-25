@@ -72,10 +72,10 @@ bash /opt/service-hub/src/deploy/ci/install-poller.sh --interval=3min --branch=m
 | 常规提交 | `git push origin main` → Actions 跑质量门 → 服务器 3 分钟内自动上线 |
 | 立即上线（不等轮询） | 服务器执行 `bash /opt/service-hub/deploy/ci/pull-deploy.sh` |
 | 只看有无待部署 | 服务器执行 `... pull-deploy.sh --check` |
-| 跳过质量门强制部署 | `PIPELINE_ARGS=--skip-gate bash ... pull-deploy.sh --force` |
+| 在服务器补跑容器内质量门 | `HUB_PIPELINE_GATE=1 bash /opt/service-hub/deploy/ci/pull-deploy.sh --force`（或给 deploy-pipeline.sh 传 `--run-gate`） |
 | 打版本 | `git tag v1.2.0 && git push origin v1.2.0` → Release 工作流发版 |
 | 跟随 tag 而非分支 | `install-poller.sh --mode=tag`（改 `/etc/systemd/system/service-hub-deploy.service` 的 `DEPLOY_MODE=tag`） |
-| 回滚 | 服务器执行 `bash /opt/service-hub/src/deploy/ci/deploy-pipeline.sh <上一个 sha>`；数据由流水线冷备份自动恢复 |
+| 秒级回滚 | 服务器执行 `docker tag python-service-hub:rollback-target python-service-hub:1.0.0-linux-amd64 && docker tag python-service-hub-web:rollback-target python-service-hub-web:1.0.0-linux-amd64 && docker compose -p service-hub --project-directory /opt/service-hub/src -f compose.yaml -f /opt/service-hub/compose.override.yaml up -d`（流水线失败时也会自动做这一步，无需重建镜像） |
 | 暂停自动部署 | `systemctl disable --now service-hub-deploy.timer` |
 
 观察：
@@ -84,6 +84,18 @@ bash /opt/service-hub/src/deploy/ci/install-poller.sh --interval=3min --branch=m
 journalctl -u service-hub-deploy.service -f
 tail -f /opt/service-hub/deploy/ci/releases.log   # 每次上线：commit / 耗时 / 结果
 ```
+
+### 3.1 流水线的环境开关（2026-09-25 下午起）
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `HUB_PIPELINE_GATE` | `0`（跳过） | `1`/`true`/`run` 时在服务器容器内补跑 pytest 质量门；`--run-gate` / `--skip-gate` 参数可逐次覆盖 |
+| `HUB_MIN_FREE_MB` | `2048` | 部署前磁盘水位，低于阈值直接拒绝部署（防备份把盘写满） |
+| `HUB_DEPLOY_WEBHOOK_URL` | 空 | 部署成功/失败都 POST 一条 `{"text": ...}` JSON（企业微信/钉钉等 bot 均可接）；通知失败不影响部署本身 |
+
+镜像 tag 约定：每次部署构建 `python-service-hub:1.0.0-<sha>` 与 `python-service-hub-web:1.0.0-<sha>`，随后把 `1.0.0-linux-amd64` 移动 tag 指向新镜像（compose.yaml 只认移动 tag）；上一版镜像同时保留为 `:rollback-target`。部署成功后自动清理更早的 per-commit tag 并 prune 悬空层。
+
+部署收尾还会执行 `deploy/ci/walkthrough.sh`（业务级走查）：登录 → 确认插件在册 → 上传一份真实 NC 样本 → 跑一个作业等到 SUCCESS。凭据读 `HUB_ADMIN_PASSWORD` 或服务器本地 `/opt/service-hub/.deploy-credentials`（0600，不入库）；两者都没有时跳过（不算部署失败）。
 
 ## 4. 敏感信息处理规范
 
@@ -131,7 +143,7 @@ HUB_SECRET_LITERALS='Hub-2026-...' python deploy/ci/check_secrets.py
 | **合计（带质量门）** | **约 10 分钟** |
 | 合计（`--skip-gate`） | **157 s** |
 
-日常提交如果只改脚本/文档，可以用 `PIPELINE_ARGS=--skip-gate` 走快通道（质量门已在 GitHub Actions 跑过一遍）；改业务 code 时务必保留质量门。
+2026-09-25 下午起质量门**默认关闭**（GitHub Actions 已全量跑过），常规提交的服务器部署时长即 157 s 一档；需要本机复核时用 `HUB_PIPELINE_GATE=1` 手动补跑。
 
 ## 6. 踩过的坑（都已在脚本里修掉）
 

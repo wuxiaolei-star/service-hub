@@ -29,8 +29,12 @@ LABEL org.opencontainers.image.title="nc_to_shp" \
 USER root
 # Ubuntu 24.04 keeps its sources in the deb822 ubuntu.sources file; older or slim
 # variants use /etc/apt/sources.list instead. Both are rewritten when a mirror is set,
-# and an unset mirror leaves the layer byte-identical to an offline build.
-RUN set -eux; \
+# and an unset mirror leaves the layer byte-identical to an offline build. The apt
+# caches live in BuildKit cache mounts (docker 23+ enables BuildKit by default), so
+# repeated builds skip the archive download and the lists never enter the layer.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -eux; \
     if [ -n "$APT_MIRROR" ]; then \
       for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do \
         if [ -f "$f" ]; then \
@@ -40,13 +44,14 @@ RUN set -eux; \
     fi; \
     apt-get update \
     && apt-get install --no-install-recommends -y python3-venv \
-    && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv --system-site-packages /opt/venv
 # Kept as its own layer so swapping the mirror does not redo the apt work above.
-RUN if [ -n "$PIP_INDEX_URL" ]; then \
+# The pip download cache persists across builds in a cache mount.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if [ -n "$PIP_INDEX_URL" ]; then \
       /opt/venv/bin/python -m pip config set global.index-url "$PIP_INDEX_URL"; \
     fi \
-    && /opt/venv/bin/python -m pip install --no-cache-dir \
+    && /opt/venv/bin/python -m pip install \
       docker==7.1.0 \
       h5py==3.12.1 \
       numpy==2.1.3 \

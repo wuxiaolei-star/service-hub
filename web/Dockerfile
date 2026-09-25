@@ -1,4 +1,5 @@
 # Build the SPA with the pinned Node toolchain.
+# Requires BuildKit for the RUN --mount cache mount below (docker 23+ default).
 FROM node:22-alpine AS build
 
 # Optional build-time registry override, empty for npm's default.
@@ -6,7 +7,8 @@ ARG NPM_REGISTRY=""
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci ${NPM_REGISTRY:+--registry "$NPM_REGISTRY"}
+# The npm download cache persists across builds in a cache mount.
+RUN --mount=type=cache,target=/root/.npm npm ci ${NPM_REGISTRY:+--registry "$NPM_REGISTRY"}
 COPY . .
 RUN npm run build
 

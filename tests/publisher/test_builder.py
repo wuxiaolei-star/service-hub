@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import IO
 
 import pytest
+from hub_publisher.archive import sha256_file
 from hub_publisher.builder import CommandResult, build_plugin
 from hub_publisher.project import PluginProject
 
@@ -225,3 +226,199 @@ def test_docker_save_streams_straight_into_the_archive(
 
     assert runner.streamed == [["docker", "image", "save", "sample_plugin:1.2.3-linux-amd64"]]
     assert package.exists()
+
+
+def _docker_cache_project(tmp_path: Path) -> PluginProject:
+    _write_project(tmp_path / "project")
+    (tmp_path / "project" / "Dockerfile").write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    return PluginProject.load(tmp_path / "project")
+
+
+def test_docker_build_reuses_the_cached_package_for_unchanged_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rebuilding identical inputs re-runs docker save + zstd for minutes for nothing."""
+    for name in ("HUB_PLUGIN_CACHE", "HUB_PLUGIN_CACHE_DIR", "HUB_PLUGIN_ZSTD_LEVEL"):
+        monkeypatch.delenv(name, raising=False)
+    project = _docker_cache_project(tmp_path)
+    output = tmp_path / "out"
+    first = build_plugin(
+        project, "docker", "amd64", output, command_runner=FakeCommandRunner(tmp_path),
+        source_date_epoch=0,
+    )
+
+    second_runner = FakeCommandRunner(tmp_path)
+    reused = build_plugin(
+        project, "docker", "amd64", output, command_runner=second_runner, source_date_epoch=0
+    )
+
+    commands = [call[0] for call in second_runner.calls]
+    assert not any(command[:2] == ["docker", "build"] for command in commands)
+    assert not any(command[:3] == ["docker", "image", "save"] for command in commands)
+    assert not any(command[:4] == [sys.executable, "-m", "pip", "wheel"] for command in commands)
+    assert reused.name == first.name == "sample_plugin-1.2.3-linux-amd64-docker.pypkg"
+    assert sha256_file(reused) == sha256_file(first)
+    assert second_runner.streamed == []
+
+
+def test_changed_plugin_sources_invalidate_the_package_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale cache must never ship sources that no longer match the tree."""
+    for name in ("HUB_PLUGIN_CACHE", "HUB_PLUGIN_CACHE_DIR", "HUB_PLUGIN_ZSTD_LEVEL"):
+        monkeypatch.delenv(name, raising=False)
+    project = _docker_cache_project(tmp_path)
+    output = tmp_path / "out"
+    build_plugin(
+        project, "docker", "amd64", output, command_runner=FakeCommandRunner(tmp_path),
+        source_date_epoch=0,
+    )
+
+    source = tmp_path / "project" / "src" / "sample_plugin" / "__init__.py"
+    source.write_text("CHANGED = True\n", encoding="utf-8")
+    second_runner = FakeCommandRunner(tmp_path)
+    build_plugin(
+        project, "docker", "amd64", output, command_runner=second_runner, source_date_epoch=0
+    )
+
+    assert any(call[0][:2] == ["docker", "build"] for call in second_runner.calls)
+
+
+def test_changed_dockerfile_invalidates_the_package_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editing the Dockerfile changes the built image, so the cache must miss."""
+    for name in ("HUB_PLUGIN_CACHE", "HUB_PLUGIN_CACHE_DIR", "HUB_PLUGIN_ZSTD_LEVEL"):
+        monkeypatch.delenv(name, raising=False)
+    project = _docker_cache_project(tmp_path)
+    output = tmp_path / "out"
+    build_plugin(
+        project, "docker", "amd64", output, command_runner=FakeCommandRunner(tmp_path),
+        source_date_epoch=0,
+    )
+
+    (tmp_path / "project" / "Dockerfile").write_text(
+        "FROM python:3.12-slim\nLABEL changed=1\n", encoding="utf-8"
+    )
+    second_runner = FakeCommandRunner(tmp_path)
+    build_plugin(
+        project, "docker", "amd64", output, command_runner=second_runner, source_date_epoch=0
+    )
+
+    assert any(call[0][:2] == ["docker", "build"] for call in second_runner.calls)
+
+
+def test_changed_base_image_invalidates_the_package_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pulled base-image update can change the image even with identical sources."""
+    for name in ("HUB_PLUGIN_CACHE", "HUB_PLUGIN_CACHE_DIR", "HUB_PLUGIN_ZSTD_LEVEL"):
+        monkeypatch.delenv(name, raising=False)
+    project = _docker_cache_project(tmp_path)
+    output = tmp_path / "out"
+    build_plugin(
+        project, "docker", "amd64", output, command_runner=FakeCommandRunner(tmp_path),
+        source_date_epoch=0,
+    )
+
+    second_runner = FakeCommandRunner(tmp_path, digest="f" * 64)
+    build_plugin(
+        project, "docker", "amd64", output, command_runner=second_runner, source_date_epoch=0
+    )
+
+    assert any(call[0][:2] == ["docker", "build"] for call in second_runner.calls)
+
+
+def test_tampered_cache_package_falls_back_to_a_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A torn or altered cache file must never be returned as a build result."""
+    for name in ("HUB_PLUGIN_CACHE", "HUB_PLUGIN_CACHE_DIR", "HUB_PLUGIN_ZSTD_LEVEL"):
+        monkeypatch.delenv(name, raising=False)
+    project = _docker_cache_project(tmp_path)
+    output = tmp_path / "out"
+    build_plugin(
+        project, "docker", "amd64", output, command_runner=FakeCommandRunner(tmp_path),
+        source_date_epoch=0,
+    )
+    cache_dir = output / ".pypkg-cache"
+    for cached in cache_dir.glob("*.pypkg"):
+        cached.write_bytes(b"tampered")
+
+    second_runner = FakeCommandRunner(tmp_path)
+    rebuilt = build_plugin(
+        project, "docker", "amd64", output, command_runner=second_runner, source_date_epoch=0
+    )
+
+    assert any(call[0][:2] == ["docker", "build"] for call in second_runner.calls)
+    assert sha256_file(rebuilt) == sha256_file(
+        next(path for path in cache_dir.glob("*.pypkg"))
+    )
+
+
+def test_package_cache_can_be_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit opt-out must leave no cache directory behind."""
+    monkeypatch.setenv("HUB_PLUGIN_CACHE", "0")
+    monkeypatch.delenv("HUB_PLUGIN_CACHE_DIR", raising=False)
+    project = _docker_cache_project(tmp_path)
+    output = tmp_path / "out"
+    build_plugin(
+        project, "docker", "amd64", output, command_runner=FakeCommandRunner(tmp_path),
+        source_date_epoch=0,
+    )
+
+    assert not (output / ".pypkg-cache").exists()
+    second_runner = FakeCommandRunner(tmp_path)
+    build_plugin(
+        project, "docker", "amd64", output, command_runner=second_runner, source_date_epoch=0
+    )
+    assert any(call[0][:2] == ["docker", "build"] for call in second_runner.calls)
+
+
+def test_package_cache_keeps_only_the_newest_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An ever-growing cache would eat the deployment host's small disk."""
+    for name in ("HUB_PLUGIN_CACHE", "HUB_PLUGIN_CACHE_DIR", "HUB_PLUGIN_ZSTD_LEVEL"):
+        monkeypatch.delenv(name, raising=False)
+    project = _docker_cache_project(tmp_path)
+    output = tmp_path / "out"
+    source = tmp_path / "project" / "src" / "sample_plugin" / "__init__.py"
+    for round_number in range(4):
+        source.write_text(f"ROUND = {round_number}\n", encoding="utf-8")
+        build_plugin(
+            project,
+            "docker",
+            "amd64",
+            output,
+            command_runner=FakeCommandRunner(tmp_path),
+            source_date_epoch=0,
+        )
+
+    assert len(list((output / ".pypkg-cache").glob("*.pypkg"))) == 3
+
+
+def test_conda_builds_are_not_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Conda builds depend on host state no local key can pin, so they always run."""
+    for name in ("HUB_PLUGIN_CACHE", "HUB_PLUGIN_CACHE_DIR", "HUB_PLUGIN_ZSTD_LEVEL"):
+        monkeypatch.delenv(name, raising=False)
+    _write_project(tmp_path / "project")
+    (tmp_path / "project" / "environment.yml").write_text("name: sample\n", encoding="utf-8")
+    project = PluginProject.load(tmp_path / "project")
+    monkeypatch.setattr("hub_publisher.builder._host_linux_architecture", lambda: "amd64")
+    output = tmp_path / "out"
+    build_plugin(
+        project, "conda-pack", "amd64", output, command_runner=FakeCommandRunner(tmp_path),
+        source_date_epoch=0,
+    )
+
+    second_runner = FakeCommandRunner(tmp_path)
+    build_plugin(
+        project, "conda-pack", "amd64", output, command_runner=second_runner, source_date_epoch=0
+    )
+
+    assert any(call[0][:3] == ["conda", "env", "create"] for call in second_runner.calls)

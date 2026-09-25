@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+# Requires BuildKit for the RUN --mount cache mounts below (docker 23+ enables
+# BuildKit by default; legacy builds fail loudly on the mounts instead of silently
+# re-downloading everything).
+
 # Optional build-time index override. Empty means "use pip's default index", so
 # the image builds identically on a machine with fast access to PyPI; a mirror
 # only has to be passed where PyPI is slow (a cold build spent 26 minutes at
@@ -17,21 +21,27 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN set -eux; \
+# The apt caches live in cache mounts, not in the layer: repeated builds skip
+# the archive download entirely and the image stays free of the lists.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -eux; \
     if [ -n "$APT_MIRROR" ]; then \
       for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
         if [ -f "$f" ]; then sed -i -E "s#https?://deb\.debian\.org#${APT_MIRROR}#g" "$f"; fi; \
       done; \
     fi; \
     apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates gosu supervisor tini \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install --no-install-recommends -y ca-certificates gosu supervisor tini
 
 COPY packages/hub-contracts packages/hub-contracts
 COPY packages/hub-sdk packages/hub-sdk
 COPY packages/hub-runner packages/hub-runner
 COPY packages/hub-server packages/hub-server
-RUN pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} \
+# The pip download cache persists across builds in a cache mount; --no-cache-dir
+# would throw it away after every layer rebuild.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} \
     ./packages/hub-contracts \
     ./packages/hub-sdk \
     ./packages/hub-runner \
