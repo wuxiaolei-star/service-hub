@@ -167,6 +167,51 @@ def get_build(
 
 
 @router.post(
+    "/plugin-builds/{build_key}/deprecate",
+    response_model=PluginBuildResponse,
+    dependencies=[Depends(require_role("publisher"))],
+)
+def deprecate_build(
+    actor: Annotated[Actor, Depends(get_actor)],
+    request: Request,
+    build_key: str,
+    session: Annotated[Session, Depends(get_session)],
+) -> PluginBuildResponse:
+    """Deprecate one READY or ENABLED Build; the transition is one-way.
+
+    A DEPRECATED Build can no longer back new Jobs (job resolution only accepts
+    ENABLED Builds) and is marked as pending future cleanup, while staying
+    visible in the registry with its storage and environment material intact.
+    There is deliberately no revival path: ``enable`` refuses a DEPRECATED
+    Build, and re-installing the exact same version is rejected by the
+    immutable Build uniqueness constraint, so the only way to serve this
+    plugin version again is to install its package under a new version and
+    enable the fresh Build (see review doc G4(1), B4a).
+    """
+    build = _find_build(session, build_key)
+    if build.status not in ("READY", "ENABLED"):
+        raise HubError(
+            code="PLUGIN_BUILD_NOT_DEPRECATABLE",
+            message="插件 Build 当前状态不允许废弃, 仅 READY 或 ENABLED 可废弃",
+            status_code=409,
+        )
+    build.status = "DEPRECATED"
+    audit(
+        session,
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
+        action="plugin_build.deprecate",
+        resource_type="plugin_build",
+        resource_id=build.build_key,
+        ip=actor_ip(request),
+    )
+    session.commit()
+    session.refresh(build)
+    return _build_response(build)
+
+
+@router.post(
     "/plugin-builds/{build_key}/enable",
     response_model=PluginBuildResponse,
     dependencies=[Depends(require_role("publisher"))],

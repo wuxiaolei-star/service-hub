@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from hub_server.db import create_engine_and_session_factory
+from hub_server.services.environments import scan_environment_orphans
 from hub_server.services.retention import RetentionSweeper
 from hub_server.settings import HubSettings
 
@@ -46,6 +47,17 @@ def main(once: bool = False) -> int:
                 _LOGGER.info("sweep deleted %s expired input files", deleted)
         except Exception:
             _LOGGER.exception("retention sweep failed")
+        try:
+            # Read-only guard scan on the same cadence as the retention sweep:
+            # reports environments/ directories that reference no Build. It
+            # deletes nothing — guarded deletion is owned by B4b — and mounting
+            # it here (rather than the 30s scheduler tick) needs no extra
+            # throttle state because the cleaner already wakes at
+            # retention.sweep_interval_minutes.
+            with session_factory() as session:
+                scan_environment_orphans(session, Path(settings.storage.root))
+        except Exception:
+            _LOGGER.exception("environments orphan scan failed")
         if once or _STOP["requested"]:
             break
         time.sleep(interval_seconds)

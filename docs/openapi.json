@@ -3030,6 +3030,49 @@
     ]
    }
   },
+  "/api/v1/plugin-builds/{build_key}/deprecate": {
+   "post": {
+    "description": "Deprecate one READY or ENABLED Build; the transition is one-way.\n\nA DEPRECATED Build can no longer back new Jobs (job resolution only accepts\nENABLED Builds) and is marked as pending future cleanup, while staying\nvisible in the registry with its storage and environment material intact.\nThere is deliberately no revival path: ``enable`` refuses a DEPRECATED\nBuild, and re-installing the exact same version is rejected by the\nimmutable Build uniqueness constraint, so the only way to serve this\nplugin version again is to install its package under a new version and\nenable the fresh Build (see review doc G4(1), B4a).",
+    "operationId": "deprecate_build_api_v1_plugin_builds__build_key__deprecate_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "build_key",
+      "required": true,
+      "schema": {
+       "title": "Build Key",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PluginBuildResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Deprecate Build",
+    "tags": [
+     "plugins"
+    ]
+   }
+  },
   "/api/v1/plugin-builds/{build_key}/disable": {
    "post": {
     "description": "Disable a Build when it has no active Jobs.",
