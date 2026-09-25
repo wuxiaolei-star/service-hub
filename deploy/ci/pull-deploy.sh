@@ -128,7 +128,12 @@ is_docs_only() {
 
 CHANGED=""
 if [ "$CURRENT" != "unknown" ] && git -C "$SRC_DIR" rev-parse --verify --quiet "$CURRENT^{commit}" >/dev/null; then
-  CHANGED="$(git -C "$SRC_DIR" diff --name-only "$CURRENT" "$TARGET_SHA" 2>/dev/null || true)"
+  # core.quotePath=false is mandatory here: git otherwise renders non-ASCII paths
+  # as escaped octal inside double quotes ("docs/guides/\347\263\273...md"), which
+  # matches none of the patterns below and silently sends docs-only commits down
+  # the full rebuild path (observed with the Chinese-named guide documents).
+  CHANGED="$(git -C "$SRC_DIR" -c core.quotePath=false diff --name-only \
+    "$CURRENT" "$TARGET_SHA" 2>/dev/null || true)"
 fi
 
 if [ "${DEPLOY_ALWAYS_BUILD:-0}" != "1" ] && [ "$FORCE" -ne 1 ] && is_docs_only "$CHANGED"; then
@@ -151,4 +156,16 @@ log "deploying $TARGET_SHA via $PIPELINE"
 # Note: ${PIPELINE_ARGS:-} (not $PIPELINE_ARGS) -- under `set -u` an unset
 # variable aborts the script before the pipeline ever starts, which is exactly
 # what happened on the first scheduled run (timer has no env, manual runs did).
-exec bash "$PIPELINE" "$TARGET_SHA" ${PIPELINE_ARGS:-}
+#
+# Not exec'ed: exit code 3 from the pipeline means "another deployment already
+# holds the lock", which is a harmless no-op for a 3-minute timer and must not
+# be reported as a failed unit.
+set +e
+bash "$PIPELINE" "$TARGET_SHA" ${PIPELINE_ARGS:-}
+rc=$?
+set -e
+if [ "$rc" -eq 3 ]; then
+  log "another deployment already holds the pipeline lock, this run is a no-op"
+  exit 0
+fi
+exit "$rc"

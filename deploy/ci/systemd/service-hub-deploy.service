@@ -12,6 +12,10 @@ Environment=DEPLOY_BRANCH=main
 Environment=DEPLOY_MODE=branch
 ExecStart=/usr/bin/bash /opt/service-hub/deploy/ci/pull-deploy.sh
 TimeoutStartSec=45min
+# 2 = another poller run holds the lock, 3 = another deployment holds the
+# pipeline lock. Both are benign under a 3-minute timer; counting them as
+# failures would make the unit look broken on every overlap.
+SuccessExitStatus=0 2 3
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=service-hub-deploy

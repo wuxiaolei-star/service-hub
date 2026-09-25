@@ -34,8 +34,11 @@ fail() { log "ERROR: $*"; }
 # ---------------------------------------------------------------- concurrency guard
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
+  # Exit 3, not 1: a deployment already running is a normal condition for a
+  # scheduled poller, and pull-deploy.sh turns it into a clean no-op. Reporting
+  # it as a failure would make every overlapping timer tick look like an outage.
   fail "another deployment holds $LOCK_FILE"
-  exit 1
+  exit 3
 fi
 
 REF="${1:-main}"
