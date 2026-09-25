@@ -99,6 +99,14 @@ PIPELINE="$SRC_DIR/deploy/ci/deploy-pipeline.sh"
 if [ ! -f "$PIPELINE" ]; then
   PIPELINE="$REMOTE_DIR/deploy/ci/deploy-pipeline.sh"
 fi
+
+# Check out the pipeline before executing it. A running bash script keeps reading
+# the file at byte offsets, so switching files underneath it mixes old and new
+# code: without this step a pipeline that changes on this very commit still runs
+# its own previous version (observed once as a stale quality-gate failure).
+log "checking out $TARGET_SHA before handing over"
+git -C "$SRC_DIR" checkout --detach "$TARGET_SHA" 2>&1 | sed 's/^/  git: /'
+
 log "deploying $TARGET_SHA via $PIPELINE"
 
 # shellcheck disable=SC2086 # PIPELINE_ARGS is intentionally word-split.
