@@ -144,6 +144,10 @@ def test_everything_linux_executes_is_pinned_to_lf_endings() -> None:
         ), f"{pattern} must be pinned to LF endings"
 
 
+@pytest.mark.skipif(
+    shutil.which("git") is None,
+    reason="git check-attr is unavailable inside the runtime image used by deploy gate",
+)
 def test_nested_dockerfiles_are_actually_matched_by_their_gitattributes_rule() -> None:
     """A bare ``Dockerfile`` pattern only covers the repository root.
 
