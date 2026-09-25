@@ -101,7 +101,7 @@ tail -f /opt/service-hub/deploy/ci/releases.log   # 每次上线：commit / 耗�
 | `HUB_MIN_FREE_MB` | `2048` | 部署前磁盘水位，低于阈值直接拒绝部署（防备份把盘写满） |
 | `HUB_DEPLOY_WEBHOOK_URL` | 空 | 部署成功/失败都 POST 一条 `{"text": ...}` JSON（企业微信/钉钉等 bot 均可接）；通知失败不影响部署本身 |
 
-镜像 tag 约定：每次部署构建 `python-service-hub:1.0.0-<sha>` 与 `python-service-hub-web:1.0.0-<sha>`，随后把 `1.0.0-linux-amd64` 移动 tag 指向新镜像（compose.yaml 只认移动 tag）；上一版镜像同时保留为 `:rollback-target`。部署成功后自动清理更早的 per-commit tag 并 prune 悬空层。
+镜像 tag 约定：每次部署构建 `python-service-hub:1.0.0-<sha>` 与 `python-service-hub-web:1.0.0-<sha>`，随后把 `1.0.0-linux-amd64` 移动 tag 指向新镜像（compose.yaml 只认移动 tag）；上一版镜像同时保留为 `:rollback-target`。部署成功后自动清理更早的 per-commit tag（**不做任何 docker image prune**——hub 按 digest 引用插件镜像，悬空不等于无用，2026-09-25 事故红线）。
 
 部署收尾还会执行 `deploy/ci/walkthrough.sh`（业务级走查）：登录 → 确认插件在册 → 上传一份真实 NC 样本 → 跑一个作业等到 SUCCESS。凭据读 `HUB_ADMIN_PASSWORD` 或服务器本地 `/opt/service-hub/.deploy-credentials`（0600，不入库）；两者都没有时跳过（不算部署失败）。
 
