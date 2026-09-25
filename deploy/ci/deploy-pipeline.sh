@@ -21,6 +21,12 @@ KEEP_BACKUPS="${KEEP_BACKUPS:-3}"
 COMPOSE=(docker compose -p service-hub --project-directory "$SRC_DIR"
   -f compose.yaml -f "$REMOTE_DIR/compose.override.yaml")
 
+# compose.yaml interpolates ${HUB_HOST_DATA_DIR:?...} for the API service's
+# environment and volumes. Without it every compose call in this pipeline fails
+# ("required variable HUB_HOST_DATA_DIR is missing a value"), which under `set -e`
+# looks like a broken backup rather than a missing environment variable.
+export HUB_HOST_DATA_DIR="$DATA_DIR"
+
 stamp() { date -Is; }
 log() { echo "[$(stamp)] $*"; }
 fail() { log "ERROR: $*"; }
