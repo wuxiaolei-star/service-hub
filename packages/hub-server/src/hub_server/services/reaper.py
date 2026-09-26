@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from hub_server.models import Job
 from hub_server.services.audit import record as audit
+from hub_server.services.failures import REAPER_SOURCE, classify_failure
 
 REAP_GRACE_SECONDS = 600
 
@@ -59,7 +60,14 @@ def reap_stale_jobs(session: Session, now: datetime | None = None) -> int:
             action="job.reap",
             resource_type="job",
             resource_id=job.job_key,
-            detail={"timeout_seconds": job.timeout_seconds},
+            # G8: the reaper classifies its own terminal write through the
+            # shared failure classifier so every writer stays consistent.
+            detail={
+                "timeout_seconds": job.timeout_seconds,
+                "failure_class": classify_failure(
+                    job.status, job.error_summary, source=REAPER_SOURCE
+                ),
+            },
         )
         reaped += 1
     if reaped:

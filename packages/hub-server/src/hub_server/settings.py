@@ -39,8 +39,9 @@ class RunnerResourceLimitsSettings(StrictSettingsModel):
     未显式声明的插件将不带任何资源限制运行.
 
     默认值针对当前部署机(2 核 3.4GHz, 同机还运行构建/业务走查/每小时调度)
-    预置为 memory_mb=2048, cpus=1.5: 尚未经真实样本实测校准, 编排者会在
-    服务器上以 nc_to_shp 真实样本实测内存峰值后修订本默认值.
+    预置为 memory_mb=2048, cpus=1.5. 实测校准(2026-09-26): nc_to_shp 真实
+    样本(48MB, 25 时刻)作业峰值内存 71.9MiB, 2048MB 约为其 28 倍余量, 目的
+    是保护共享机不被失控作业(如更大的业务文件)打爆, 而非贴峰值设限.
     """
 
     memory_mb: int = Field(default=2048, gt=0)

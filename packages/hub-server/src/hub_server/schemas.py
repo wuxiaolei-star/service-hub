@@ -140,6 +140,30 @@ class JobStatsResponse(BaseModel):
     buckets: list[JobStatsBucket]
 
 
+class JobPluginStats(BaseModel):
+    """Per-plugin Job aggregates over the stats window (G8/B8).
+
+    ``failure_classes`` always carries all five classes (zeros included):
+    ``plugin``/``timeout``/``cancelled``/``runner``/``system`` derived by the
+    zero-migration classifier over terminal-failure Jobs of the plugin.
+    """
+
+    plugin_id: str
+    total: int
+    success: int
+    failed: int
+    cancelled: int
+    timed_out: int
+    failure_classes: dict[str, int]
+    p50_ms: int | None = None
+    p95_ms: int | None = None
+
+
+class JobPluginStatsResponse(BaseModel):
+    days: int
+    plugins: list[JobPluginStats]
+
+
 class FileListResponse(BaseModel):
     items: list[FileResponse]
 

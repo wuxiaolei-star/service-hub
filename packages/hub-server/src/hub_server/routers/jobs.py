@@ -5,9 +5,10 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from statistics import quantiles
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from hub_server.dependencies import get_session, get_settings, get_storage
 from hub_server.dependencies_auth import Actor, actor_ip, get_actor, require_role
-from hub_server.models import FileRecord, Job, PluginBuild, PluginVersion
+from hub_server.models import FileRecord, Job, Plugin, PluginBuild, PluginVersion
 from hub_server.routers.files import _file_response
 from hub_server.schemas import (
     FileResponse,
@@ -26,11 +27,17 @@ from hub_server.schemas import (
     JobListResponse,
     JobLogResponse,
     JobOutputsResponse,
+    JobPluginStats,
+    JobPluginStatsResponse,
     JobResponse,
     JobStatsBucket,
     JobStatsResponse,
 )
 from hub_server.services.audit import record as audit
+from hub_server.services.failures import (
+    FAILURE_CLASSES,
+    classify_failure,
+)
 from hub_server.services.jobs import JobService
 from hub_server.services.quotas import QuotaService
 from hub_server.services.webhook_guard import normalize_webhook_url
@@ -130,16 +137,26 @@ def list_jobs(
 
 
 # Registered before the "/{job_key}" routes so "stats" is never read as a key.
-@router.get("/stats", response_model=JobStatsResponse)
+@router.get("/stats", response_model=JobStatsResponse | JobPluginStatsResponse)
 def job_stats(
     session: Annotated[Session, Depends(get_session)],
     days: Annotated[int, Query(ge=1, le=90)] = 14,
-) -> JobStatsResponse:
-    """Aggregate per-day Job volume and duration percentiles over the last N days."""
+    by: Annotated[Literal["plugin"] | None, Query()] = None,
+) -> JobStatsResponse | JobPluginStatsResponse:
+    """Aggregate Job volume and duration percentiles over the last N days.
+
+    The default grouping stays per-day (backward compatible). ``by=plugin``
+    switches to per-plugin aggregates (G8/B8): totals per status plus the
+    failure-class breakdown derived from stored rows by
+    :func:`hub_server.services.failures.classify_failure`.
+    """
     today = datetime.now(UTC).date()
     start_day = today - timedelta(days=days - 1)
-    day_keys = [(start_day + timedelta(days=offset)).isoformat() for offset in range(days)]
     cutoff = datetime(start_day.year, start_day.month, start_day.day, tzinfo=UTC)
+    if by == "plugin":
+        return _plugin_stats(session, days, cutoff)
+
+    day_keys = [(start_day + timedelta(days=offset)).isoformat() for offset in range(days)]
 
     counts: dict[str, int] = {}
     success_counts: dict[str, int] = {}
@@ -169,6 +186,79 @@ def job_stats(
             )
         )
     return JobStatsResponse(days=days, buckets=buckets)
+
+
+@dataclass(slots=True)
+class _PluginAggregate:
+    """Mutable accumulator for one plugin's per-window Job aggregates."""
+
+    total: int = 0
+    success: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    timed_out: int = 0
+    durations_ms: list[int] = field(default_factory=list)
+    failure_classes: dict[str, int] = field(
+        default_factory=lambda: {failure_class: 0 for failure_class in FAILURE_CLASSES}
+    )
+
+
+def _plugin_stats(session: Session, days: int, cutoff: datetime) -> JobPluginStatsResponse:
+    """Aggregate per-plugin status counts, failure classes, and percentiles."""
+    rows = session.execute(
+        select(
+            Plugin.plugin_key,
+            Job.status,
+            Job.error_summary,
+            Job.started_at,
+            Job.finished_at,
+        )
+        .join(PluginBuild, PluginBuild.id == Job.plugin_build_id)
+        .join(PluginVersion, PluginVersion.id == PluginBuild.plugin_version_id)
+        .join(Plugin, Plugin.id == PluginVersion.plugin_id)
+        .where(Job.created_at >= cutoff)
+    ).all()
+    aggregates: dict[str, _PluginAggregate] = {}
+    for plugin_key, status_value, error_summary, started_at, finished_at in rows:
+        aggregate = aggregates.setdefault(plugin_key, _PluginAggregate())
+        aggregate.total += 1
+        if status_value == JobStatus.SUCCESS.value:
+            aggregate.success += 1
+        elif status_value == JobStatus.FAILED.value:
+            aggregate.failed += 1
+        elif status_value == JobStatus.CANCELLED.value:
+            aggregate.cancelled += 1
+        elif status_value == JobStatus.TIMED_OUT.value:
+            aggregate.timed_out += 1
+        if status_value in {
+            JobStatus.FAILED.value,
+            JobStatus.TIMED_OUT.value,
+            JobStatus.CANCELLED.value,
+        }:
+            failure_class = classify_failure(status_value, error_summary)
+            aggregate.failure_classes[failure_class] = (
+                aggregate.failure_classes.get(failure_class, 0) + 1
+            )
+        if started_at is not None and finished_at is not None:
+            aggregate.durations_ms.append(_duration_ms(started_at, finished_at))
+
+    plugins = []
+    for plugin_key, aggregate in sorted(aggregates.items()):
+        p50, p95 = _percentiles_ms(aggregate.durations_ms)
+        plugins.append(
+            JobPluginStats(
+                plugin_id=plugin_key,
+                total=aggregate.total,
+                success=aggregate.success,
+                failed=aggregate.failed,
+                cancelled=aggregate.cancelled,
+                timed_out=aggregate.timed_out,
+                failure_classes=aggregate.failure_classes,
+                p50_ms=p50,
+                p95_ms=p95,
+            )
+        )
+    return JobPluginStatsResponse(days=days, plugins=plugins)
 
 
 # Registered before the "/{job_key}" routes so "export" is never read as a key.

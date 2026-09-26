@@ -30,6 +30,7 @@ from hub_server.schemas import (
     RunnerOperationCompleteRequest,
     RunnerReconcileResponse,
 )
+from hub_server.services.failures import PLUGIN_OUTPUT_MISSING, failure_summary
 from hub_server.services.runner_operations import RunnerOperationService
 from hub_server.services.workspaces import JobWorkspaceService
 from hub_server.settings import HubSettings
@@ -192,6 +193,11 @@ def complete_job(
     SUCCESS into FAILED with the stable ``PLUGIN_OUTPUT_MISSING`` error code.
     ``object`` outputs are explicitly exempt — see
     :func:`_missing_required_file_outputs`.
+
+    Runner-reported errors are stored through
+    :func:`hub_server.services.failures.failure_summary`, which prefixes the
+    stable error code (``CODE: message``) so the zero-migration G8 failure
+    classification can derive ``failure_class`` from the stored summary.
     """
     job = _matching_job(session, job_key, request.runtime_type)
     if request.result.job_id != job_key:
@@ -205,7 +211,7 @@ def complete_job(
             job, JobStatus.RUNNING, expected_status=JobStatus.PREPARING
         )
     terminal_status = JobStatus(request.result.status)
-    error_summary = request.result.error.message if request.result.error else None
+    error_summary = failure_summary(request.result.error)
     if terminal_status is JobStatus.SUCCESS:
         for output in request.result.files:
             JobWorkspaceService(storage).register_output(
@@ -220,7 +226,7 @@ def complete_job(
             # not satisfied: flip to FAILED through the same state machine as
             # any other failure instead of trusting the self-reported status.
             terminal_status = JobStatus.FAILED
-            error_summary = f"PLUGIN_OUTPUT_MISSING: {', '.join(missing)}"
+            error_summary = f"{PLUGIN_OUTPUT_MISSING}: {', '.join(missing)}"
     try:
         completed = HubRepository(session).transition_job(
             job,
