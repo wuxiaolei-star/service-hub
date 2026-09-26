@@ -18,6 +18,7 @@ from hub_server.settings import (
     DatabaseSettings,
     DeploymentSettings,
     HubSettings,
+    RunnerResourceLimitsSettings,
     RunnerSettings,
     StorageSettings,
     UploadSettings,
@@ -28,13 +29,31 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 
-def _settings(tmp_path: Path) -> HubSettings:
+class _Default:
+    """Sentinel distinguishing 'unset' from an explicit null resource_limits node."""
+
+
+_DEFAULT = _Default()
+
+
+def _settings(
+    tmp_path: Path,
+    *,
+    resource_limits: RunnerResourceLimitsSettings | _Default | None = _DEFAULT,
+) -> HubSettings:
+    resolved_limits = (
+        RunnerResourceLimitsSettings() if resource_limits is _DEFAULT else resource_limits
+    )
     return HubSettings(
         deployment=DeploymentSettings(mode="offline"),
         storage=StorageSettings(root=tmp_path / "data"),
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
-        runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
+        runner=RunnerSettings(
+            shared_token="runner-test-secret",
+            poll_interval_seconds=1,
+            resource_limits=resolved_limits,
+        ),
         auth=AuthSettings(mode="off"),
         platform_os="linux",
         platform_arch="amd64",
@@ -267,10 +286,59 @@ def test_matching_runner_claims_only_its_runtime_with_relative_paths(
     assert payload["paths"] == {"job": "job.json", "result": "result.json"}
     assert payload["build"]["runtime"]["type"] == "docker"
     assert payload["build"]["image_digest"] == "1" * 64
+    # B7/G7/R6: the fixture manifest declares no resource caps, so the claim
+    # must carry the platform defaults from settings.runner.resource_limits.
+    assert payload["build"]["memory_mb"] == 2048
+    assert payload["build"]["cpus"] == 1.5
     assert not any(value.startswith(("/", "C:")) for value in _all_strings(payload))
     with client.app.state.session_factory() as session:
         assert session.scalar(select(Job).where(Job.job_key == conda_key)).status == "PENDING"
         assert session.scalar(select(Job).where(Job.job_key == docker_key)).status == "PREPARING"
+
+
+def test_manifest_declared_resource_limits_override_platform_defaults(
+    client: TestClient,
+) -> None:
+    """B7 priority: manifest explicit declaration > platform default."""
+    with client.app.state.session_factory() as session:
+        job = _seed_pending_job(session, "docker")
+        job_key = job.job_key
+        version = job.plugin_build.plugin_version
+        version.manifest_json = {
+            **version.manifest_json,
+            "execution": {
+                **version.manifest_json["execution"],
+                "memory_mb": 8192,
+                "cpus": 0.75,
+            },
+        }
+        session.commit()
+
+    payload = _runner_post(
+        client, "/internal/v1/jobs/claim", {"runtime_type": "docker"}
+    ).json()
+
+    assert payload["job_id"] == job_key
+    assert payload["build"]["memory_mb"] == 8192
+    assert payload["build"]["cpus"] == 0.75
+
+
+def test_disabled_platform_resource_limits_leave_undeclared_plugins_uncapped(
+    tmp_path: Path,
+) -> None:
+    """runner.resource_limits: null opts the whole platform out of default caps."""
+    with TestClient(create_app(_settings(tmp_path, resource_limits=None))) as test_client:
+        with test_client.app.state.session_factory() as session:
+            job = _seed_pending_job(session, "docker")
+            job_key = job.job_key
+
+        payload = _runner_post(
+            test_client, "/internal/v1/jobs/claim", {"runtime_type": "docker"}
+        ).json()
+
+        assert payload["job_id"] == job_key
+        assert payload["build"]["memory_mb"] is None
+        assert payload["build"]["cpus"] is None
 
 
 def test_matching_runner_claims_and_completes_installation_atomically(

@@ -568,6 +568,64 @@ def test_unified_service_starts_the_docker_runner_with_one_socket_mount() -> Non
     assert "python -m deploy.runner.docker_runner_service" in supervisor
 
 
+def test_oom_killed_container_exits_as_failed_not_timed_out(tmp_path: Path) -> None:
+    """B7/G7/R6: the OOM kill exit code must be pinned to FAILED semantics.
+
+    Docker reports a cgroup OOM kill as StatusCode 137 (128 + SIGKILL). The
+    deadline-driven TIMED_OUT path only fires when the hub's own wait deadline
+    expires, so a container that dies on its own with 137 — even while the
+    deadline is far away — must surface as FAILED with that exit code.
+    """
+    container = FakeContainer(wait_results=[{"StatusCode": 137}])
+    client = FakeDockerClient(digest="1" * 64, container=container)
+    clock_values = iter([0.0, 0.0])
+
+    result = DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/srv/python-service-hub/data",
+        monotonic=lambda: next(clock_values),
+    ).execute(_docker_job())
+
+    assert result.status is JobStatus.FAILED
+    assert result.status is not JobStatus.TIMED_OUT
+    assert result.exit_code == 137
+    assert result.error_summary == "Docker container exited with status 137"
+    assert container.removed is True
+
+
+def test_docker_executor_enforces_resolved_resource_limits(tmp_path: Path) -> None:
+    """B7: resolved caps become mem_limit=memswap_limit (no swap oversell) and nano_cpus."""
+    client = FakeDockerClient(digest="1" * 64, container=FakeContainer())
+
+    result = DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/srv/python-service-hub/data",
+    ).execute(_docker_job(memory_mb=2048, cpus=1.5))
+
+    assert result.status is JobStatus.SUCCESS
+    assert client.containers.run_kwargs["mem_limit"] == "2048m"
+    assert client.containers.run_kwargs["memswap_limit"] == "2048m"
+    assert client.containers.run_kwargs["nano_cpus"] == 1_500_000_000
+
+
+def test_docker_executor_runs_unconstrained_without_resource_caps(
+    tmp_path: Path,
+) -> None:
+    """A claim without caps must not send any resource argument (pre-B7 parity)."""
+    client = FakeDockerClient(digest="1" * 64, container=FakeContainer())
+
+    DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/srv/python-service-hub/data",
+    ).execute(_docker_job())
+
+    for unconstrained_key in ("mem_limit", "memswap_limit", "nano_cpus"):
+        assert unconstrained_key not in client.containers.run_kwargs
+
+
 def test_docker_runner_service_maps_claim_to_digest_runtime_job() -> None:
     job = _job_from_payload(
         {
@@ -593,6 +651,36 @@ def test_docker_runner_service_maps_claim_to_digest_runtime_job() -> None:
     assert job.job_path == "jobs/job_123/job.json"
     assert job.result_path == "jobs/job_123/output/result.json"
     assert job.image_digest == "1" * 64
+    assert job.memory_mb is None
+    assert job.cpus is None
+
+
+def test_docker_runner_service_maps_resource_caps_from_claim_payload() -> None:
+    """B7: resolved caps ride the build claim into the executor's RunnerJob."""
+    job = _job_from_payload(
+        {
+            "job_id": "job_123",
+            "runtime_type": "docker",
+            "cancel_requested": False,
+            "workspace": "jobs/job_123",
+            "paths": {"job": "job.json", "result": "result.json"},
+            "job": {"execution": {"timeout": 30}},
+            "build": {
+                "runtime": {
+                    "type": "docker",
+                    "archive": "image.tar.zst",
+                    "image": "x",
+                    "digest": "1" * 64,
+                },
+                "image_digest": "1" * 64,
+                "memory_mb": 4096,
+                "cpus": 0.75,
+            },
+        }
+    )
+
+    assert job.memory_mb == 4096
+    assert job.cpus == 0.75
 
 
 def test_docker_runner_service_reconciles_interrupted_jobs_before_polling() -> None:
@@ -648,7 +736,9 @@ def test_docker_runner_checks_authenticated_internal_cancellation_endpoint() -> 
     ]
 
 
-def _docker_job(*, cancel_requested: bool = False) -> RunnerJob:
+def _docker_job(
+    *, cancel_requested: bool = False, memory_mb: int | None = None, cpus: float | None = None
+) -> RunnerJob:
     return RunnerJob(
         id="job_123",
         runtime_type="docker",
@@ -658,6 +748,8 @@ def _docker_job(*, cancel_requested: bool = False) -> RunnerJob:
         image_digest="1" * 64,
         timeout_seconds=30,
         cancel_requested=cancel_requested,
+        memory_mb=memory_mb,
+        cpus=cpus,
     )
 
 

@@ -74,6 +74,10 @@ class RunnerJob:
     image_digest: str | None
     timeout_seconds: int
     cancel_requested: bool
+    # Resolved per-job resource caps (B7): None = platform sends no cap and the
+    # container runs without mem/cpu constraints, exactly as before B7.
+    memory_mb: int | None = None
+    cpus: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +170,7 @@ class DockerExecutor:
         container: ContainerProtocol | None = None
         container_needs_stop = False
         deadline = self._monotonic() + job.timeout_seconds
+        resource_limits = _container_resource_limits(job)
         try:
             container = self._client.containers.run(
                 image=image,
@@ -184,6 +189,7 @@ class DockerExecutor:
                 user="65532:65532",
                 read_only=True,
                 cap_drop=["ALL"],
+                **resource_limits,
                 labels={
                     SERVICE_HUB_OWNER_LABEL: service_hub_owner_value(
                         str(self._docker_host_data_root)
@@ -314,6 +320,24 @@ def _trusted_host_data_root(value: str) -> PurePosixPath:
     ):
         raise ValueError("docker_host_data_root must be an absolute trusted directory")
     return root
+
+
+def _container_resource_limits(job: RunnerJob) -> dict[str, Any]:
+    """Translate the claim's resolved resource caps into docker-py arguments.
+
+    ``memswap_limit`` is pinned to ``mem_limit`` so the container can never
+    oversubscribe swap: exceeding the memory cap kills the container (OOM,
+    exit code 137 -> FAILED) instead of silently swapping. ``nano_cpus``
+    expresses the CPU quota in 1e-9 CPU shares. With no caps in the claim the
+    mapping is empty and the container runs unconstrained (pre-B7 behaviour).
+    """
+    limits: dict[str, Any] = {}
+    if job.memory_mb is not None:
+        limits["mem_limit"] = f"{job.memory_mb}m"
+        limits["memswap_limit"] = f"{job.memory_mb}m"
+    if job.cpus is not None:
+        limits["nano_cpus"] = int(job.cpus * 1e9)
+    return limits
 
 
 def service_hub_owner_value(docker_host_data_root: str) -> str:

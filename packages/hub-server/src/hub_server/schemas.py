@@ -274,6 +274,12 @@ class RunnerBuildClaim(InternalSchema):
     source: RelativeProtocolPath
     environment_path: RelativeProtocolPath | None = None
     image_digest: str | None = None
+    # Resolved per-job resource caps (B7/G7): the manifest's explicit
+    # execution.memory_mb/cpus when declared, else the platform default
+    # (settings.runner.resource_limits), else None = no limit. Consumed only
+    # on the job execution path; install ignores them.
+    memory_mb: int | None = None
+    cpus: float | None = None
 
 
 class RunnerOperationClaimResponse(InternalSchema):

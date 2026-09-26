@@ -31,11 +31,30 @@ class UploadSettings(StrictSettingsModel):
     max_size_bytes: int = Field(gt=0)
 
 
+class RunnerResourceLimitsSettings(StrictSettingsModel):
+    """Platform-default per-job resource caps (B7/G7/R6).
+
+    生效优先级: manifest ``execution.memory_mb``/``execution.cpus`` 显式声明 >
+    本节点平台默认 > 不限制。整个节点在 YAML 中置 ``null`` 即关闭平台默认,
+    未显式声明的插件将不带任何资源限制运行.
+
+    默认值针对当前部署机(2 核 3.4GHz, 同机还运行构建/业务走查/每小时调度)
+    预置为 memory_mb=2048, cpus=1.5: 尚未经真实样本实测校准, 编排者会在
+    服务器上以 nc_to_shp 真实样本实测内存峰值后修订本默认值.
+    """
+
+    memory_mb: int = Field(default=2048, gt=0)
+    cpus: float = Field(default=1.5, gt=0)
+
+
 class RunnerSettings(StrictSettingsModel):
     """Private coordination settings shared only with runtime runners."""
 
     shared_token: SecretStr
     poll_interval_seconds: int = Field(default=2, gt=0)
+    resource_limits: RunnerResourceLimitsSettings | None = Field(
+        default_factory=RunnerResourceLimitsSettings
+    )
 
 
 class AuthSettings(StrictSettingsModel):

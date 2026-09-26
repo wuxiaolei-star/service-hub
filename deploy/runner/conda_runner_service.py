@@ -115,6 +115,8 @@ def _job_from_payload(payload: dict[str, Any]) -> RunnerJob:
         environment_path=build.get("environment_path"),
         timeout_seconds=int(payload["job"]["execution"]["timeout"]),
         cancel_requested=bool(payload["cancel_requested"]),
+        memory_mb=build.get("memory_mb"),
+        cpus=build.get("cpus"),
     )
 
 

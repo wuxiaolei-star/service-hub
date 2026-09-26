@@ -192,10 +192,19 @@ class OutputSpec(StrictContractModel):
 
 
 class ExecutionSpec(StrictContractModel):
-    """Hub-enforced execution limits."""
+    """Hub-enforced execution limits.
+
+    ``memory_mb`` and ``cpus`` are optional per-plugin resource caps (B7/G7).
+    Leaving them unset keeps v1.0 manifests valid and means "use the platform
+    default cap" (``HubSettings.runner.resource_limits``); an explicit value
+    overrides the platform default, and a platform that disables the default
+    node runs declared-omitting plugins without any resource limit.
+    """
 
     timeout: int = Field(gt=0)
     concurrency: int = Field(gt=0)
+    memory_mb: int | None = Field(default=None, gt=0)
+    cpus: float | None = Field(default=None, gt=0)
 
 
 class EnvironmentVariablesSpec(StrictContractModel):

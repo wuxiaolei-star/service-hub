@@ -59,6 +59,7 @@ def claim_operation(
     request: RunnerClaimRequest,
     _: RunnerAuthorization,
     session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
     response: Response,
 ) -> RunnerOperationClaimResponse | None:
     operation = HubRepository(session).claim_operation(request.runtime_type)
@@ -70,7 +71,7 @@ def claim_operation(
         runtime_type=request.runtime_type,
         kind="INSTALL",
         timeout_seconds=operation.timeout_seconds,
-        build=_build_claim(operation.plugin_build),
+        build=_build_claim(operation.plugin_build, settings),
     )
 
 
@@ -101,6 +102,7 @@ def claim_job(
     request: RunnerClaimRequest,
     _: RunnerAuthorization,
     session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
     response: Response,
 ) -> RunnerJobClaimResponse | None:
     job = HubRepository(session).claim_job(request.runtime_type)
@@ -120,7 +122,7 @@ def claim_job(
         workspace=job.workspace_path,
         paths=RunnerJobPaths(),
         job=JobRuntimeSpec.model_validate(job.job_json),
-        build=_build_claim(job.plugin_build),
+        build=_build_claim(job.plugin_build, settings),
     )
 
 
@@ -257,7 +259,7 @@ def _missing_required_file_outputs(job: Job) -> list[str]:
     ]
 
 
-def _build_claim(build: PluginBuild) -> RunnerBuildClaim:
+def _build_claim(build: PluginBuild, settings: HubSettings) -> RunnerBuildClaim:
     if build.package_path is None:
         raise HubError(
             code="RUNNER_BUILD_INVALID",
@@ -266,6 +268,7 @@ def _build_claim(build: PluginBuild) -> RunnerBuildClaim:
         )
     manifest = PluginBuildManifest.model_validate(build.build_metadata_json)
     environment = build.environment
+    memory_mb, cpus = _resolve_resource_limits(settings, build)
     return RunnerBuildClaim(
         build_id=build.build_key,
         runtime_type=manifest.runtime.type,
@@ -275,7 +278,31 @@ def _build_claim(build: PluginBuild) -> RunnerBuildClaim:
         source=f"{build.package_path}/plugin",
         environment_path=(environment.environment_path if environment else None),
         image_digest=(environment.image_digest if environment else None),
+        memory_mb=memory_mb,
+        cpus=cpus,
     )
+
+
+def _resolve_resource_limits(
+    settings: HubSettings, build: PluginBuild
+) -> tuple[int | None, float | None]:
+    """Resolve per-job resource caps for one Build (B7/G7/R6).
+
+    Priority: the source manifest's explicit ``execution.memory_mb``/``cpus``
+    declaration wins over the platform default; when the platform default node
+    is disabled (``runner.resource_limits: null``) an undeclared plugin runs
+    without any resource limit. The values are resolved fresh at claim time,
+    so recalibrating the defaults never requires touching stored Builds.
+    """
+    execution = PluginManifest.model_validate(build.plugin_version.manifest_json).execution
+    default_limits = settings.runner.resource_limits
+    memory_mb = execution.memory_mb
+    if memory_mb is None and default_limits is not None:
+        memory_mb = default_limits.memory_mb
+    cpus = execution.cpus
+    if cpus is None and default_limits is not None:
+        cpus = default_limits.cpus
+    return memory_mb, cpus
 
 
 def _matching_job(session: Session, job_key: str, runtime_type: str) -> Job:

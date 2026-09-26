@@ -334,3 +334,45 @@ def test_parameter_default_rejects_more_than_8_container_levels(
 
     with pytest.raises(ValidationError):
         PluginManifest.model_validate(valid_manifest_data)
+
+
+def test_execution_resource_limits_are_optional_and_default_to_none(
+    valid_manifest_data: dict[str, Any],
+) -> None:
+    """B7/G7: v1.0 manifests without resource caps stay valid and unlimited."""
+    manifest = PluginManifest.model_validate(valid_manifest_data)
+
+    assert manifest.execution.memory_mb is None
+    assert manifest.execution.cpus is None
+
+
+def test_execution_accepts_declared_resource_limits(
+    valid_manifest_data: dict[str, Any],
+) -> None:
+    valid_manifest_data["execution"]["memory_mb"] = 4096
+    valid_manifest_data["execution"]["cpus"] = 2.5
+
+    manifest = PluginManifest.model_validate(valid_manifest_data)
+
+    assert manifest.execution.memory_mb == 4096
+    assert manifest.execution.cpus == 2.5
+
+
+@pytest.mark.parametrize("field", ["memory_mb", "cpus"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_execution_rejects_non_positive_resource_limits(
+    field: str, value: int, valid_manifest_data: dict[str, Any]
+) -> None:
+    valid_manifest_data["execution"][field] = value
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)
+
+
+def test_execution_rejects_unknown_resource_limit_fields(
+    valid_manifest_data: dict[str, Any],
+) -> None:
+    valid_manifest_data["execution"]["gpus"] = 1
+
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(valid_manifest_data)

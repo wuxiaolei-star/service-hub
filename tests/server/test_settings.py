@@ -59,3 +59,77 @@ def test_rejects_non_mapping_yaml_root(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="根节点必须是对象"):
         HubSettings.from_yaml(config)
+
+
+def test_runner_resource_limits_default_node_is_present(tmp_path: Path) -> None:
+    """B7/G7: the platform default cap ships enabled with conservative values."""
+    config = tmp_path / "hub.yaml"
+    config.write_text(
+        "deployment:\n  mode: offline\n"
+        "storage:\n  root: /var/lib/hub\n"
+        "database:\n  url: sqlite:////var/lib/hub/db/hub.db\n"
+        "uploads:\n  max_size_bytes: 1024\n"
+        "runner:\n  shared_token: runner-test-secret\n",
+        encoding="utf-8",
+    )
+
+    settings = HubSettings.from_yaml(config)
+
+    assert settings.runner.resource_limits is not None
+    assert settings.runner.resource_limits.memory_mb == 2048
+    assert settings.runner.resource_limits.cpus == 1.5
+
+
+def test_runner_resource_limits_node_can_be_disabled(tmp_path: Path) -> None:
+    """A null node opts the whole platform out of default caps (manifest still wins)."""
+    config = tmp_path / "hub.yaml"
+    config.write_text(
+        "deployment:\n  mode: offline\n"
+        "storage:\n  root: /var/lib/hub\n"
+        "database:\n  url: sqlite:////var/lib/hub/db/hub.db\n"
+        "uploads:\n  max_size_bytes: 1024\n"
+        "runner:\n  shared_token: runner-test-secret\n  resource_limits: null\n",
+        encoding="utf-8",
+    )
+
+    settings = HubSettings.from_yaml(config)
+
+    assert settings.runner.resource_limits is None
+
+
+def test_runner_resource_limits_accepts_explicit_values(tmp_path: Path) -> None:
+    config = tmp_path / "hub.yaml"
+    config.write_text(
+        "deployment:\n  mode: offline\n"
+        "storage:\n  root: /var/lib/hub\n"
+        "database:\n  url: sqlite:////var/lib/hub/db/hub.db\n"
+        "uploads:\n  max_size_bytes: 1024\n"
+        "runner:\n  shared_token: runner-test-secret\n"
+        "  resource_limits:\n    memory_mb: 4096\n    cpus: 2\n",
+        encoding="utf-8",
+    )
+
+    settings = HubSettings.from_yaml(config)
+
+    assert settings.runner.resource_limits is not None
+    assert settings.runner.resource_limits.memory_mb == 4096
+    assert settings.runner.resource_limits.cpus == 2.0
+
+
+@pytest.mark.parametrize("field", ["memory_mb", "cpus"])
+def test_runner_resource_limits_reject_non_positive_values(
+    tmp_path: Path, field: str
+) -> None:
+    config = tmp_path / "hub.yaml"
+    config.write_text(
+        "deployment:\n  mode: offline\n"
+        "storage:\n  root: /var/lib/hub\n"
+        "database:\n  url: sqlite:////var/lib/hub/db/hub.db\n"
+        "uploads:\n  max_size_bytes: 1024\n"
+        "runner:\n  shared_token: runner-test-secret\n"
+        f"  resource_limits:\n    {field}: 0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError):
+        HubSettings.from_yaml(config)

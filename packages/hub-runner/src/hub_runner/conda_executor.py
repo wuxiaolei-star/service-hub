@@ -64,6 +64,10 @@ class RunnerJob:
     environment_path: str | None
     timeout_seconds: int
     cancel_requested: bool
+    # Resolved per-job resource caps (B7): None = platform sends no cap and the
+    # subprocess runs without rlimits, exactly as before B7.
+    memory_mb: int | None = None
+    cpus: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +226,7 @@ class CondaExecutor:
                 timeout=job.timeout_seconds,
                 event_callback=self._event_callback,
                 cancellation_requested=self._cancellation_requested,
+                preexec_fn=_rlimit_preexec(job),
             )
         except subprocess.TimeoutExpired:
             return RunnerCompletion(
@@ -299,6 +304,42 @@ def _run_command(
     )
 
 
+def _rlimit_preexec(job: RunnerJob) -> Callable[[], None] | None:
+    """Build a ``preexec_fn`` applying the resolved resource caps in the child.
+
+    POSIX only (G7): the ``resource`` module and ``preexec_fn`` do not exist on
+    Windows, so on the development platform — and whenever the claim carries no
+    caps — the child is spawned without limits and behaviour is unchanged.
+
+    Recorded semantic differences versus the docker executor (developer guide
+    §3.1): ``RLIMIT_AS`` caps address-space, and GDAL/numpy keep large native
+    memory mappings, so it is more conservative than docker's cgroup
+    ``mem_limit`` (resident-set accounting); ``RLIMIT_CPU`` is a cumulative
+    CPU-seconds budget, approximated here as ``cpus * timeout`` wall-clock
+    seconds, not a concurrent CPU share like docker's ``nano_cpus``. Exceeding
+    ``RLIMIT_CPU`` delivers SIGXCPU; exhausting ``RLIMIT_AS`` typically surfaces
+    as a malloc failure/MemoryError. Either way the child exits nonzero, which
+    the runner surfaces as FAILED.
+    """
+    if os.name == "nt" or (job.memory_mb is None and job.cpus is None):
+        return None
+    import importlib
+
+    # Resolved in the parent, before fork: importing inside the post-fork
+    # child would run arbitrary module init code in a fragile state.
+    resource = importlib.import_module("resource")
+    memory_bytes = job.memory_mb * 1024 * 1024 if job.memory_mb is not None else None
+    cpu_seconds = int(job.cpus * job.timeout_seconds) if job.cpus is not None else None
+
+    def apply_limits() -> None:
+        if memory_bytes is not None:
+            resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+        if cpu_seconds is not None:
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
+
+    return apply_limits
+
+
 def _run_job_process(
     args: Sequence[str],
     *,
@@ -307,6 +348,7 @@ def _run_job_process(
     timeout: float,
     event_callback: EventCallback,
     cancellation_requested: CancellationCheck,
+    preexec_fn: Callable[[], None] | None = None,
 ) -> CommandResult:
     """Run one plugin in a new process group while streaming events and polling cancel."""
     process = subprocess.Popen(
@@ -321,6 +363,7 @@ def _run_job_process(
         creationflags=(
             _NEW_PROCESS_GROUP if os.name == "nt" else 0
         ),
+        preexec_fn=preexec_fn,
     )
     if process.stdout is None or process.stderr is None:
         _terminate_process_group(process)

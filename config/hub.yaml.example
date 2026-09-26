@@ -9,6 +9,9 @@ uploads:
 runner:
   shared_token: replace-with-a-random-high-entropy-token
   poll_interval_seconds: 2
+  resource_limits:                # 平台默认资源 cap（B7）；置 null 关闭默认
+    memory_mb: 2048               # 单 Job 内存上限（MiB）；待真实样本实测后校准
+    cpus: 1.5                     # 单 Job CPU 配额（核）；manifest 显式声明优先于本默认
 auth:
   mode: required            # required=启用认证；off=临时关闭（过渡用）
   session_ttl_hours: 24     # 会话有效期
