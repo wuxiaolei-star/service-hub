@@ -496,6 +496,56 @@ def test_job_event_starts_job_and_completion_records_terminal_state(
         assert persisted.exit_code == 0
 
 
+def test_job_completion_prefixes_plugin_errors_with_their_stable_code(
+    client: TestClient,
+) -> None:
+    """G8/B8: the completion path stores "CODE: message" summaries.
+
+    Normalizing through ``services.failures.failure_summary`` is what makes the
+    zero-migration failure classification derivable from the stored row.
+    """
+    with client.app.state.session_factory() as session:
+        job = _seed_pending_job(session, "docker")
+        job_key = job.job_key
+    claim = _runner_post(client, "/internal/v1/jobs/claim", {"runtime_type": "docker"})
+    assert claim.status_code == 200
+
+    now = datetime.now(UTC)
+    completion = _runner_post(
+        client,
+        f"/internal/v1/jobs/{job_key}/complete",
+        {
+            "runtime_type": "docker",
+            "exit_code": 1,
+            "result": {
+                "protocol_version": "1.0",
+                "job_id": job_key,
+                "status": "FAILED",
+                "started_at": (now - timedelta(seconds=2)).isoformat(),
+                "finished_at": now.isoformat(),
+                "duration_ms": 2000,
+                "message": "plugin failed",
+                "data": {},
+                "files": [],
+                "error": {
+                    "type": "PluginExecutionError",
+                    "code": "NC_READ_FAILED",
+                    "message": "NetCDF 读取失败",
+                },
+            },
+        },
+    )
+
+    assert completion.status_code == 200
+    assert completion.json() == {"id": job_key, "status": "FAILED"}
+    with client.app.state.session_factory() as session:
+        persisted = session.scalar(select(Job).where(Job.job_key == job_key))
+        assert persisted.status == "FAILED"
+        assert persisted.error_summary == "NC_READ_FAILED: NetCDF 读取失败"
+        assert persisted.exit_code == 1
+        assert persisted.finished_at is not None
+
+
 def test_runtime_reconcile_fails_only_matching_interrupted_jobs(
     client: TestClient,
 ) -> None:

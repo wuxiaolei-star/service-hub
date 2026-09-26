@@ -9,8 +9,8 @@ conventions make the derivation reliable:
   :func:`failure_summary`, so stored summaries begin with the stable
   ``CODE: message`` prefix (matching the pre-existing ``PLUGIN_OUTPUT_MISSING:
   ...`` convention).
-- The reaper and the reconcile path write fixed, recognizable summaries
-  (``Runner 失联，任务被 reaper 回收`` / ``HUB_RESTARTED``).
+- The reaper and the reconcile path write fixed, recognizable summaries (see
+  ``services/reaper.py`` and ``services/runner_operations.py``).
 
 ``/jobs/stats`` (``by=plugin``) consumes :func:`classify_failure` over stored
 rows; the reaper records the class in its audit detail. Adding a Job column

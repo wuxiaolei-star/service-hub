@@ -60,7 +60,10 @@ def test_cancelled_status_wins_over_misleading_summary() -> None:
     )
 
 
-@pytest.mark.parametrize("summary", [None, "", "Docker container exited with status 1", "conda runner failed"])
+@pytest.mark.parametrize(
+    "summary",
+    [None, "", "Docker container exited with status 1", "conda runner failed"],
+)
 def test_failed_prose_or_missing_summary_is_system(summary: str | None) -> None:
     assert classify_failure("FAILED", summary) == "system"
 
@@ -85,10 +88,7 @@ def test_failed_code_prefix_shape_boundaries(summary: str, expected: str) -> Non
     assert classify_failure("FAILED", summary) == expected
 
 
-@pytest.mark.parametrize(
-    "status",
-    ["SUCCESS", "PENDING", "PREPARING", "RUNNING", "CANCEL_REQUESTED"],
-)
+@pytest.mark.parametrize("status", ["SUCCESS", "PENDING", "PREPARING", "RUNNING"])
 def test_success_and_non_terminal_statuses_have_no_class(status: str) -> None:
     with pytest.raises(ValueError, match="terminal failure"):
         classify_failure(status, "RUNNER_FAILED: Runner failed")

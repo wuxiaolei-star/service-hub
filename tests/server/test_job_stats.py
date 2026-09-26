@@ -60,8 +60,13 @@ def auth_client(tmp_path: Path) -> Iterator[TestClient]:
 
 def _seed_build(client: TestClient) -> int:
     """Seed a minimal enabled docker Build and return its primary key."""
+    return _seed_plugin_build(client, plugin_key="nc_to_shp", build_key="plugin_build_stats")
+
+
+def _seed_plugin_build(client: TestClient, *, plugin_key: str, build_key: str) -> int:
+    """Seed a minimal enabled docker Build for one plugin key."""
     with client.app.state.session_factory() as session:
-        plugin = Plugin(plugin_key="nc_to_shp", name="NC to Shapefile")
+        plugin = Plugin(plugin_key=plugin_key, name=f"{plugin_key} plugin")
         version = PluginVersion(
             plugin=plugin,
             version="1.0.0",
@@ -72,15 +77,15 @@ def _seed_build(client: TestClient) -> int:
             status="INSTALLED",
         )
         build = PluginBuild(
-            build_key="plugin_build_stats",
-            manifest_build_id="build-stats",
+            build_key=build_key,
+            manifest_build_id=f"build-{build_key}",
             plugin_version=version,
             target_os="linux",
             target_arch="amd64",
             runtime_type="docker",
             python_version="3.12",
             sdk_version="1.0",
-            package_path="plugins/plugin_build_stats",
+            package_path=f"plugins/{build_key}",
             package_sha256="b" * 64,
             source_sha256="a" * 64,
             runtime_archive_path="runtime/env.tar.zst",
@@ -106,6 +111,7 @@ def _insert_job(
     status: str = "PENDING",
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
+    error_summary: str | None = None,
 ) -> None:
     with client.app.state.session_factory() as session:
         session.add(
@@ -120,6 +126,7 @@ def _insert_job(
                 created_at=created_at,
                 started_at=started_at,
                 finished_at=finished_at,
+                error_summary=error_summary,
             )
         )
         session.commit()
@@ -238,3 +245,116 @@ def _token_for(client: TestClient) -> str:
         _record, token = AuthService(session).create_session(user.id)
         session.commit()
     return token
+
+
+def test_stats_by_plugin_aggregates_statuses_classes_and_percentiles(
+    client: TestClient,
+) -> None:
+    """G8/B8: per-plugin totals plus the failure-class breakdown of stored rows."""
+    nc_build = _seed_build(client)
+    raster_build = _seed_plugin_build(
+        client, plugin_key="raster_clip", build_key="plugin_build_raster"
+    )
+    today = datetime.now(UTC).date()
+    yesterday = today - timedelta(days=1)
+    # nc_to_shp: two SUCCESS durations (1000ms, 3000ms), one plugin-code
+    # failure, one timeout, one cancellation, and one still-RUNNING job that
+    # counts toward total but carries no failure class.
+    _insert_job(
+        client, nc_build, created_at=_at(yesterday, 8), status="SUCCESS",
+        started_at=_at(yesterday, 8), finished_at=_at(yesterday, 8) + timedelta(seconds=1),
+    )
+    _insert_job(
+        client, nc_build, created_at=_at(yesterday, 9), status="SUCCESS",
+        started_at=_at(yesterday, 9), finished_at=_at(yesterday, 9) + timedelta(seconds=3),
+    )
+    _insert_job(
+        client, nc_build, created_at=_at(yesterday, 10), status="FAILED",
+        error_summary="SHAPEFILE_WRITE_FAILED: 网格写出失败",
+    )
+    _insert_job(
+        client, nc_build, created_at=_at(yesterday, 11), status="TIMED_OUT",
+        error_summary="JOB_TIMED_OUT: Job timed out",
+    )
+    _insert_job(client, nc_build, created_at=_at(yesterday, 12), status="CANCELLED")
+    _insert_job(
+        client, nc_build, created_at=_at(yesterday, 13), status="RUNNING",
+        started_at=_at(yesterday, 13),
+    )
+    # raster_clip: a runner-attributed failure and a summaryless prose failure
+    # (classified system), one of them with a 10s duration.
+    _insert_job(
+        client, raster_build, created_at=_at(yesterday, 9), status="FAILED",
+        started_at=_at(yesterday, 9), finished_at=_at(yesterday, 9) + timedelta(seconds=10),
+        error_summary="RUNNER_FAILED: Runner failed",
+    )
+    _insert_job(
+        client, raster_build, created_at=_at(yesterday, 10), status="FAILED",
+        error_summary="Docker container exited with status 137",
+    )
+
+    response = client.get("/api/v1/jobs/stats", params={"days": 7, "by": "plugin"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["days"] == 7
+    plugins = body["plugins"]
+    assert [plugin["plugin_id"] for plugin in plugins] == ["nc_to_shp", "raster_clip"]
+
+    nc = plugins[0]
+    assert nc["total"] == 6
+    assert nc["success"] == 2
+    assert nc["failed"] == 1
+    assert nc["cancelled"] == 1
+    assert nc["timed_out"] == 1
+    assert nc["failure_classes"] == {
+        "plugin": 1,
+        "timeout": 1,
+        "cancelled": 1,
+        "runner": 0,
+        "system": 0,
+    }
+    # P50 of [1000, 3000] is 2000; the inclusive 95th percentile is 2900.
+    assert nc["p50_ms"] == 2000
+    assert nc["p95_ms"] == 2900
+
+    raster = plugins[1]
+    assert raster["total"] == 2
+    assert raster["success"] == 0
+    assert raster["failed"] == 2
+    assert raster["cancelled"] == 0
+    assert raster["timed_out"] == 0
+    assert raster["failure_classes"] == {
+        "plugin": 0,
+        "timeout": 0,
+        "cancelled": 0,
+        "runner": 1,
+        "system": 1,
+    }
+    assert raster["p50_ms"] == 10000
+    assert raster["p95_ms"] == 10000
+
+
+def test_stats_without_by_keeps_the_per_day_response_shape(client: TestClient) -> None:
+    """Backward compatibility: the default grouping returns exactly the old body."""
+    response = client.get("/api/v1/jobs/stats")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {"days", "buckets"}
+    assert body["days"] == 14
+    assert len(body["buckets"]) == 14
+
+
+def test_stats_by_plugin_empty_database(client: TestClient) -> None:
+    response = client.get("/api/v1/jobs/stats", params={"by": "plugin"})
+
+    assert response.status_code == 200
+    assert response.json() == {"days": 14, "plugins": []}
+
+
+def test_stats_rejects_unknown_grouping(client: TestClient) -> None:
+    response = client.get("/api/v1/jobs/stats", params={"by": "runtime"})
+
+    assert response.status_code == 422
+

@@ -435,6 +435,96 @@
     "title": "JobOutputsResponse",
     "type": "object"
    },
+   "JobPluginStats": {
+    "description": "Per-plugin Job aggregates over the stats window (G8/B8).\n\n``failure_classes`` always carries all five classes (zeros included):\n``plugin``/``timeout``/``cancelled``/``runner``/``system`` derived by the\nzero-migration classifier over terminal-failure Jobs of the plugin.",
+    "properties": {
+     "cancelled": {
+      "title": "Cancelled",
+      "type": "integer"
+     },
+     "failed": {
+      "title": "Failed",
+      "type": "integer"
+     },
+     "failure_classes": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Failure Classes",
+      "type": "object"
+     },
+     "p50_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "P50 Ms"
+     },
+     "p95_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "P95 Ms"
+     },
+     "plugin_id": {
+      "title": "Plugin Id",
+      "type": "string"
+     },
+     "success": {
+      "title": "Success",
+      "type": "integer"
+     },
+     "timed_out": {
+      "title": "Timed Out",
+      "type": "integer"
+     },
+     "total": {
+      "title": "Total",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "plugin_id",
+     "total",
+     "success",
+     "failed",
+     "cancelled",
+     "timed_out",
+     "failure_classes"
+    ],
+    "title": "JobPluginStats",
+    "type": "object"
+   },
+   "JobPluginStatsResponse": {
+    "properties": {
+     "days": {
+      "title": "Days",
+      "type": "integer"
+     },
+     "plugins": {
+      "items": {
+       "$ref": "#/components/schemas/JobPluginStats"
+      },
+      "title": "Plugins",
+      "type": "array"
+     }
+    },
+    "required": [
+     "days",
+     "plugins"
+    ],
+    "title": "JobPluginStatsResponse",
+    "type": "object"
+   },
    "JobResponse": {
     "properties": {
      "build_id": {
@@ -2209,7 +2299,7 @@
   },
   "/api/v1/jobs/stats": {
    "get": {
-    "description": "Aggregate per-day Job volume and duration percentiles over the last N days.",
+    "description": "Aggregate Job volume and duration percentiles over the last N days.\n\nThe default grouping stays per-day (backward compatible). ``by=plugin``\nswitches to per-plugin aggregates (G8/B8): totals per status plus the\nfailure-class breakdown derived from stored rows by\n:func:`hub_server.services.failures.classify_failure`.",
     "operationId": "job_stats_api_v1_jobs_stats_get",
     "parameters": [
      {
@@ -2223,6 +2313,23 @@
        "title": "Days",
        "type": "integer"
       }
+     },
+     {
+      "in": "query",
+      "name": "by",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "const": "plugin",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "By"
+      }
      }
     ],
     "responses": {
@@ -2230,7 +2337,15 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/JobStatsResponse"
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/JobStatsResponse"
+          },
+          {
+           "$ref": "#/components/schemas/JobPluginStatsResponse"
+          }
+         ],
+         "title": "Response Job Stats Api V1 Jobs Stats Get"
         }
        }
       },

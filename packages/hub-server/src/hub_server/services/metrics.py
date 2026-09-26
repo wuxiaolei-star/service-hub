@@ -172,6 +172,8 @@ def _job_duration_histogram_lines(session: Session) -> list[str]:
         Job.started_at.is_not(None), Job.finished_at.is_not(None)
     )
     for started_at, finished_at in rows:
+        if started_at is None or finished_at is None:  # narrowed by the filter
+            continue
         elapsed = (_as_aware(finished_at) - _as_aware(started_at)).total_seconds()
         durations.append(max(0.0, elapsed))
     durations.sort()

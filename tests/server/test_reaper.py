@@ -83,6 +83,9 @@ def test_stale_preparing_job_is_timed_out_and_audited(session: Session) -> None:
     assert entry.resource_type == "job"
     assert entry.resource_id == job_key
     assert entry.result == "ok"
+    # G8: the reaper classifies its own terminal write through the shared
+    # failure classifier and records the class in the audit detail.
+    assert entry.detail == {"timeout_seconds": 60, "failure_class": "timeout"}
 
 
 def test_running_job_within_timeout_is_untouched(session: Session) -> None:
