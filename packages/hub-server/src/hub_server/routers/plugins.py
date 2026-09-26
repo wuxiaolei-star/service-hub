@@ -41,15 +41,26 @@ async def install_plugin(
     actor: Annotated[Actor, Depends(get_actor)],
     request: Request,
     package: Annotated[UploadFile, File(alias="file")],
-    session: Annotated[Session, Depends(get_session)],
-    storage: Annotated[LocalStorage, Depends(get_storage)],
-    settings: Annotated[HubSettings, Depends(get_settings)],
+    signature: Annotated[UploadFile | None, File(alias="signature")] = None,
+    session: Annotated[Session, Depends(get_session)] = None,
+    storage: Annotated[LocalStorage, Depends(get_storage)] = None,
+    settings: Annotated[HubSettings, Depends(get_settings)] = None,
 ) -> PluginBuildResponse:
-    """Verify and register one uploaded `.pypkg` Build package."""
+    """Verify and register one uploaded `.pypkg` Build package.
+
+    The optional ``signature`` multipart field carries the ``.sig`` document
+    produced by ``hub-plugin sign`` (B9). Whether it is required, verified, or
+    ignored is decided by ``plugins.signature``: with no public keys configured
+    the endpoint behaves exactly as before B9.
+    """
     package_sha256 = _sha256_upload(package)
+    signature_policy = settings.plugins.signature
     verified = PluginArchiveService(settings.storage.root).verify_and_install(
         package.file,
         package_sha256,
+        signature=await _read_signature_field(signature),
+        public_keys=signature_policy.public_keys,
+        require_signed=signature_policy.require_signed,
     )
     audit(
         session,
@@ -59,7 +70,10 @@ async def install_plugin(
         action="plugin.install",
         resource_type="plugin_build",
         resource_id=verified.build.build_id,
-        detail={"package_sha256": package_sha256},
+        detail={
+            "package_sha256": package_sha256,
+            "signature_fingerprint": verified.signature_fingerprint,
+        },
         ip=actor_ip(request),
     )
     build = PluginService(

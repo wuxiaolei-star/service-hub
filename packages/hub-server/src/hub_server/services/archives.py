@@ -7,7 +7,7 @@ import json
 import os
 import re
 import tarfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Final
@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from python_hub_contracts import PluginBuildManifest, PluginManifest, load_plugin_manifest
 
 from hub_server.errors import HubError
+from hub_server.services.signing import PackageSignatureError, verify_package_signature
 from hub_server.storage import LocalStorage
 
 _CHUNK_SIZE_BYTES: Final = 1024 * 1024
@@ -38,6 +39,10 @@ class VerifiedPluginPackage:
     build: PluginBuildManifest
     source_dir: Path
     archive: Path
+    signature_fingerprint: str | None = None
+    """Fingerprint of the configured key that verified the package (B9), or
+    None when no signature was supplied/verified (keys unconfigured or the
+    package shipped unsigned while ``require_signed`` is false)."""
 
 
 class PluginArchiveService:
@@ -67,9 +72,24 @@ class PluginArchiveService:
         self._max_member_count = max_member_count
 
     def verify_and_install(
-        self, upload: BinaryIO, package_sha256: str
+        self,
+        upload: BinaryIO,
+        package_sha256: str,
+        *,
+        signature: bytes | None = None,
+        public_keys: Sequence[str] = (),
+        require_signed: bool = False,
     ) -> VerifiedPluginPackage:
-        """Verify and retain a package only below a private UUID staging directory."""
+        """Verify and retain a package only below a private UUID staging directory.
+
+        Signature handling (B9/G9): with ``public_keys`` configured, a supplied
+        ``signature`` document must verify against one of them or the package is
+        rejected (422) before any decompression work. Without a signature the
+        behaviour depends on ``require_signed``: false keeps the pre-B9
+        behaviour (unsigned packages are accepted), true rejects the package.
+        With no keys configured nothing is verified regardless of ``require_signed``
+        (the settings layer refuses require_signed=true with an empty key list).
+        """
         staging_id = uuid4().hex
         temporary = self._storage.create_temporary_directory("plugins/.staging")
         try:
@@ -79,6 +99,10 @@ class PluginArchiveService:
                 actual_package_sha256 != package_sha256
             ):
                 raise self._checksum_error()
+
+            signature_fingerprint = self._verify_signature(
+                actual_package_sha256, signature, public_keys, require_signed
+            )
 
             tar_path = temporary / "package.tar"
             self._decompress(compressed, tar_path)
@@ -105,6 +129,7 @@ class PluginArchiveService:
                 build=build,
                 source_dir=staged / "plugin",
                 archive=staged / PurePosixPath(runtime_archive),
+                signature_fingerprint=signature_fingerprint,
             )
         except HubError:
             self._storage.discard_temporary_directory(temporary)
@@ -122,6 +147,30 @@ class PluginArchiveService:
         except zstandard.ZstdError as error:
             self._storage.discard_temporary_directory(temporary)
             raise self._invalid_error() from error
+
+    def _verify_signature(
+        self,
+        package_sha256: str,
+        signature: bytes | None,
+        public_keys: Sequence[str],
+        require_signed: bool,
+    ) -> str | None:
+        """Gate the package on its signature before any decompression work.
+
+        Verification runs on the recomputed digest of the stored upload, right
+        after the outer checksum gate: a signature failure is a cheap rejection
+        against content that was never extracted.
+        """
+        if signature is not None and public_keys:
+            try:
+                return verify_package_signature(package_sha256, signature, public_keys)
+            except PackageSignatureError as error:
+                raise self._signature_invalid_error() from error
+        if require_signed:
+            # Either no signature was supplied, or a signature arrived while no
+            # key is configured: nothing can count as a valid signature here.
+            raise self._signature_required_error()
+        return None
 
     def _copy_upload(self, upload: BinaryIO, destination: Path) -> str:
         digest = hashlib.sha256()
@@ -336,6 +385,22 @@ class PluginArchiveService:
         return HubError(
             code="PLUGIN_PACKAGE_CHECKSUM_MISMATCH",
             message="PLUGIN_PACKAGE_CHECKSUM_MISMATCH: 插件包校验和不匹配",
+            status_code=422,
+        )
+
+    @staticmethod
+    def _signature_invalid_error() -> HubError:
+        return HubError(
+            code="PLUGIN_PACKAGE_SIGNATURE_INVALID",
+            message="插件包签名验证失败: 签名格式非法或不匹配任何已配置公钥",
+            status_code=422,
+        )
+
+    @staticmethod
+    def _signature_required_error() -> HubError:
+        return HubError(
+            code="PLUGIN_PACKAGE_SIGNATURE_REQUIRED",
+            message="当前部署要求插件包附带有效签名 (plugins.signature.require_signed)",
             status_code=422,
         )
 

@@ -54,12 +54,23 @@ from .runner_events import (
     RunnerEventParseError,
     parse_runner_line,
 )
+from .signing import (
+    SIGNATURE_ALGORITHM,
+    SignatureDocument,
+    SignatureDocumentError,
+    key_fingerprint,
+    normalize_public_key,
+    parse_signature_document,
+    render_signature_document,
+    signature_message,
+)
 from .yaml_io import load_plugin_manifest
 
 __version__ = "0.1.0"
 
 __all__ = [
     "RUNNER_EVENT_PREFIX",
+    "SIGNATURE_ALGORITHM",
     "CondaPackRuntime",
     "DockerRuntime",
     "EntryPointSpec",
@@ -98,10 +109,17 @@ __all__ = [
     "RuntimeType",
     "SdkSpec",
     "SemanticVersion",
+    "SignatureDocument",
+    "SignatureDocumentError",
     "StrictContractModel",
     "TargetPlatform",
+    "key_fingerprint",
     "load_plugin_manifest",
     "normalize_arch",
     "normalize_os",
+    "normalize_public_key",
     "parse_runner_line",
+    "parse_signature_document",
+    "render_signature_document",
+    "signature_message",
 ]
