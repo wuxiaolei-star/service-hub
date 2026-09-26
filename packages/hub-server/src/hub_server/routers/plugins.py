@@ -25,6 +25,7 @@ from hub_server.schemas import (
 from hub_server.services.archives import PluginArchiveService
 from hub_server.services.audit import record as audit
 from hub_server.services.plugins import PluginService
+from hub_server.services.signing import MAX_SIGNATURE_BYTES
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
 
@@ -41,10 +42,10 @@ async def install_plugin(
     actor: Annotated[Actor, Depends(get_actor)],
     request: Request,
     package: Annotated[UploadFile, File(alias="file")],
+    session: Annotated[Session, Depends(get_session)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
     signature: Annotated[UploadFile | None, File(alias="signature")] = None,
-    session: Annotated[Session, Depends(get_session)] = None,
-    storage: Annotated[LocalStorage, Depends(get_storage)] = None,
-    settings: Annotated[HubSettings, Depends(get_settings)] = None,
 ) -> PluginBuildResponse:
     """Verify and register one uploaded `.pypkg` Build package.
 
@@ -359,3 +360,30 @@ def _sha256_upload(package: UploadFile) -> str:
         digest.update(chunk)
     package.file.seek(0)
     return digest.hexdigest()
+
+
+async def _read_signature_field(signature: UploadFile | None) -> bytes | None:
+    """Read the optional ``signature`` multipart field (a ``.sig`` file or text).
+
+    An absent or empty field means "no signature supplied". Oversized fields are
+    rejected before reading so a bogus form field cannot cost memory; the size
+    ceiling mirrors ``services.signing.MAX_SIGNATURE_BYTES``.
+    """
+    if signature is None:
+        return None
+    if signature.size is not None and signature.size > MAX_SIGNATURE_BYTES:
+        raise HubError(
+            code="PLUGIN_PACKAGE_SIGNATURE_INVALID",
+            message="签名字段超过大小限制",
+            status_code=422,
+        )
+    content = await signature.read(MAX_SIGNATURE_BYTES + 1)
+    if len(content) > MAX_SIGNATURE_BYTES:
+        raise HubError(
+            code="PLUGIN_PACKAGE_SIGNATURE_INVALID",
+            message="签名字段超过大小限制",
+            status_code=422,
+        )
+    if not content.strip():
+        return None
+    return content

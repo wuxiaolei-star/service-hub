@@ -138,7 +138,7 @@ class PluginSignatureSettings(StrictSettingsModel):
     ``hub-plugin keygen``; list them under ``plugins.signature.public_keys`` to
     enable verification. Behaviour:
 
-    - 节点缺省（public_keys 为空且 require_signed 为 false）= 与 B9 之前完全一致,
+    - 节点缺省(public_keys 为空且 require_signed 为 false) = 与 B9 之前完全一致,
       附带签名的包也不做任何验证;
     - 配置了公钥: 包附带签名字段则验签, 验签失败(含格式非法/算法不符/对不上任何
       配置公钥)一律 422 拒收; 未附带签名则照旧放行(渐进过渡);

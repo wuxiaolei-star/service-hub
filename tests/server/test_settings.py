@@ -133,3 +133,69 @@ def test_runner_resource_limits_reject_non_positive_values(
 
     with pytest.raises(ValidationError):
         HubSettings.from_yaml(config)
+
+
+def _write_config(tmp_path: Path, extra: str) -> Path:
+    config = tmp_path / "hub.yaml"
+    config.write_text(
+        "deployment:\n  mode: offline\n"
+        "storage:\n  root: /var/lib/hub\n"
+        "database:\n  url: sqlite:////var/lib/hub/db/hub.db\n"
+        "uploads:\n  max_size_bytes: 1024\n"
+        "runner:\n  shared_token: runner-test-secret\n" + extra,
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_plugins_signature_node_defaults_to_current_behaviour(tmp_path: Path) -> None:
+    """B9/G9: an absent plugins node means no verification, exactly as before."""
+    settings = HubSettings.from_yaml(_write_config(tmp_path, ""))
+
+    assert settings.plugins.signature.public_keys == []
+    assert settings.plugins.signature.require_signed is False
+
+
+def test_plugins_signature_accepts_public_keys_for_verification(tmp_path: Path) -> None:
+    import base64
+
+    key = base64.b64encode(bytes(range(32))).decode("ascii")
+    settings = HubSettings.from_yaml(
+        _write_config(
+            tmp_path,
+            "plugins:\n"
+            "  signature:\n"
+            f"    public_keys:\n      - \"{key}\"\n"
+            "    require_signed: true\n",
+        )
+    )
+
+    assert settings.plugins.signature.public_keys == [key]
+    assert settings.plugins.signature.require_signed is True
+
+
+def test_plugins_signature_requires_a_key_when_enforcing_signatures(tmp_path: Path) -> None:
+    """require_signed with zero keys would reject every upload; refuse to boot."""
+    config = _write_config(
+        tmp_path, "plugins:\n  signature:\n    require_signed: true\n"
+    )
+
+    with pytest.raises(ValidationError, match="public_keys"):
+        HubSettings.from_yaml(config)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    ["not-base64!!", "c2hvcnQ=", "[]"],
+)
+def test_plugins_signature_rejects_malformed_public_keys(tmp_path: Path, entry: str) -> None:
+    """Typoed keys must fail at load time, not at the first verification."""
+    config = _write_config(
+        tmp_path,
+        "plugins:\n"
+        "  signature:\n"
+        f"    public_keys:\n      - \"{entry}\"\n",
+    )
+
+    with pytest.raises(ValidationError):
+        HubSettings.from_yaml(config)

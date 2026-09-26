@@ -11,6 +11,14 @@ dependencies = [
   "zstandard>=0.23,<1",
 ]
 
+[project.optional-dependencies]
+# Ed25519 signing for `hub-plugin keygen` / `hub-plugin sign` (B9). Kept optional
+# so build/validate/dev environments do not need the binary wheel; the CLI
+# prints the install hint when the group is missing.
+signing = [
+  "cryptography>=44,<51",
+]
+
 [project.scripts]
 hub-plugin = "hub_publisher.cli:main"
 

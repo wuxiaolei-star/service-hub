@@ -21,6 +21,10 @@ dependencies = [
   "argon2-cffi>=23.1,<24",
   "docker>=7.1,<8",
   "croniter>=3.0,<4",
+  # Ed25519 verification of signed plugin packages (B9). Required, not optional:
+  # a deployment that configures plugins.signature.public_keys must never be
+  # unable to verify; the binary wheel ships for linux amd64/arm64 and Windows.
+  "cryptography>=44,<51",
 ]
 
 [tool.hatch.build.targets.wheel]

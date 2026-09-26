@@ -56,6 +56,32 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="keep the temporary job workspace instead of deleting it",
     )
+    keygen = subcommands.add_parser(
+        "keygen",
+        help="generate an Ed25519 key pair for package signing (B9)",
+    )
+    keygen.add_argument(
+        "--out-prefix",
+        type=Path,
+        default=Path("hub-plugin-key"),
+        help="prefix for the <prefix>.sec / <prefix>.pub files (default: ./hub-plugin-key)",
+    )
+    sign = subcommands.add_parser(
+        "sign",
+        help="sign a built .pypkg so the Hub can verify it (B9)",
+    )
+    sign.add_argument("package", type=Path)
+    sign.add_argument(
+        "--key",
+        type=Path,
+        default=Path("hub-plugin-key.sec"),
+        help="private key file produced by keygen (default: ./hub-plugin-key.sec)",
+    )
+    sign.add_argument(
+        "--out",
+        type=Path,
+        help="signature output path (default: <package>.sig)",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "build":
@@ -82,7 +108,39 @@ def main(argv: list[str] | None = None) -> int:
             mode=args.mode,
             keep=args.keep,
         )
+    if args.command == "keygen":
+        return _keygen(args.out_prefix)
+    if args.command == "sign":
+        return _sign(args.package, args.key, args.out)
     return 1
+
+
+def _keygen(out_prefix: Path) -> int:
+    from .signing import write_keypair
+
+    try:
+        secret_path, public_path, fingerprint = write_keypair(out_prefix)
+    except Exception as error:  # missing dependency, refused overwrite, IO problems
+        print(f"hub-plugin: {error}", file=sys.stderr)
+        return 1
+    print(f"secret key: {secret_path} (fingerprint {fingerprint})")
+    print("  keep this file offline and out of source control; it can sign accepted packages")
+    print(f"public key: {public_path}")
+    print("  register its base64 line under plugins.signature.public_keys in the Hub config")
+    return 0
+
+
+def _sign(package: Path, key: Path, out: Path | None) -> int:
+    from .signing import sign_package
+
+    try:
+        destination, fingerprint = sign_package(package, key, out)
+    except Exception as error:  # missing dependency, bad key file, IO problems
+        print(f"hub-plugin: {error}", file=sys.stderr)
+        return 1
+    print(f"signature: {destination} (key fingerprint {fingerprint})")
+    print("  upload the package and the signature together: multipart fields 'file' + 'signature'")
+    return 0
 
 
 def _validate(project: Path, runtime: str | None, package: Path | None) -> int:

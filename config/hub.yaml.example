@@ -27,3 +27,9 @@ retention:
 webhooks:
   allow_private_networks: false    # true=允许回调打到内网/回环（默认拒绝，防 SSRF）
   allowed_hosts: []                # 额外收紧：非空时只允许这些主机，如 ["hooks.example.com", "*.corp.example"]
+plugins:
+  signature:                       # 插件包制品验签（B9）；本节缺省/公钥为空 = 不验签，行为与既往一致
+    public_keys: []                # Ed25519 公钥 base64 列表（`hub-plugin keygen` 产出的 .pub 第二行原样粘贴）
+                                   # 支持多把并存：任一验过即通过；轮换时先加新钥再删旧钥
+    #  - "43iBTeUQSN-M0PoI6c6aOOY-jb9FTOc0o3FOcTEx68="   # 示例占位，勿直接使用
+    require_signed: false          # true=未附有效签名的包一律 422 拒收（须至少登记一把公钥）

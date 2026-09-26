@@ -7,6 +7,18 @@
       "contentMediaType": "application/octet-stream",
       "title": "File",
       "type": "string"
+     },
+     "signature": {
+      "anyOf": [
+       {
+        "contentMediaType": "application/octet-stream",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Signature"
      }
     },
     "required": [
@@ -3298,7 +3310,7 @@
   },
   "/api/v1/plugins/install": {
    "post": {
-    "description": "Verify and register one uploaded `.pypkg` Build package.",
+    "description": "Verify and register one uploaded `.pypkg` Build package.\n\nThe optional ``signature`` multipart field carries the ``.sig`` document\nproduced by ``hub-plugin sign`` (B9). Whether it is required, verified, or\nignored is decided by ``plugins.signature``: with no public keys configured\nthe endpoint behaves exactly as before B9.",
     "operationId": "install_plugin_api_v1_plugins_install_post",
     "requestBody": {
      "content": {

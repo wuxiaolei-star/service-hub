@@ -10,7 +10,8 @@ that configures public keys must never silently skip verification.
 from __future__ import annotations
 
 import base64
-from typing import Final, Sequence
+from collections.abc import Sequence
+from typing import Final
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
