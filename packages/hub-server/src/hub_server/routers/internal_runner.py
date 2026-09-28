@@ -299,15 +299,25 @@ def _resolve_resource_limits(
     is disabled (``runner.resource_limits: null``) an undeclared plugin runs
     without any resource limit. The values are resolved fresh at claim time,
     so recalibrating the defaults never requires touching stored Builds.
+
+    The platform default is also the CEILING: an explicit declaration can only
+    narrow it. Trusting an author-declared ``memory_mb: 999999`` on a shared
+    2-core host would void the whole protection (audit H-3), so explicit values
+    are clamped with ``min``; a plugin that genuinely needs more gets it by
+    raising the platform setting.
     """
     execution = PluginManifest.model_validate(build.plugin_version.manifest_json).execution
     default_limits = settings.runner.resource_limits
     memory_mb = execution.memory_mb
     if memory_mb is None and default_limits is not None:
         memory_mb = default_limits.memory_mb
+    elif memory_mb is not None and default_limits is not None:
+        memory_mb = min(memory_mb, default_limits.memory_mb)
     cpus = execution.cpus
     if cpus is None and default_limits is not None:
         cpus = default_limits.cpus
+    elif cpus is not None and default_limits is not None:
+        cpus = min(cpus, default_limits.cpus)
     return memory_mb, cpus
 
 

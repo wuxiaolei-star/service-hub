@@ -27,7 +27,10 @@ _BACKUP_PREFIX = "backup-"
 _BACKUP_SUFFIX = ".tar.gz"
 _TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 _DATABASE_ARCHIVE_NAME = "hub.db"
-_EXCLUDED_DIRECTORY_NAMES = frozenset({"backups", "environments", "logs"})
+_EXCLUDED_DIRECTORY_NAMES = frozenset({"backups", "environments", "logs", "secrets"})
+# "secrets" is excluded so the group-readable archive cannot leak the runner
+# token to every process in the hub-data group (audit H-2 path B); runners
+# re-bootstrap their token from data/secrets when it is absent.
 # The archive holds a database snapshot plus a gzip copy of the data directories.
 # Requiring 1.3x the estimated input size covers the snapshot copy, the growing
 # archive itself, and compression working in our favour; it keeps a large backup

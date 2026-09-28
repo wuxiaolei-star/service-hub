@@ -227,6 +227,8 @@ HOT_BACKUP="$REMOTE_DIR/data-hot-$STAMP_ID.tar.gz"
 COLD_BACKUP="$REMOTE_DIR/data-cold-$STAMP_ID.tar.gz"
 tar -czf "$HOT_BACKUP" -C "$REMOTE_DIR" --exclude='data/backups' data \
   || log "hot backup returned non-zero (files changed while reading; expected on a live system)"
+# 0600: the archive holds hub.db and data/secrets and must not be group-readable (audit H-2/E-09).
+chmod 600 "$HOT_BACKUP"
 log "hot backup: $HOT_BACKUP"
 
 # ---------------------------------------------------------------- 5. build (stack still live)
@@ -255,6 +257,8 @@ log "=== stage 6/8: switch over (down -> cold backup -> up) ==="
 REACHED_DOWN=1
 "${COMPOSE[@]}" down
 tar -czf "$COLD_BACKUP" -C "$REMOTE_DIR" --exclude='data/backups' data
+# 0600: same as the hot backup — hub.db and data/secrets must stay root-only.
+chmod 600 "$COLD_BACKUP"
 tar -tzf "$COLD_BACKUP" > /dev/null || { fail "cold backup integrity check failed"; exit 1; }
 log "cold backup: $COLD_BACKUP (integrity OK)"
 # up runs Alembic migrations on start

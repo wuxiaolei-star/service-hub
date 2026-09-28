@@ -296,10 +296,15 @@ def test_matching_runner_claims_only_its_runtime_with_relative_paths(
         assert session.scalar(select(Job).where(Job.job_key == docker_key)).status == "PREPARING"
 
 
-def test_manifest_declared_resource_limits_override_platform_defaults(
+def test_manifest_declared_resource_limits_are_clamped_to_platform_ceiling(
     client: TestClient,
 ) -> None:
-    """B7 priority: manifest explicit declaration > platform default."""
+    """B7 priority, amended by audit H-3: a declaration may narrow, never widen.
+
+    An author-declared ``memory_mb: 8192`` on a shared 2-core host would void the
+    platform protection, so the claim resolves to ``min(declared, platform)``;
+    a declaration below the default still narrows it.
+    """
     with client.app.state.session_factory() as session:
         job = _seed_pending_job(session, "docker")
         job_key = job.job_key
@@ -319,7 +324,7 @@ def test_manifest_declared_resource_limits_override_platform_defaults(
     ).json()
 
     assert payload["job_id"] == job_key
-    assert payload["build"]["memory_mb"] == 8192
+    assert payload["build"]["memory_mb"] == 2048
     assert payload["build"]["cpus"] == 0.75
 
 
