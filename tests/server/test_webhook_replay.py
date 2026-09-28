@@ -178,7 +178,7 @@ def test_replay_exhausted_callback_resets_and_redelivers(
         # The replayed callback is picked up by the very next due scan.
         calls: list[tuple[str, bytes, dict[str, str]]] = []
 
-        def fake_post(url: str, body: bytes, post_headers: dict[str, str]) -> int:
+        def fake_post(url: str, body: bytes, post_headers: dict[str, str], policy: object) -> int:
             calls.append((url, body, dict(post_headers)))
             return 200
 
@@ -416,7 +416,7 @@ def test_replay_callback_service_resets_exhausted_callback(
 
     calls: list[tuple[str, bytes, dict[str, str]]] = []
 
-    def fake_post(url: str, body: bytes, post_headers: dict[str, str]) -> int:
+    def fake_post(url: str, body: bytes, post_headers: dict[str, str], policy: object) -> int:
         calls.append((url, body, dict(post_headers)))
         return 200
 

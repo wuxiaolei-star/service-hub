@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 from hub_server.dependencies_auth import actor_ip
 from hub_server.main import create_app
@@ -21,6 +22,10 @@ from hub_server.settings import (
     UploadSettings,
 )
 from starlette.requests import Request
+
+# The socket peer the console's edge proxy presents to hub-api: a private
+# address inside the trusted proxy segments (audit M-6).
+_PROXY_CLIENT = ("172.18.0.9", 50000)
 
 
 def _settings(tmp_path: Path, **auth: object) -> HubSettings:
@@ -151,8 +156,10 @@ def test_the_refusal_looks_the_same_for_a_missing_account(tmp_path: Path) -> Non
 
 
 def test_each_forwarded_address_gets_its_own_bucket(tmp_path: Path) -> None:
-    """Behind the proxy every console request shares one socket peer address."""
-    with TestClient(create_app(_throttle_settings(tmp_path, login_failure_threshold=1))) as client:
+    """Behind the trusted edge proxy the forwarded client address is honoured."""
+    with TestClient(
+        create_app(_throttle_settings(tmp_path, login_failure_threshold=1)), client=_PROXY_CLIENT
+    ) as client:
         assert (
             _login(client, "admin", "wrong", forwarded="203.0.113.7").status_code == 401
         )
@@ -163,6 +170,92 @@ def test_each_forwarded_address_gets_its_own_bucket(tmp_path: Path) -> None:
         assert (
             _login(client, "admin", "wrong", forwarded="198.51.100.9").status_code == 401
         )
+
+
+def test_password_spraying_across_usernames_hits_the_ip_aggregate(tmp_path: Path) -> None:
+    """Failures spread over many usernames still stop at the per-address cap."""
+    settings = _throttle_settings(
+        tmp_path,
+        login_failure_threshold=10,
+        login_ip_failure_threshold=3,
+        login_ip_window_seconds=60,
+    )
+    with TestClient(create_app(settings), client=_PROXY_CLIENT) as client:
+        # Every per-identity bucket stays far below its own threshold...
+        assert _login(client, "u1", "wrong", forwarded="203.0.113.7").status_code == 401
+        assert _login(client, "u2", "wrong", forwarded="203.0.113.7").status_code == 401
+        # ...but the attempt that pushes the address total over the cap is
+        # refused outright, and so is every attempt after it.
+        assert _login(client, "u3", "wrong", forwarded="203.0.113.7").status_code == 429
+        sprayed = _login(client, "u4", "wrong", forwarded="203.0.113.7")
+        assert sprayed.status_code == 429
+        assert sprayed.json()["error"]["code"] == "TOO_MANY_ATTEMPTS"
+
+        # A different address is not dragged into the spray's refusal.
+        assert _login(client, "u5", "wrong", forwarded="198.51.100.9").status_code == 401
+
+
+def test_a_successful_login_does_not_clear_the_ip_aggregate(tmp_path: Path) -> None:
+    """One valid credential must not unblock a spraying address."""
+    settings = _throttle_settings(
+        tmp_path,
+        login_failure_threshold=10,
+        login_ip_failure_threshold=2,
+        login_ip_window_seconds=60,
+    )
+    with TestClient(create_app(settings), client=_PROXY_CLIENT) as client:
+        assert _login(client, "ghost", "wrong", forwarded="203.0.113.7").status_code == 401
+        assert _login(client, "ghost", "wrong", forwarded="203.0.113.7").status_code == 429
+
+        # The spray continues from a different name while a legitimate user
+        # behind the same address logs in successfully.
+        assert _login(client, "admin", "wrong", forwarded="203.0.113.7").status_code == 429
+        assert _login(client, "admin", "wrong", forwarded="203.0.113.7").status_code == 429
+
+
+def test_the_ip_aggregate_lifts_once_failures_leave_the_window(tmp_path: Path) -> None:
+    settings = _throttle_settings(
+        tmp_path,
+        login_failure_threshold=10,
+        login_ip_failure_threshold=2,
+        login_ip_window_seconds=60,
+    )
+    with TestClient(create_app(settings), client=_PROXY_CLIENT) as client:
+        assert _login(client, "u1", "wrong", forwarded="203.0.113.7").status_code == 401
+        assert _login(client, "u2", "wrong", forwarded="203.0.113.7").status_code == 429
+
+        with client.app.state.session_factory() as session:
+            for record in session.query(LoginAttemptRecord).all():
+                record.last_failure_at = datetime.now(UTC) - timedelta(seconds=120)
+            session.commit()
+
+        assert _login(client, "u3", "wrong", forwarded="203.0.113.7").status_code == 401
+
+
+def test_global_cleanup_deletes_rows_that_left_the_backoff_horizon(tmp_path: Path) -> None:
+    """One-off names must not accumulate rows forever (audit L-12)."""
+    settings = _throttle_settings(tmp_path, login_prune_interval_attempts=1)
+    with TestClient(create_app(settings), client=_PROXY_CLIENT) as client:
+        assert _login(client, "u1", "wrong").status_code == 401
+        with client.app.state.session_factory() as session:
+            session.add(
+                LoginAttemptRecord(
+                    username="one-off",
+                    ip="-",
+                    failure_count=7,
+                    last_failure_at=datetime.now(UTC) - timedelta(hours=2),
+                )
+            )
+            session.commit()
+            assert session.query(LoginAttemptRecord).count() == 2
+
+        # The next login attempt runs the horizon-wide cleanup (interval = 1).
+        assert _login(client, "u2", "wrong").status_code == 401
+
+        with client.app.state.session_factory() as session:
+            remaining = {record.username for record in session.query(LoginAttemptRecord).all()}
+        assert "one-off" not in remaining
+        assert remaining == {"u1", "u2"}
 
 
 def test_crossing_into_a_lock_is_recorded_for_operators(tmp_path: Path) -> None:
@@ -214,3 +307,29 @@ def test_actor_ip_ignores_an_unusable_forwarded_value() -> None:
 
 def test_actor_ip_is_absent_without_a_client() -> None:
     assert actor_ip(_request(headers={}, client=None)) is None
+
+
+def test_actor_ip_ignores_a_forwarded_header_from_a_direct_connection() -> None:
+    """A peer outside the trusted segments cannot forge an address (audit M-6)."""
+    request = _request(
+        headers={"x-forwarded-for": "198.51.100.1, 203.0.113.7"}, client=("203.0.113.5", 5)
+    )
+
+    assert actor_ip(request) == "203.0.113.5"
+
+
+@pytest.mark.parametrize(
+    "peer",
+    ["10.1.2.3", "172.18.0.9", "192.168.1.10", "127.0.0.1", "::1", "::ffff:127.0.0.1"],
+)
+def test_actor_ip_honours_the_header_from_trusted_proxy_segments(peer: str) -> None:
+    request = _request(headers={"x-forwarded-for": "203.0.113.7"}, client=(peer, 5))
+
+    assert actor_ip(request) == "203.0.113.7"
+
+
+def test_actor_ip_binds_the_header_to_a_public_peer_regardless_of_its_value() -> None:
+    """A private address claimed in the header cannot substitute the real peer."""
+    request = _request(headers={"x-forwarded-for": "10.0.0.1"}, client=("198.51.100.5", 5))
+
+    assert actor_ip(request) == "198.51.100.5"

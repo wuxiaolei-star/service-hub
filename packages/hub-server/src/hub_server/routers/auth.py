@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, Field
@@ -31,6 +31,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 MIN_PASSWORD_LENGTH = 10
 
+# Pre-generated argon2id hash of a throwaway secret (audit L-11). Verifying a
+# submitted password against it for unknown usernames makes the "user does not
+# exist" path spend the same argon2 work as the "wrong password" path, so login
+# response timing cannot be used to enumerate usernames. It never authenticates
+# anyone; regenerate it only if the argon2 parameters ever change.
+_DUMMY_PASSWORD_HASH = (
+    "$argon2id$v=19$m=65536,t=3,p=4$vbw0FINO2OHacL70myZiQg$"
+    "IgwkrHeGJpNqNRzn+POw7h9hhKL4ErolCRystgjm8Is"
+)
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -42,16 +52,64 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=MIN_PASSWORD_LENGTH)
 
 
-def _set_session_cookie(
-    response: Response, token: str, settings: HubSettings, secure: bool
-) -> None:
+def _set_session_cookie(response: Response, token: str, settings: HubSettings) -> None:
+    """Attach the session cookie, always Secure unless the deployment opts out.
+
+    Production traffic always reaches the API through the TLS-terminating edge,
+    so the cookie defaults to ``Secure`` and is never carried over a plaintext
+    hop; the HTTP port would otherwise leak the session on sight (audit M-5).
+    Purely local/plain-HTTP deployments must set ``auth.cookie_secure: false``.
+    """
     response.set_cookie(
         SESSION_COOKIE_NAME,
         token,
         max_age=settings.auth.session_ttl_hours * 3600,
         httponly=True,
         samesite="lax",
-        secure=secure,
+        secure=settings.auth.cookie_secure,
+    )
+
+
+def _reject_login(
+    session: Session,
+    throttle: LoginThrottle,
+    username: str,
+    ip: str | None,
+    user: UserRecord | None,
+) -> NoReturn:
+    """Record one failed login, audit it, and raise the stable refusal.
+
+    A refusal that crossed the backoff threshold is answered straight away, and
+    every refusal is keyed on the submitted name rather than a resolved user,
+    so it never reveals whether the account exists.
+    """
+    lock = throttle.register_failure(username, ip)
+    audit(
+        session,
+        actor_type="anonymous" if user is None else "user",
+        actor_id=user.id if user else None,
+        actor_name=username,
+        action="auth.login_failed",
+        ip=ip,
+        result="denied",
+    )
+    if lock is not None:
+        audit(
+            session,
+            actor_type="anonymous" if user is None else "user",
+            actor_id=user.id if user else None,
+            actor_name=username,
+            action="auth.login_locked",
+            ip=ip,
+            result="denied",
+        )
+    session.commit()
+    if lock is not None:
+        raise lockout_error(lock)
+    raise HubError(
+        code="INVALID_CREDENTIALS",
+        message="用户名或口令错误",
+        status_code=status.HTTP_401_UNAUTHORIZED,
     )
 
 
@@ -74,39 +132,15 @@ def login(
         .filter(UserRecord.username == body.username)
         .one_or_none()
     )
-    if (
-        user is None
-        or not user.is_active
-        or not verify_password(body.password, user.password_hash)
-    ):
-        lock = throttle.register_failure(body.username, client_address)
-        audit(
-            session,
-            actor_type="anonymous" if user is None else "user",
-            actor_id=user.id if user else None,
-            actor_name=body.username,
-            action="auth.login_failed",
-            ip=client_address,
-            result="denied",
-        )
-        if lock is not None:
-            audit(
-                session,
-                actor_type="anonymous" if user is None else "user",
-                actor_id=user.id if user else None,
-                actor_name=body.username,
-                action="auth.login_locked",
-                ip=client_address,
-                result="denied",
-            )
-        session.commit()
-        if lock is not None:
-            raise lockout_error(lock)
-        raise HubError(
-            code="INVALID_CREDENTIALS",
-            message="用户名或口令错误",
-            status_code=status.HTTP_401_UNAUTHORIZED,
-        )
+    if user is None:
+        # Equalize timing with the existing-user path: this dummy argon2 verify
+        # costs the same work as a real one, so response timing cannot reveal
+        # whether the username exists (audit L-11). Its result is discarded —
+        # an unknown user never logs in, whatever the submitted password.
+        verify_password(body.password, _DUMMY_PASSWORD_HASH)
+        _reject_login(session, throttle, body.username, client_address, user)
+    elif not user.is_active or not verify_password(body.password, user.password_hash):
+        _reject_login(session, throttle, body.username, client_address, user)
 
     service = AuthService(session, session_ttl_hours=settings.auth.session_ttl_hours)
     throttle.reset(body.username, client_address)
@@ -122,7 +156,7 @@ def login(
         ip=client_address,
     )
     session.commit()
-    _set_session_cookie(response, token, settings, request.url.scheme == "https")
+    _set_session_cookie(response, token, settings)
     return {
         "token": token,
         "user_id": user.id,

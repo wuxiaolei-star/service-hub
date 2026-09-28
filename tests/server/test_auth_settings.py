@@ -18,6 +18,19 @@ def test_auth_settings_defaults_throttle_the_fifth_failure() -> None:
     assert settings.login_lockout_max_seconds == 900
 
 
+def test_auth_settings_defaults_secure_the_session_cookie() -> None:
+    """Plain HTTP is an opt-out: production always traverses the TLS edge."""
+    assert AuthSettings().cookie_secure is True
+
+
+def test_auth_settings_defaults_cap_password_spraying() -> None:
+    """The per-address spray guard and cleanup cadence must ship enabled."""
+    settings = AuthSettings()
+    assert settings.login_ip_failure_threshold == 20
+    assert settings.login_ip_window_seconds == 60
+    assert settings.login_prune_interval_attempts == 50
+
+
 def test_auth_settings_reject_a_ceiling_below_the_first_lock() -> None:
     """A ceiling under the base delay would shorten later locks instead of capping them."""
     with pytest.raises(ValueError):

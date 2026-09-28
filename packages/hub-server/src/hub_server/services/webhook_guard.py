@@ -16,9 +16,12 @@ that boundary:
 The residual risk is the window between that resolution and the socket connect the
 HTTP client performs; closing it fully requires pinning the connection to the
 validated address, which ``urllib`` cannot express without breaking TLS
-verification. Deployments that need a callback on a private network must opt in
-explicitly with ``webhooks.allow_private_networks``; ``webhooks.allowed_hosts``
-narrows the set of hosts on top of the address guard, it does not widen it.
+verification. Delivery follows redirects only hop by hop (``services/webhooks.py``),
+re-running :func:`ensure_delivery_target_allowed` for every redirect target, so a
+3xx cannot bounce a callback onto an internal or metadata address. Deployments that
+need a callback on a private network must opt in explicitly with
+``webhooks.allow_private_networks``; ``webhooks.allowed_hosts`` narrows the set of
+hosts on top of the address guard, it does not widen it.
 """
 
 from __future__ import annotations

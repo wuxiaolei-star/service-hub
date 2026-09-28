@@ -29,8 +29,9 @@ from hub_server.settings import (
 from sqlalchemy.orm import Session
 
 from tests.server.test_jobs_api import _seed_build
+from tests.server.test_webhook_guard import _redirect, _ScriptedOpener
 
-PostSpy = Callable[[str, bytes, dict[str, str]], int]
+PostSpy = Callable[[str, bytes, dict[str, str], object], int]
 
 
 @pytest.fixture
@@ -73,7 +74,7 @@ def _spy_post(
 ) -> PostSpy:
     """Build a _post_json replacement recording calls; None status raises OSError."""
 
-    def fake_post(url: str, body: bytes, headers: dict[str, str]) -> int:
+    def fake_post(url: str, body: bytes, headers: dict[str, str], policy: object) -> int:
         calls.append((url, body, dict(headers)))
         if status_code is None:
             raise OSError("connection refused")
@@ -268,3 +269,30 @@ def test_deliver_due_never_dials_a_forbidden_target(
     entries = session.query(AuditLogRecord).filter_by(action="webhook.deliver").all()
     assert len(entries) == 3
     assert all(entry.result == "denied" for entry in entries)
+
+
+def test_deliver_due_records_a_redirect_that_breaks_the_guard(
+    environment: tuple[Session, TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 302 onto an internal target is refused and audited like a refusal."""
+    session, client = environment
+    job = _seed_job(session, client)
+    enqueue_callback(session, job.id, "https://hooks.example.test/done")
+    session.commit()
+    monkeypatch.setattr(
+        webhooks,
+        "_DELIVERY_OPENER",
+        _ScriptedOpener(_redirect(302, "http://127.0.0.1:8001/health")),
+    )
+    start = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    assert deliver_due(session, now=start) == 1
+
+    callback = session.query(JobCallback).one()
+    assert callback.state == "FAILED"
+    assert callback.attempts == 1
+    assert callback.last_status_code is None
+    assert "公网地址" in (callback.last_error or "")
+    entries = session.query(AuditLogRecord).filter_by(action="webhook.deliver").all()
+    assert len(entries) == 1
+    assert entries[0].result == "denied"

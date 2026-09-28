@@ -60,13 +60,28 @@ class RunnerSettings(StrictSettingsModel):
 
 
 class AuthSettings(StrictSettingsModel):
-    """Public API authentication configuration."""
+    """Public API authentication configuration.
+
+    ``cookie_secure`` defaults to True because production traffic always
+    traverses the TLS-terminating edge; a session cookie without the Secure flag
+    would leak to any plaintext listener exposing the same app (audit M-5).
+    Purely local/plain-HTTP deployments must opt out explicitly.
+    """
 
     mode: Literal["required", "off"] = "required"
     session_ttl_hours: int = Field(default=24, gt=0)
+    cookie_secure: bool = True
     login_failure_threshold: int = Field(default=5, gt=0)
     login_lockout_base_seconds: int = Field(default=30, gt=0)
     login_lockout_max_seconds: int = Field(default=900, gt=0)
+    # Per-address spray guard (audit M-7): password spraying across many
+    # usernames stays under every (username, ip) bucket, so the total failures
+    # one address may accumulate inside the sliding window is capped too.
+    login_ip_failure_threshold: int = Field(default=20, gt=0)
+    login_ip_window_seconds: int = Field(default=60, gt=0)
+    # Global login_attempts cleanup (audit L-12): the horizon-wide delete runs
+    # once every this many login attempts on the login path itself.
+    login_prune_interval_attempts: int = Field(default=50, gt=0)
 
     @field_validator("mode", mode="before")
     @classmethod

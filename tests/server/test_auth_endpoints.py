@@ -20,20 +20,25 @@ from hub_server.settings import (
 )
 
 
-def _settings(tmp_path: Path, mode: str = "required") -> HubSettings:
+def _settings(tmp_path: Path, mode: str = "required", **auth: object) -> HubSettings:
     return HubSettings(
         deployment=DeploymentSettings(mode="offline"),
         storage=StorageSettings(root=tmp_path / "data"),
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=10240),
         runner=RunnerSettings(shared_token="runner-test-secret", poll_interval_seconds=1),
-        auth=AuthSettings(mode=mode),  # type: ignore[arg-type]
+        auth=AuthSettings(mode=mode, **auth),  # type: ignore[arg-type]
     )
+
+
+# The socket peer of the console's edge proxy, inside the trusted segments, so
+# forwarded headers behave like they do behind the real Nginx edge (audit M-6).
+_PROXY_CLIENT = ("172.18.0.9", 50000)
 
 
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
-    with TestClient(create_app(_settings(tmp_path))) as test_client:
+    with TestClient(create_app(_settings(tmp_path)), client=_PROXY_CLIENT) as test_client:
         yield test_client
 
 
@@ -191,3 +196,29 @@ def test_bootstrap_writes_file_only_when_users_are_empty(tmp_path: Path) -> None
 def test_off_mode_does_not_create_bootstrap_file(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path, mode="off"))):
         assert not (tmp_path / "data" / "bootstrap-admin.json").is_file()
+
+
+def test_session_cookie_defaults_to_secure(client: TestClient) -> None:
+    """The session cookie must never be eligible for a plaintext hop (audit M-5)."""
+    credentials = _read_bootstrap(client)
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"username": credentials["username"], "password": credentials["password"]},
+    )
+    assert response.status_code == 200
+    cookie = response.headers["set-cookie"]
+    assert "hub_session=" in cookie
+    assert "HttpOnly" in cookie
+    assert "Secure" in cookie
+
+
+def test_cookie_secure_opt_out_serves_plain_http_deployments(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path, cookie_secure=False))) as client:
+        credentials = _read_bootstrap(client)
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"username": credentials["username"], "password": credentials["password"]},
+        )
+        assert response.status_code == 200
+        assert "hub_session=" in response.headers["set-cookie"]
+        assert "Secure" not in response.headers["set-cookie"]

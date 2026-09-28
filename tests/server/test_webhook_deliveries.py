@@ -130,7 +130,7 @@ def test_successful_delivery_records_ok_delivery(
     job = _seed_job(session, client)
     callback = enqueue_callback(session, job.id, CALLBACK_URL)
     session.commit()
-    monkeypatch.setattr(webhooks, "_post_json", lambda url, body, headers: 204)
+    monkeypatch.setattr(webhooks, "_post_json", lambda url, body, headers, policy: 204)
     now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
 
     assert deliver_due(session, now=now) == 1
@@ -153,7 +153,7 @@ def test_http_failure_records_failed_delivery(
     job = _seed_job(session, client)
     callback = enqueue_callback(session, job.id, CALLBACK_URL)
     session.commit()
-    monkeypatch.setattr(webhooks, "_post_json", lambda url, body, headers: 503)
+    monkeypatch.setattr(webhooks, "_post_json", lambda url, body, headers, policy: 503)
     now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
 
     assert deliver_due(session, now=now) == 1
@@ -174,7 +174,7 @@ def test_transport_failure_records_error_without_status(
     enqueue_callback(session, job.id, CALLBACK_URL)
     session.commit()
 
-    def refused(url: str, body: bytes, headers: dict[str, str]) -> int:
+    def refused(url: str, body: bytes, headers: dict[str, str], policy: object) -> int:
         raise OSError("connection refused")
 
     monkeypatch.setattr(webhooks, "_post_json", refused)
@@ -197,7 +197,7 @@ def test_delivery_history_lists_newest_first(
         callback_id = _seed_callback(client, job_id)
         responses = iter([503, 503, 200])
         monkeypatch.setattr(
-            webhooks, "_post_json", lambda url, body, hdrs: next(responses)
+            webhooks, "_post_json", lambda url, body, hdrs, policy: next(responses)
         )
         start = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
         factory = client.app.state.session_factory

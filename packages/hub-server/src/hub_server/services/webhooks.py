@@ -8,6 +8,9 @@ import json
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime, timedelta
+from http.client import HTTPMessage
+from typing import IO
+from urllib.parse import urljoin
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -27,6 +30,31 @@ REPLAYABLE_STATES: tuple[str, ...] = ("FAILED", "EXHAUSTED")
 MAX_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 60
 DELIVERY_TIMEOUT_SECONDS = 10
+# Redirect chains are followed hop by hop (audit M-1): every hop's target is
+# re-validated by the SSRF guard, the signature is not forwarded, and a chain
+# longer than this is abandoned as a refusal instead of a further hop.
+MAX_REDIRECT_HOPS = 3
+_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Disable urllib's automatic redirects so every hop passes the guard."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
+
+
+# One shared opener: redirect handling is disabled, everything else (TLS,
+# HTTPError raising for non-2xx) keeps urllib's default behaviour.
+_DELIVERY_OPENER: urllib.request.OpenerDirector = urllib.request.build_opener(_NoRedirect)
 
 
 def enqueue_callback(
@@ -155,10 +183,15 @@ def _deliver_one(
         result = "denied"
     else:
         try:
-            status_code = _post_json(callback.url, body, headers)
+            status_code = _post_json(callback.url, body, headers, policy)
             if not 200 <= status_code < 300:
                 error = f"HTTP {status_code}"
                 result = "denied"
+        except WebhookUrlForbiddenError as refusal:
+            # Raised by a redirect hop that broke the guard rules or ran past
+            # the hop limit; it is refused exactly like a forbidden first hop.
+            error = refusal.message
+            result = "denied"
         except urllib.error.HTTPError as http_error:
             status_code = http_error.code
             error = f"HTTP {http_error.code}"
@@ -211,15 +244,53 @@ def _deliver_one(
     )
 
 
-def _post_json(url: str, body: bytes, headers: dict[str, str]) -> int:
+def _post_json(
+    url: str,
+    body: bytes,
+    headers: dict[str, str],
+    policy: WebhooksSettings | None = None,
+) -> int:
     """POST one JSON body and return the HTTP status code.
+
+    Redirects are followed manually instead of by urllib: automatic following
+    would re-post to wherever a 3xx points without consulting the SSRF guard, so
+    a public-looking callback could bounce the delivery onto an internal or
+    metadata address (audit M-1). Each hop resolves the ``Location`` against the
+    current URL and runs :func:`ensure_delivery_target_allowed` again, the
+    ``X-Hub-Signature`` header is dropped after the first hop so a redirector
+    never receives it, and a chain longer than :data:`MAX_REDIRECT_HOPS` is
+    abandoned as a refusal. The body is re-posted unchanged on every hop,
+    regardless of the specific 3xx code.
 
     Kept as a module-level seam so tests can monkeypatch delivery without any
     network access; non-2xx responses surface as urllib HTTPError.
     """
-    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    with urllib.request.urlopen(request, timeout=DELIVERY_TIMEOUT_SECONDS) as response:
-        return int(response.status)
+    current = url
+    hop_headers = dict(headers)
+    hops_left = MAX_REDIRECT_HOPS
+    while True:
+        request = urllib.request.Request(current, data=body, headers=hop_headers, method="POST")
+        try:
+            with _DELIVERY_OPENER.open(request, timeout=DELIVERY_TIMEOUT_SECONDS) as response:
+                return int(response.status)
+        except urllib.error.HTTPError as error:
+            if error.code not in _REDIRECT_STATUS_CODES:
+                raise
+            if hops_left <= 0:
+                raise WebhookUrlForbiddenError(reason="重定向跳数超过上限") from error
+            location = error.headers.get("Location")
+            if not location:
+                raise
+            hops_left -= 1
+            current = urljoin(current, location)
+            ensure_delivery_target_allowed(current, policy)
+            # The signature authenticates the body for the original receiver;
+            # a redirector is a different party and must never receive it.
+            hop_headers = {
+                name: value
+                for name, value in hop_headers.items()
+                if name.lower() != "x-hub-signature"
+            }
 
 
 def _utc_now(now: datetime | None) -> datetime:
