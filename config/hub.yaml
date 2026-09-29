@@ -12,3 +12,6 @@ runner:
 webhooks:
   allow_private_networks: false
   allowed_hosts: []
+
+retention:
+  job_retention_days: 7
