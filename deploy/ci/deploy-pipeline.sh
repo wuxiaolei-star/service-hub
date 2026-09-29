@@ -20,8 +20,6 @@
 # failed health check rolls back by re-pointing tags instead of rebuilding.
 #
 # Optional environment:
-#   HUB_DEPLOY_WEBHOOK_URL   POSTed a JSON summary on success and on failure
-#                            (non-fatal, 5 s timeout; point it at a bot webhook)
 #   HUB_MIN_FREE_MB          refuse to deploy below this free-MB watermark (default 2048)
 #
 # Exit codes: 0 success, 1 failure (rollback attempted unless --no-rollback),
@@ -52,24 +50,6 @@ export HUB_HOST_DATA_DIR="$DATA_DIR"
 stamp() { date -Is; }
 log() { echo "[$(stamp)] $*"; }
 fail() { log "ERROR: $*"; }
-
-NOTIFIED=0
-notify() {
-  [ "$NOTIFIED" -eq 0 ] || return 0
-  NOTIFIED=1
-  local result="$1" commit="${2:-unknown}" message="$3"
-  if [ -z "${HUB_DEPLOY_WEBHOOK_URL:-}" ]; then
-    return 0
-  fi
-  # Generic JSON body: most bot webhooks (WeCom/DingTalk/Slack-compatible relays)
-  # accept at least the text field, and a failed notification must never fail a
-  # deployment that otherwise succeeded.
-  curl -fsS -m 5 -X POST -H 'Content-Type: application/json' \
-    -d "{\"text\":\"service-hub deploy $result commit=$commit: $message\"}" \
-    "$HUB_DEPLOY_WEBHOOK_URL" >/dev/null \
-    || fail "webhook notification failed (non-fatal)"
-  return 0
-}
 
 # ---------------------------------------------------------------- concurrency guard
 exec 9>"$LOCK_FILE"
@@ -175,7 +155,6 @@ rollback() {
 }
 on_error() {
   rollback "unexpected failure at line $1"
-  notify FAILED "${COMMIT:-unknown}" "pipeline failed at line $1 and rolled back"
 }
 trap 'on_error $LINENO' ERR
 
@@ -194,7 +173,6 @@ MIN_FREE_MB="${HUB_MIN_FREE_MB:-2048}"
 log "=== stage 2/8: disk watermark: ${AVAILABLE_MB}MB free (min ${MIN_FREE_MB}MB) ==="
 if [ "$AVAILABLE_MB" -lt "$MIN_FREE_MB" ]; then
   fail "only ${AVAILABLE_MB}MB free on $REMOTE_DIR (minimum ${MIN_FREE_MB}MB); refusing to deploy"
-  notify FAILED "$COMMIT" "disk watermark: only ${AVAILABLE_MB}MB free"
   exit 1
 fi
 
@@ -270,7 +248,6 @@ log "=== stage 7/8: health check ==="
 if ! wait_healthy; then
   docker logs --tail 60 service-hub-service-hub-1 || true
   rollback "health check did not pass"
-  notify FAILED "$COMMIT" "health check failed and rolled back"
   exit 1
 fi
 
@@ -290,7 +267,6 @@ ELAPSED=$(( $(date +%s) - STARTED ))
 echo "$(stamp) commit=$COMMIT previous=$PREV_COMMIT elapsed=${ELAPSED}s result=SUCCESS" \
   >> "$RELEASE_LOG"
 log "=== DEPLOY FINISHED: $COMMIT in ${ELAPSED}s ==="
-notify SUCCESS "$COMMIT" "deploy finished in ${ELAPSED}s"
 
 # Drop superseded per-commit tags so images do not accumulate on a small disk;
 # the moving tag, the rollback target and the just-built commit tag all survive.

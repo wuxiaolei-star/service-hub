@@ -99,7 +99,7 @@ tail -f /opt/service-hub/deploy/ci/releases.log   # 每次上线：commit / 耗�
 | `DEPLOY_REPO_SLUG` | `wuxiaolei-star/service-hub` | CI 门禁查询的 GitHub 仓库 |
 | `HUB_PIPELINE_GATE` | `0`（跳过） | `1`/`true`/`run` 时在服务器容器内补跑 pytest 质量门；`--run-gate` / `--skip-gate` 参数可逐次覆盖 |
 | `HUB_MIN_FREE_MB` | `2048` | 部署前磁盘水位，低于阈值直接拒绝部署（防备份把盘写满） |
-| `HUB_DEPLOY_WEBHOOK_URL` | 空 | 部署成功/失败都 POST 一条 `{"text": ...}` JSON（企业微信/钉钉等 bot 均可接）；通知失败不影响部署本身 |
+| ~~`HUB_DEPLOY_WEBHOOK_URL`~~ | 已取消 | 企微/钉钉通知环节按用户决定取消（2026-09-26）；部署结果以 `releases.log` 与 `journalctl -u service-hub-deploy` 为准 |
 
 镜像 tag 约定：每次部署构建 `python-service-hub:1.0.0-<sha>` 与 `python-service-hub-web:1.0.0-<sha>`，随后把 `1.0.0-linux-amd64` 移动 tag 指向新镜像（compose.yaml 只认移动 tag）；上一版镜像同时保留为 `:rollback-target`。部署成功后自动清理更早的 per-commit tag（**不做任何 docker image prune**——hub 按 digest 引用插件镜像，悬空不等于无用，2026-09-25 事故红线）。
 
