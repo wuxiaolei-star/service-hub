@@ -7,6 +7,7 @@ const STATUS_META: Record<string, { label: string; color: string; processing?: b
   READY: { label: '就绪', color: 'green' },
   ENABLED: { label: '已启用', color: 'green' },
   FAILED: { label: '失败', color: 'red' },
+  DEPRECATED: { label: '已废弃', color: 'default' },
   PENDING: { label: '排队中', color: 'blue' },
   PREPARING: { label: '准备中', color: 'blue' },
   RUNNING: { label: '运行中', color: 'cyan', processing: true },

@@ -4,6 +4,7 @@ import { afterEach, vi } from 'vitest'
 import { apiClient, handleUnauthorized, toHubApiError } from './client'
 import { downloadFile, getFileMetadata, listFiles, uploadFile } from './files'
 import {
+  deprecatePluginBuild,
   disablePluginBuild,
   enablePluginBuild,
   getPlugin,
@@ -112,6 +113,7 @@ describe('public endpoint contracts', () => {
     await getPluginBuild('build/one')
     await enablePluginBuild('build/one')
     await disablePluginBuild('build/one')
+    await deprecatePluginBuild('build/one')
 
     expect(get).toHaveBeenNthCalledWith(1, '/plugins')
     expect(get).toHaveBeenNthCalledWith(2, '/plugins/plugin%2Fone')
@@ -121,6 +123,7 @@ describe('public endpoint contracts', () => {
     expect(get).toHaveBeenNthCalledWith(4, '/plugin-builds/build%2Fone')
     expect(post).toHaveBeenNthCalledWith(1, '/plugin-builds/build%2Fone/enable')
     expect(post).toHaveBeenNthCalledWith(2, '/plugin-builds/build%2Fone/disable')
+    expect(post).toHaveBeenNthCalledWith(3, '/plugin-builds/build%2Fone/deprecate')
   })
 
   test('sends plugin and file uploads under the file field and forwards progress', async () => {

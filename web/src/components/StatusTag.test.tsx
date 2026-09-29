@@ -9,6 +9,7 @@ describe('StatusTag', () => {
     ['READY', '就绪'],
     ['ENABLED', '已启用'],
     ['FAILED', '失败'],
+    ['DEPRECATED', '已废弃'],
   ])('renders build status %s as %s', (status, label) => {
     render(<StatusTag status={status} />)
     expect(screen.getByText(label)).toBeInTheDocument()
@@ -45,6 +46,7 @@ describe('StatusTag', () => {
     ['TIMED_OUT', 'red'],
     ['CANCELLED', 'default'],
     ['DISABLED', 'default'],
+    ['DEPRECATED', 'default'],
   ])('renders %s with approved %s tag color', (status, color) => {
     render(<StatusTag status={status} />)
 

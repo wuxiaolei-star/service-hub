@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import PluginsPage from './PluginsPage'
 import {
+  deprecatePluginBuild,
   disablePluginBuild,
   enablePluginBuild,
   getPlugin,
@@ -22,6 +23,7 @@ vi.mock('../api/plugins', () => ({
   getPluginBuild: vi.fn(),
   enablePluginBuild: vi.fn(),
   disablePluginBuild: vi.fn(),
+  deprecatePluginBuild: vi.fn(),
 }))
 
 const mockedInstall = vi.mocked(installPlugin)
@@ -31,6 +33,7 @@ const mockedListBuilds = vi.mocked(listPluginBuilds)
 const mockedGetBuild = vi.mocked(getPluginBuild)
 const mockedEnable = vi.mocked(enablePluginBuild)
 const mockedDisable = vi.mocked(disablePluginBuild)
+const mockedDeprecate = vi.mocked(deprecatePluginBuild)
 
 const pluginSummary = {
   id: 'nc_to_shp',
@@ -186,4 +189,46 @@ describe('PluginsPage', () => {
     expect(await screen.findByText('插件包无效')).toBeInTheDocument()
     expect(screen.getByText(/PACKAGE_INVALID/)).toBeInTheDocument()
   })
+
+  test('shows a deprecated build without an enable action and with a reinstall hint', async () => {
+    const user = userEvent.setup()
+    mockedListBuilds.mockResolvedValue({ items: [buildDetail({ status: 'DEPRECATED' })] })
+
+    renderPage()
+    await screen.findByText('nc_to_shp')
+
+    await user.click(screen.getByRole('button', { name: '查看详情' }))
+    const drawer = await screen.findByRole('dialog')
+    expect(await within(drawer).findByLabelText('状态：已废弃')).toBeInTheDocument()
+    expect(
+      await within(drawer).findByText(/已废弃（不可重新启用，如需恢复请以新版本号重装）/),
+    ).toBeInTheDocument()
+    expect(within(drawer).queryByRole('button', { name: /启\s*用/ })).not.toBeInTheDocument()
+    expect(within(drawer).queryByRole('button', { name: /停\s*用/ })).not.toBeInTheDocument()
+    expect(within(drawer).queryByRole('button', { name: /废\s*弃/ })).not.toBeInTheDocument()
+  })
+
+  test('deprecates a ready build from the detail drawer after confirmation', async () => {
+    const user = userEvent.setup()
+    // Call order: drawer builds query first, then refetch after deprecate.
+    mockedListBuilds
+      .mockResolvedValueOnce({ items: [buildDetail({ status: 'READY' })] })
+      .mockResolvedValue({ items: [buildDetail({ status: 'DEPRECATED' })] })
+    mockedDeprecate.mockResolvedValue(buildDetail({ status: 'DEPRECATED' }))
+
+    renderPage()
+    await screen.findByText('nc_to_shp')
+
+    await user.click(screen.getByRole('button', { name: '查看详情' }))
+    const drawer = await screen.findByRole('dialog')
+    expect(await within(drawer).findByLabelText('状态：就绪')).toBeInTheDocument()
+
+    await user.click(within(drawer).getByRole('button', { name: /废\s*弃/ }))
+    await user.click(await screen.findByRole('button', { name: /确\s*定/ }))
+    await waitFor(() => expect(mockedDeprecate).toHaveBeenCalledWith('build-1'))
+    expect(await within(drawer).findByLabelText('状态：已废弃')).toBeInTheDocument()
+    expect(
+      await within(drawer).findByText(/已废弃（不可重新启用，如需恢复请以新版本号重装）/),
+    ).toBeInTheDocument()
+  }, 15000)
 })

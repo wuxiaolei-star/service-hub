@@ -66,3 +66,10 @@ export async function disablePluginBuild(buildId: string): Promise<PluginBuild> 
   )
   return response.data
 }
+
+export async function deprecatePluginBuild(buildId: string): Promise<PluginBuild> {
+  const response = await apiClient.post<PluginBuild>(
+    `/plugin-builds/${encodeURIComponent(buildId)}/deprecate`,
+  )
+  return response.data
+}

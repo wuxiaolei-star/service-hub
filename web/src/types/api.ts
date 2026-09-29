@@ -1,6 +1,6 @@
 export type RuntimeType = 'conda-pack' | 'docker'
 
-export type BuildStatus = 'INSTALLING' | 'READY' | 'ENABLED' | 'FAILED'
+export type BuildStatus = 'INSTALLING' | 'READY' | 'ENABLED' | 'FAILED' | 'DEPRECATED'
 
 export type JobStatus =
   | 'PENDING'

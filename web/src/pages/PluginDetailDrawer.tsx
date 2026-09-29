@@ -79,6 +79,24 @@ export default function PluginDetailDrawer({ pluginId, onClose }: PluginDetailDr
               </Button>
             </Popconfirm>
           )}
+          {(record.status === 'READY' || record.status === 'ENABLED') && (
+            <Popconfirm
+              title="废弃该 Build？"
+              description="废弃后不可重新启用，该 Build 将无法用于创建新任务。"
+              okText="确定"
+              cancelText="取消"
+              onConfirm={() => toggle.mutate({ build: record, action: 'deprecate' })}
+            >
+              <Button size="small" loading={toggle.isPending}>
+                废弃
+              </Button>
+            </Popconfirm>
+          )}
+          {record.status === 'DEPRECATED' && (
+            <Typography.Text type="secondary">
+              已废弃（不可重新启用，如需恢复请以新版本号重装）
+            </Typography.Text>
+          )}
         </Space>
       ),
     },
@@ -134,6 +152,7 @@ export default function PluginDetailDrawer({ pluginId, onClose }: PluginDetailDr
             </>
           )}
           <Typography.Title level={5}>运行环境 Build</Typography.Title>
+          {toggle.isError && <HubErrorAlert error={toHubApiError(toggle.error)} />}
           <Table
             rowKey="build_id"
             size="small"

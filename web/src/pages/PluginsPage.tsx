@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Button, Card, Popconfirm, Space, Table } from 'antd'
+import { Button, Card, Popconfirm, Space, Table, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { listPlugins } from '../api/plugins'
 import { toHubApiError } from '../api/errors'
@@ -86,6 +86,11 @@ export default function PluginsPage() {
                     停用
                   </Button>
                 </Popconfirm>
+              )}
+              {trackedBuild.status === 'DEPRECATED' && (
+                <Typography.Text type="secondary">
+                  已废弃（不可重新启用，如需恢复请以新版本号重装）
+                </Typography.Text>
               )}
             </Space>
           )}
