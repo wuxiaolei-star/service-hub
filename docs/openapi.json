@@ -3115,6 +3115,61 @@
    }
   },
   "/api/v1/plugin-builds/{build_key}": {
+   "delete": {
+    "description": "Delete one DEPRECATED Build after the full guard chain (review doc B4b).\n\nAdmin-only and irreversible. Guards (any hit -> 409): the Build must be\nDEPRECATED (deprecate is the mandatory cooling-off step); no enabled\nSchedule may still resolve the (plugin, version, runtime) triple as its\nlast Build; no Pipeline step may reference it; no active Job (PENDING /\nPREPARING / RUNNING / CANCEL_REQUESTED) may reference it. Deletion order\nfollows R3: registry rows and storage first, the docker image second —\nnever any form of prune.",
+    "operationId": "delete_plugin_build_api_v1_plugin_builds__build_key__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "build_key",
+      "required": true,
+      "schema": {
+       "title": "Build Key",
+       "type": "string"
+      }
+     },
+     {
+      "description": "演练模式: 只返回将要执行的动作清单, 不做任何变更",
+      "in": "query",
+      "name": "dry_run",
+      "required": false,
+      "schema": {
+       "default": false,
+       "description": "演练模式: 只返回将要执行的动作清单, 不做任何变更",
+       "title": "Dry Run",
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Delete Plugin Build Api V1 Plugin Builds  Build Key  Delete",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Plugin Build",
+    "tags": [
+     "plugins"
+    ]
+   },
    "get": {
     "description": "Return one Plugin Build summary.",
     "operationId": "get_build_api_v1_plugin_builds__build_key__get",

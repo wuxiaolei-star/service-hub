@@ -24,6 +24,10 @@ from hub_server.schemas import (
 )
 from hub_server.services.archives import PluginArchiveService
 from hub_server.services.audit import record as audit
+from hub_server.services.build_deletion import (
+    DockerImageRemover,
+    PluginBuildDeletionService,
+)
 from hub_server.services.plugins import PluginService
 from hub_server.services.signing import MAX_SIGNATURE_BYTES
 from hub_server.settings import HubSettings
@@ -224,6 +228,61 @@ def deprecate_build(
     session.commit()
     session.refresh(build)
     return _build_response(build)
+
+
+@router.delete(
+    "/plugin-builds/{build_key}",
+    dependencies=[Depends(require_role("admin"))],
+)
+def delete_plugin_build(
+    actor: Annotated[Actor, Depends(get_actor)],
+    request: Request,
+    build_key: str,
+    session: Annotated[Session, Depends(get_session)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+    dry_run: bool = Query(
+        default=False, description="演练模式: 只返回将要执行的动作清单, 不做任何变更"
+    ),
+) -> dict[str, object]:
+    """Delete one DEPRECATED Build after the full guard chain (review doc B4b).
+
+    Admin-only and irreversible. Guards (any hit -> 409): the Build must be
+    DEPRECATED (deprecate is the mandatory cooling-off step); no enabled
+    Schedule may still resolve the (plugin, version, runtime) triple as its
+    last Build; no Pipeline step may reference it; no active Job (PENDING /
+    PREPARING / RUNNING / CANCEL_REQUESTED) may reference it. Deletion order
+    follows R3: registry rows and storage first, the docker image second —
+    never any form of prune.
+    """
+    build = _find_build(session, build_key)
+    service = PluginBuildDeletionService(
+        session, storage, image_remover=DockerImageRemover()
+    )
+    plan = service.plan(build)
+    if dry_run:
+        return {
+            "dry_run": True,
+            "build_key": plan.identity.build_key,
+            "plugin_id": plan.identity.plugin_id,
+            "version": plan.identity.version,
+            "runtime_type": plan.identity.runtime_type,
+            "allowed": plan.allowed,
+            "violations": [
+                {"code": v.code, "message": v.message} for v in plan.violations
+            ],
+            "actions": plan.actions,
+        }
+    if not plan.allowed:
+        raise HubError(
+            code=plan.violations[0].code,
+            message=plan.violations[0].message,
+            status_code=409,
+            details={"violations": [
+                {"code": v.code, "message": v.message} for v in plan.violations
+            ]},
+        )
+    service.delete(build, actor=actor, ip=actor_ip(request))
+    return {"deleted": build_key}
 
 
 @router.post(

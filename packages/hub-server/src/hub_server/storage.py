@@ -260,6 +260,23 @@ class LocalStorage:
             _LOGGER.exception("Unable to remove failed plugin Build storage")
             raise self._storage_error("无法清理插件 Build") from error
 
+    def remove_environment(self, build_key: str) -> None:
+        """Remove one exact conda environment directory for a deleted Build."""
+        if _PLUGIN_BUILD_KEY_PATTERN.fullmatch(build_key) is None:
+            raise ValueError("plugin build key is invalid")
+        directory = self._resolve_relative(f"environments/{build_key}")
+        try:
+            if directory.exists():
+                shutil.rmtree(directory)
+        except OSError as error:
+            _LOGGER.exception("Unable to remove deleted Build conda environment")
+            raise self._storage_error("无法清理插件运行环境") from error
+
+    @property
+    def root(self) -> Path:
+        """The storage root every relative path resolves against."""
+        return self._root
+
     def remove_job_workspace(self, job_key: str) -> None:
         """Remove one exact Job workspace after its creation transaction failed."""
         if _JOB_KEY_PATTERN.fullmatch(job_key) is None:
