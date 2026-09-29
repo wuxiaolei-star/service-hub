@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import time
@@ -11,7 +12,9 @@ from typing import Any
 from hub_runner.conda_executor import CondaExecutor, RunnerBuild, RunnerJob
 from python_hub_contracts import JobStatus, RunnerEvent
 
-from deploy.runner.service_common import post_json, retry_startup
+from deploy.runner.service_common import post_json, post_json_with_retry, retry_startup
+
+_LOGGER = logging.getLogger(__name__)
 
 PostFunc = Callable[[str, str, str, dict[str, Any]], dict[str, Any] | None]
 
@@ -57,13 +60,11 @@ def main() -> int:
                 ),
             )
             completion = executor.execute(runner_job)
-            status = completion.status
-            result_path = data_root / runner_job.result_path
-            if result_path.exists():
-                result_payload = json.loads(result_path.read_text("utf-8"))
-            else:
-                result_payload = _fallback_result(job["job"]["job"]["id"], status)
-            _post(
+            result_payload = _result_payload(data_root, runner_job, job, completion)
+            # Audit M-3: a rejected completion is retried with backoff and,
+            # when it still fails, logged and left to the Hub's reconcile —
+            # it must never break this runner's main loop.
+            post_json_with_retry(
                 base_url,
                 token,
                 f"/jobs/{job['job_id']}/complete",
@@ -72,6 +73,7 @@ def main() -> int:
                     "result": result_payload,
                     "exit_code": completion.exit_code,
                 },
+                post=_post,
             )
             continue
 
@@ -92,12 +94,40 @@ def _terminate_cleanly(_signum: int, _frame: Any) -> None:
 
 
 def _build_from_payload(build: dict[str, Any], operation: dict[str, Any]) -> RunnerBuild:
+    # Audit L-13: the build manifest's conda runtime fingerprint rides the
+    # claim; the executor verifies the archive against it before unpacking.
+    fingerprint = build.get("runtime", {}).get("fingerprint")
     return RunnerBuild(
         id=str(build["build_id"]),
         runtime_type="conda-pack",
         runtime_archive=str(build["runtime_archive"]),
+        fingerprint=str(fingerprint) if fingerprint else None,
         timeout_seconds=operation.get("timeout_seconds"),
     )
+
+
+def _result_payload(
+    data_root: Path,
+    runner_job: RunnerJob,
+    job: dict[str, Any],
+    completion: Any,
+) -> dict[str, Any]:
+    """Load the plugin's result.json, degrading any protocol garbage (audit M-3).
+
+    A plugin that corrupts its result.json used to raise straight out of the
+    main loop and take the runner — and, through the restart reconcile, every
+    other Job of this runtime — with it. Here a missing or unparsable result
+    degrades to the runner-generated fallback for this one Job only.
+    """
+    try:
+        result_path = data_root / runner_job.result_path
+        payload = json.loads(result_path.read_text("utf-8")) if result_path.exists() else None
+    except (OSError, ValueError) as error:
+        _LOGGER.warning("job %s produced an unreadable result.json: %s", runner_job.id, error)
+        payload = None
+    if payload is None:
+        payload = _fallback_result(job["job"]["job"]["id"], completion.status)
+    return payload
 
 
 def _job_from_payload(payload: dict[str, Any]) -> RunnerJob:

@@ -1,5 +1,12 @@
 import pytest
-from python_hub_contracts import LogEvent, ProgressEvent, RunnerEventParseError, parse_runner_line
+from python_hub_contracts import (
+    RUNNER_MESSAGE_MAX_LENGTH,
+    LogEvent,
+    ProgressEvent,
+    RunnerEventParseError,
+    parse_runner_line,
+    truncate_runner_line,
+)
 
 
 def test_parse_progress_event() -> None:
@@ -101,3 +108,78 @@ def test_invalid_prefixed_protocol_line_raises_stable_error(line: str) -> None:
         parse_runner_line(line)
 
     assert error.value.code == "RUNNER_EVENT_INVALID"
+
+
+# --- Audit M-4: bounded event messages --------------------------------------
+
+
+def test_log_event_rejects_message_beyond_max_length() -> None:
+    """An unbounded message would let one plugin line bloat events.jsonl and SSE."""
+    with pytest.raises(RunnerEventParseError):
+        parse_runner_line(
+            '@@HUB@@{"protocol_version":"1.0","type":"log",'
+            f'"level":"INFO","message":"{"x" * (RUNNER_MESSAGE_MAX_LENGTH + 1)}"}}'
+        )
+
+
+def test_progress_event_rejects_message_beyond_max_length() -> None:
+    with pytest.raises(RunnerEventParseError):
+        parse_runner_line(
+            '@@HUB@@{"protocol_version":"1.0","type":"progress",'
+            f'"percent":10,"message":"{"x" * (RUNNER_MESSAGE_MAX_LENGTH + 1)}"}}'
+        )
+
+
+def test_log_event_accepts_message_at_max_length() -> None:
+    event = parse_runner_line(
+        '@@HUB@@{"protocol_version":"1.0","type":"log",'
+        f'"level":"INFO","message":"{"x" * RUNNER_MESSAGE_MAX_LENGTH}"}}'
+    )
+
+    assert isinstance(event, LogEvent)
+    assert len(event.message) == RUNNER_MESSAGE_MAX_LENGTH
+
+
+def test_truncate_runner_line_clamps_oversized_message() -> None:
+    oversized = (
+        '@@HUB@@{"protocol_version":"1.0","type":"log",'
+        f'"level":"INFO","message":"{"very long " * 500}"}}'
+    )
+
+    truncated = truncate_runner_line(oversized)
+
+    assert truncated != oversized
+    event = parse_runner_line(truncated)
+    assert isinstance(event, LogEvent)
+    assert len(event.message) <= RUNNER_MESSAGE_MAX_LENGTH
+    assert event.message.endswith("…[truncated]")
+
+
+def test_truncate_runner_line_keeps_other_members_and_encoding() -> None:
+    document = (
+        '@@HUB@@{"protocol_version":"1.0","type":"progress",'
+        f'"percent":75,"message":"{"长" * (RUNNER_MESSAGE_MAX_LENGTH + 50)}"}}'
+    )
+
+    truncated = truncate_runner_line(document)
+    event = parse_runner_line(truncated)
+
+    assert isinstance(event, ProgressEvent)
+    assert event.percent == 75
+    assert event.message is not None
+    assert event.message.endswith("…[truncated]")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ordinary plugin stdout without prefix",
+        "@@HUB@@not-json",
+        "@@HUB@@[\"not\",\"an\",\"object\"]",
+        '@@HUB@@{"protocol_version":"1.0","type":"log","level":"INFO","message":"fits"}',
+        '@@HUB@@{"protocol_version":"1.0","type":"log","level":"INFO","message":null}',
+        '@@HUB@@{"protocol_version":"1.0","type":"progress","percent":10}',
+    ],
+)
+def test_truncate_runner_line_leaves_other_lines_untouched(line: str) -> None:
+    assert truncate_runner_line(line) == line

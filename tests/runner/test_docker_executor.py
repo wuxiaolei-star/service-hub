@@ -55,13 +55,18 @@ class FakeImage:
 
 
 class FakeImages:
-    def __init__(self, image_id: str) -> None:
+    def __init__(self, image_id: str, *, image_count: int = 1) -> None:
         self.image_id = image_id
+        self.image_count = image_count
         self.loaded_bytes = b""
+        self.removed: list[str] = []
 
     def load(self, data: Any) -> list[FakeImage]:
         self.loaded_bytes = data.read()
-        return [FakeImage(self.image_id)]
+        return [FakeImage(self.image_id)] * self.image_count
+
+    def remove(self, tag: str, **kwargs: Any) -> None:
+        self.removed.append(tag)
 
 
 class FakeContainer:
@@ -78,6 +83,7 @@ class FakeContainer:
         self.status_code = status_code
         self._logs = logs or []
         self._wait_results = wait_results or []
+        self.logs_kwargs: dict[str, Any] = {}
         self.wait_timeouts: list[float] = []
         self.removed = False
         self.stopped = False
@@ -87,6 +93,7 @@ class FakeContainer:
         self.remove_error = remove_error
 
     def logs(self, **kwargs: Any) -> bytes | Iterable[bytes]:
+        self.logs_kwargs = kwargs
         return iter(self._logs) if kwargs.get("stream") else b"".join(self._logs)
 
     def wait(self, **kwargs: Any) -> dict[str, int]:
@@ -142,8 +149,9 @@ class FakeDockerClient:
         digest: str,
         container: FakeContainer | None = None,
         listed: list[FakeContainer] | None = None,
+        image_count: int = 1,
     ) -> None:
-        self.images = FakeImages(f"sha256:{digest}")
+        self.images = FakeImages(f"sha256:{digest}", image_count=image_count)
         self.containers = FakeContainers(container or FakeContainer(), listed=listed)
 
 
@@ -760,3 +768,182 @@ def _write_zst(path: Path, payload: bytes) -> Path:
 
 def _relative_to_data(data_root: Path, path: Path) -> str:
     return path.resolve().relative_to(data_root.resolve()).as_posix()
+
+
+# --- Audit L-14: container hardening and single-image installs ---------------
+
+
+def test_docker_executor_applies_hardening_and_log_limits(tmp_path: Path) -> None:
+    """L-14/M-4: fork bombs, privilege escalation, and daemon log growth are capped."""
+    client = FakeDockerClient(digest="1" * 64, container=FakeContainer())
+
+    DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/srv/python-service-hub/data",
+    ).execute(_docker_job())
+
+    run_kwargs = client.containers.run_kwargs
+    assert run_kwargs["pids_limit"] == 256
+    assert run_kwargs["security_opt"] == ["no-new-privileges"]
+    assert run_kwargs["ulimits"] == [{"name": "nofile", "soft": 65536, "hard": 65536}]
+    assert run_kwargs["log_config"] == {
+        "Type": "json-file",
+        "Config": {"max-size": "10m", "max-file": "3"},
+    }
+
+
+def test_docker_executor_rejects_archive_with_multiple_images(tmp_path: Path) -> None:
+    """Digest-pinning only the first image of a multi-image tar hides the rest."""
+    digest = "1" * 64
+    archive = _write_zst(tmp_path / "image.tar.zst", b"multi image tar")
+    build = RunnerBuild(
+        id="plugin_build_123",
+        runtime_type="docker",
+        runtime_archive=_relative_to_data(tmp_path, archive),
+        image_digest=digest,
+        timeout_seconds=60,
+    )
+    client = FakeDockerClient(digest=digest, image_count=3)
+
+    result = DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/tmp/hub-data",
+    ).install(build)
+
+    assert result.status == "FAILED"
+    assert result.error_summary == "docker image archive must contain exactly one image"
+    assert client.images.removed == [f"sha256:{digest}"] * 3
+
+
+def test_docker_executor_streams_and_bounds_container_log_readback(
+    tmp_path: Path,
+) -> None:
+    """M-4: the read-back is streamed and oversized event lines are clamped."""
+    oversized_message = "x" * 10000
+    container = FakeContainer(
+        logs=[
+            b'@@HUB@@{"protocol_version":"1.0","type":"progress","percent":40}\n',
+            (
+                b"plain noise line\n"
+                b'@@HUB@@{"protocol_version":"1.0","type":"log",'
+                b'"level":"INFO","message":"' + oversized_message.encode() + b'"}\n'
+            ),
+        ]
+    )
+    client = FakeDockerClient(digest="1" * 64, container=container)
+    events: list[ProgressEvent] = []
+
+    DockerExecutor(
+        client=client,
+        data_root=tmp_path,
+        docker_host_data_root="/srv/python-service-hub/data",
+        event_callback=events.append,
+    ).execute(_docker_job())
+
+    assert container.logs_kwargs["stream"] is True
+    assert container.logs_kwargs["follow"] is False
+    assert [getattr(event, "percent", None) for event in events] == [40, None]
+    clamped = events[1]
+    message = clamped.message
+    assert message.endswith("…[truncated]")
+    assert len(message) <= 4096
+
+
+# --- Audit M-3: the runner main loop must survive completion failures --------
+
+
+def _job_claim_payload() -> dict[str, Any]:
+    return {
+        "job_id": "job_123",
+        "workspace": "jobs/job_123",
+        "paths": {"job": "job.json", "result": "result.json"},
+        "build": {"image_digest": "1" * 64},
+        "job": {"job": {"id": "job_123"}, "execution": {"timeout": 30}},
+        "cancel_requested": False,
+    }
+
+
+def test_docker_runner_survives_repeated_complete_server_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 5xx on the completion POST retries, then logs and keeps the loop alive."""
+    import time as time_module
+    from urllib.error import HTTPError
+
+    container = FakeContainer()
+    client = FakeDockerClient(digest="1" * 64, container=container)
+    monkeypatch.setitem(sys.modules, "docker", SimpleNamespace(from_env=lambda: client))
+    monkeypatch.setenv("HUB_INTERNAL_BASE_URL", "http://hub/internal/v1")
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", "test-token")
+    monkeypatch.setenv("HUB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("HUB_DOCKER_HOST_DATA_ROOT", "/srv/python-service-hub/data")
+    monkeypatch.setattr(docker_runner_service.signal, "signal", lambda *_: None)
+    monkeypatch.setattr(docker_runner_service, "_reconcile_interrupted_jobs", lambda *_, **__: None)
+    monkeypatch.setattr(docker_runner_service, "_cancellation_checker", lambda *_: lambda: False)
+    monkeypatch.setattr(time_module, "sleep", lambda *_: None)
+    completions: list[int] = []
+    claimed: list[int] = []
+
+    def post(_: str, __: str, path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        if path == "/operations/claim":
+            return None
+        if path == "/jobs/claim":
+            if claimed:
+                raise SystemExit("stop polling")
+            claimed.append(1)
+            return _job_claim_payload()
+        if path == "/jobs/job_123/complete":
+            completions.append(1)
+            raise HTTPError(path, 500, "internal error", {}, None)
+        raise AssertionError(f"Unexpected request: {path}")
+
+    monkeypatch.setattr(docker_runner_service, "_post", post)
+
+    with pytest.raises(SystemExit, match="stop polling"):
+        docker_runner_service.main()
+
+    # Three completion attempts (with backoff), then the loop claimed again.
+    assert len(completions) == 3
+    assert len(claimed) == 1
+
+
+def test_docker_runner_degrades_corrupt_result_json_to_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E-06: one plugin's garbage result.json must not kill the runner."""
+    result_file = tmp_path / "jobs" / "job_123" / "output" / "result.json"
+    result_file.parent.mkdir(parents=True)
+    result_file.write_text("{not json", encoding="utf-8")
+    # The plugin crashed (nonzero exit) AND corrupted its result.json — the
+    # exact E-06 combination that used to take down the whole runner.
+    container = FakeContainer(status_code=7)
+    client = FakeDockerClient(digest="1" * 64, container=container)
+    monkeypatch.setitem(sys.modules, "docker", SimpleNamespace(from_env=lambda: client))
+    monkeypatch.setenv("HUB_INTERNAL_BASE_URL", "http://hub/internal/v1")
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", "test-token")
+    monkeypatch.setenv("HUB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("HUB_DOCKER_HOST_DATA_ROOT", "/srv/python-service-hub/data")
+    monkeypatch.setattr(docker_runner_service.signal, "signal", lambda *_: None)
+    monkeypatch.setattr(docker_runner_service, "_reconcile_interrupted_jobs", lambda *_, **__: None)
+    monkeypatch.setattr(docker_runner_service, "_cancellation_checker", lambda *_: lambda: False)
+    completions: list[dict[str, Any]] = []
+
+    def post(_: str, __: str, path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        if path == "/operations/claim":
+            return None
+        if path == "/jobs/claim":
+            return _job_claim_payload()
+        if path == "/jobs/job_123/complete":
+            completions.append(payload)
+            raise SystemExit(0)
+        raise AssertionError(f"Unexpected request: {path}")
+
+    monkeypatch.setattr(docker_runner_service, "_post", post)
+
+    with pytest.raises(SystemExit):
+        docker_runner_service.main()
+
+    assert completions[0]["result"]["status"] == "FAILED"
+    assert completions[0]["result"]["message"] == "runner completed without result.json"

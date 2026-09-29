@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import signal
@@ -59,6 +60,7 @@ def test_conda_executor_runs_conda_unpack_then_import_healthcheck(tmp_path: Path
         id="plugin_build_123",
         runtime_type="conda-pack",
         runtime_archive=_relative_to_data(tmp_path, archive),
+        fingerprint=_sha256_of(archive),
         timeout_seconds=60,
     )
 
@@ -102,6 +104,7 @@ def test_conda_executor_reports_failed_healthcheck_without_ready_environment(
         id="plugin_build_123",
         runtime_type="conda-pack",
         runtime_archive=_relative_to_data(tmp_path, archive),
+        fingerprint=_sha256_of(archive),
         timeout_seconds=60,
     )
 
@@ -126,6 +129,7 @@ def test_failed_duplicate_install_preserves_existing_ready_environment(
         id="plugin_build_123",
         runtime_type="conda-pack",
         runtime_archive=_relative_to_data(tmp_path, archive),
+        fingerprint=_sha256_of(archive),
     )
 
     result = CondaExecutor(
@@ -145,6 +149,7 @@ def test_conda_executor_rejects_build_id_that_escapes_environments_root(
         id="../escaped-build",
         runtime_type="conda-pack",
         runtime_archive=_relative_to_data(tmp_path, archive),
+        fingerprint=_sha256_of(archive),
     )
 
     result = CondaExecutor(
@@ -171,6 +176,7 @@ def test_conda_executor_limits_total_decompressed_environment_size(
         id="plugin_build_123",
         runtime_type="conda-pack",
         runtime_archive=_relative_to_data(tmp_path, archive),
+        fingerprint=_sha256_of(archive),
     )
 
     result = CondaExecutor(
@@ -200,6 +206,7 @@ def test_conda_executor_rejects_hardlink_whose_archive_target_escapes_root(
         id="plugin_build_123",
         runtime_type="conda-pack",
         runtime_archive=_relative_to_data(tmp_path, archive),
+        fingerprint=_sha256_of(archive),
     )
 
     result = CondaExecutor(
@@ -773,3 +780,266 @@ def _write_env_archive(
 
 def _relative_to_data(data_root: Path, path: Path) -> str:
     return path.resolve().relative_to(data_root.resolve()).as_posix()
+
+
+def _sha256_of(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+
+# --- Audit L-13: conda runtime fingerprint verification ----------------------
+
+
+def test_conda_executor_rejects_fingerprint_mismatch_before_unpacking(
+    tmp_path: Path,
+) -> None:
+    """The Docker digest check is mirrored for conda archives: verify, then unpack."""
+    archive = _write_env_archive(tmp_path / "env.tar.zst")
+    fake_runner = FakeCommandRunner()
+    build = RunnerBuild(
+        id="plugin_build_123",
+        runtime_type="conda-pack",
+        runtime_archive=_relative_to_data(tmp_path, archive),
+        fingerprint="0" * 64,
+        timeout_seconds=60,
+    )
+
+    result = CondaExecutor(data_root=tmp_path, command_runner=fake_runner).install(build)
+
+    assert result.status == "FAILED"
+    assert result.error_summary == "conda runtime fingerprint mismatch"
+    assert fake_runner.calls == []
+    assert not (tmp_path / "environments" / build.id).exists()
+
+
+def test_conda_executor_fails_install_without_a_fingerprint(tmp_path: Path) -> None:
+    """A claim without a fingerprint must fail closed, not skip verification."""
+    archive = _write_env_archive(tmp_path / "env.tar.zst")
+    fake_runner = FakeCommandRunner()
+    build = RunnerBuild(
+        id="plugin_build_123",
+        runtime_type="conda-pack",
+        runtime_archive=_relative_to_data(tmp_path, archive),
+        fingerprint=None,
+        timeout_seconds=60,
+    )
+
+    result = CondaExecutor(data_root=tmp_path, command_runner=fake_runner).install(build)
+
+    assert result.status == "FAILED"
+    assert result.error_summary == "conda runtime fingerprint missing"
+    assert fake_runner.calls == []
+    assert not (tmp_path / "environments" / build.id).exists()
+
+
+def test_conda_runner_service_maps_runtime_fingerprint_from_claim_payload() -> None:
+    """L-13: the manifest fingerprint rides the build claim into the executor."""
+    build = conda_runner_service._build_from_payload(
+        {
+            "build_id": "plugin_build_123",
+            "runtime_type": "conda-pack",
+            "runtime_archive": "plugins/plugin_build_123/env.tar.zst",
+            "runtime": {
+                "type": "conda-pack",
+                "archive": "env.tar.zst",
+                "fingerprint": "a" * 64,
+            },
+        },
+        {"timeout_seconds": 60},
+    )
+
+    assert build.fingerprint == "a" * 64
+
+
+def test_conda_runner_service_maps_missing_fingerprint_as_none() -> None:
+    """An old claim without a fingerprint must fail closed inside the executor."""
+    build = conda_runner_service._build_from_payload(
+        {
+            "build_id": "plugin_build_123",
+            "runtime_type": "conda-pack",
+            "runtime_archive": "plugins/plugin_build_123/env.tar.zst",
+            "runtime": {"type": "conda-pack", "archive": "env.tar.zst"},
+        },
+        {"timeout_seconds": 60},
+    )
+
+    assert build.fingerprint is None
+
+
+# --- Audit M-4: bounded runner memory and clamped event lines ----------------
+
+
+def test_tail_buffer_retains_only_the_trailing_bound() -> None:
+    buffer = conda_executor_module._TailBuffer(64)
+
+    for index in range(10):
+        buffer.append(f"line-{index}\n")
+
+    text = buffer.text()
+    assert text.startswith("line-")
+    assert text.endswith("line-9\n")
+    assert len(text.encode("utf-8")) <= 64 + len("line-9\n")
+
+
+def test_tail_buffer_keeps_single_oversized_chunk_intact() -> None:
+    buffer = conda_executor_module._TailBuffer(8)
+    chunk = "x" * 128
+
+    buffer.append(chunk)
+
+    assert buffer.text() == chunk
+
+
+def test_job_process_truncates_oversized_event_messages(tmp_path: Path) -> None:
+    """One chatty plugin line must arrive at the Hub within the contract bound."""
+    # The child builds the oversized message itself: Windows argv limits make
+    # passing a 50k-character argument impossible.
+    script = (
+        "import json,sys; "
+        "print('@@HUB@@' + json.dumps({"
+        "'protocol_version':'1.0','type':'log','level':'INFO',"
+        "'message': '长' * int(sys.argv[1])}), flush=True)"
+    )
+    events: list[object] = []
+
+    result = conda_executor_module._run_job_process(
+        [sys.executable, "-c", script, "50000"],
+        cwd=tmp_path,
+        env={"PYTHONUNBUFFERED": "1"},
+        timeout=10,
+        event_callback=events.append,
+        cancellation_requested=lambda: False,
+    )
+
+    assert result.returncode == 0
+    assert len(events) == 1
+    message = events[0].message
+    assert message.endswith("…[truncated]")
+    assert len(message) <= 4096
+
+
+# --- Audit M-3: the conda runner main loop must survive completion failures --
+
+
+def _conda_claim_payload() -> dict[str, object]:
+    return {
+        "job_id": "job_123",
+        "runtime_type": "conda-pack",
+        "cancel_requested": False,
+        "workspace": "jobs/job_123",
+        "paths": {"job": "job.json", "result": "result.json"},
+        "job": {"job": {"id": "job_123"}, "execution": {"timeout": 30}},
+        "build": {
+            "manifest": "plugins/build_123/plugin.yaml",
+            "source": "plugins/build_123/plugin",
+            "environment_path": "environments/build_123",
+        },
+    }
+
+
+def _fake_plugin_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not spawn a real plugin process while exercising the service loop."""
+    monkeypatch.setattr(
+        conda_executor_module,
+        "_run_job_process",
+        lambda *_, **__: CommandResult(returncode=7, stdout="", stderr="plugin exploded"),
+    )
+
+
+def test_conda_runner_survives_repeated_complete_server_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 5xx on the completion POST retries, then logs and keeps the loop alive."""
+    import time as time_module
+    from urllib.error import HTTPError
+
+    monkeypatch.setenv("HUB_INTERNAL_BASE_URL", "http://hub/internal/v1")
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", "test-token")
+    monkeypatch.setenv("HUB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        conda_runner_service,
+        "signal",
+        type(
+            "Signals",
+            (),
+            {
+                "SIGTERM": signal.SIGTERM,
+                "signal": staticmethod(lambda *_: None),
+            },
+        )(),
+        raising=False,
+    )
+    monkeypatch.setattr(conda_runner_service, "_reconcile_interrupted_jobs", lambda *_, **__: None)
+    monkeypatch.setattr(conda_runner_service, "_cancellation_checker", lambda *_: lambda: False)
+    monkeypatch.setattr(time_module, "sleep", lambda *_: None)
+    _fake_plugin_process(monkeypatch)
+    completions: list[int] = []
+    claimed: list[int] = []
+
+    def post(_: str, __: str, path: str, payload: dict[str, object]) -> dict[str, object] | None:
+        if path == "/operations/claim":
+            return None
+        if path == "/jobs/claim":
+            if claimed:
+                raise SystemExit("stop polling")
+            claimed.append(1)
+            return _conda_claim_payload()
+        if path == "/jobs/job_123/complete":
+            completions.append(1)
+            raise HTTPError(path, 500, "internal error", {}, None)
+        raise AssertionError(f"Unexpected request: {path}")
+
+    monkeypatch.setattr(conda_runner_service, "_post", post)
+
+    with pytest.raises(SystemExit, match="stop polling"):
+        conda_runner_service.main()
+
+    assert len(completions) == 3
+    assert len(claimed) == 1
+
+
+def test_conda_runner_degrades_corrupt_result_json_to_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E-06: one plugin's garbage result.json must not kill the runner."""
+    result_file = tmp_path / "jobs" / "job_123" / "result.json"
+    result_file.parent.mkdir(parents=True)
+    result_file.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("HUB_INTERNAL_BASE_URL", "http://hub/internal/v1")
+    monkeypatch.setenv("HUB_RUNNER_TOKEN", "test-token")
+    monkeypatch.setenv("HUB_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        conda_runner_service,
+        "signal",
+        type(
+            "Signals",
+            (),
+            {
+                "SIGTERM": signal.SIGTERM,
+                "signal": staticmethod(lambda *_: None),
+            },
+        )(),
+        raising=False,
+    )
+    monkeypatch.setattr(conda_runner_service, "_reconcile_interrupted_jobs", lambda *_, **__: None)
+    monkeypatch.setattr(conda_runner_service, "_cancellation_checker", lambda *_: lambda: False)
+    _fake_plugin_process(monkeypatch)
+    completions: list[dict[str, object]] = []
+
+    def post(_: str, __: str, path: str, payload: dict[str, object]) -> dict[str, object] | None:
+        if path == "/operations/claim":
+            return None
+        if path == "/jobs/claim":
+            return _conda_claim_payload()
+        if path == "/jobs/job_123/complete":
+            completions.append(payload)
+            raise SystemExit(0)
+        raise AssertionError(f"Unexpected request: {path}")
+
+    monkeypatch.setattr(conda_runner_service, "_post", post)
+
+    with pytest.raises(SystemExit):
+        conda_runner_service.main()
+
+    assert completions[0]["result"]["status"] == "FAILED"
+    assert completions[0]["result"]["message"] == "runner completed without result.json"

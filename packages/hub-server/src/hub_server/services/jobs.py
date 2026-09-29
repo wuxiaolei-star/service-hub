@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
@@ -22,6 +21,7 @@ from hub_server.models import (
     _public_id,
     _utc_now,
 )
+from hub_server.services.job_events import decode_event_line, resolve_event_log_path
 from hub_server.services.workspaces import JobWorkspaceService, StagedWorkspace
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
@@ -207,7 +207,9 @@ class JobService:
         job = self._get_job(job_key)
         if job.workspace_path is None:
             return [], None
-        log_path = self._storage.open_relative(f"{job.workspace_path}/logs/events.jsonl")
+        # Audit M-2: prefer the relocated meta/events.jsonl, falling back to
+        # the legacy logs/events.jsonl for Jobs that ran before the move.
+        log_path = resolve_event_log_path(self._storage, job.workspace_path)
         if not log_path.exists():
             return [], None
         # Stream line by line instead of read_text(): total line count and the
@@ -219,9 +221,11 @@ class JobService:
             for index, line in enumerate(handle):
                 total = index + 1
                 if cursor <= index < cursor + limit:
-                    loaded = json.loads(line)
-                    if isinstance(loaded, dict):
-                        events.append(cast(dict[str, object], loaded))
+                    # Unparsable legacy lines degrade to a skip (audit M-2):
+                    # one bad line must not 500 the whole log window.
+                    item = decode_event_line(line)
+                    if item is not None:
+                        events.append(item)
         selected_end = min(cursor + limit, total)
         next_cursor = selected_end if selected_end < total else None
         return events, next_cursor

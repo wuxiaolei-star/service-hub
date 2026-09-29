@@ -6,13 +6,19 @@ import logging
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 
 import zstandard
-from python_hub_contracts import JobStatus, RunnerEvent, RuntimeType, parse_runner_line
+from python_hub_contracts import (
+    JobStatus,
+    RunnerEvent,
+    RuntimeType,
+    parse_runner_line,
+    truncate_runner_line,
+)
 
 
 class ImageProtocol(Protocol):
@@ -21,6 +27,8 @@ class ImageProtocol(Protocol):
 
 class ImagesProtocol(Protocol):
     def load(self, data: Any) -> list[ImageProtocol]: ...
+
+    def remove(self, tag: str, **kwargs: Any) -> None: ...
 
 
 class ContainerProtocol(Protocol):
@@ -93,6 +101,22 @@ MonotonicClock = Callable[[], float]
 _WAIT_POLL_SECONDS = 1.0
 SERVICE_HUB_OWNER_LABEL = "io.python-service-hub.owner"
 SERVICE_HUB_JOB_LABEL = "io.python-service-hub.job-id"
+# Audit M-4: the container log read-back is streamed and only a bounded
+# window is retained in memory, so a chatty plugin cannot grow the runner's
+# memory with the Job's wall time.
+_LOG_TAIL_MAX_BYTES = 8 * 1024 * 1024
+# Audit M-4/L-14: the plugin container's own json-file log (docker daemon
+# side) is capped independently of the streamed read-back, so disk on the
+# Docker host is bounded too: 3 rotated files of 10 MiB each.
+_LOG_CONFIG = {
+    "Type": "json-file",
+    "Config": {"max-size": "10m", "max-file": "3"},
+}
+# Audit L-14 hardening: fork-bomb protection, no privilege escalation from the
+# unprivileged runtime user, and a bounded file-descriptor table.
+_PIDS_LIMIT = 256
+_NO_NEW_PRIVILEGES = ["no-new-privileges"]
+_NOFILE_ULIMIT = {"name": "nofile", "soft": 65536, "hard": 65536}
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -138,7 +162,17 @@ class DockerExecutor:
                 images = self._client.images.load(reader)
         except Exception as error:
             return InstallResult(status="FAILED", error_summary=str(error)[:2000])
-        loaded_digest = _normalize_digest(images[0].id) if images else None
+        if len(images) != 1:
+            # Audit L-14: the archive carries the digest of exactly one image;
+            # anything else means the tar's first image would be pinned while
+            # unexpected extra images silently load into the daemon. Remove
+            # everything this load just introduced.
+            _discard_loaded_images(self._client, images)
+            return InstallResult(
+                status="FAILED",
+                error_summary="docker image archive must contain exactly one image",
+            )
+        loaded_digest = _normalize_digest(images[0].id)
         if loaded_digest != build.image_digest:
             return InstallResult(
                 status="FAILED",
@@ -189,6 +223,10 @@ class DockerExecutor:
                 user="65532:65532",
                 read_only=True,
                 cap_drop=["ALL"],
+                pids_limit=_PIDS_LIMIT,
+                security_opt=_NO_NEW_PRIVILEGES,
+                ulimits=[dict(_NOFILE_ULIMIT)],
+                log_config=dict(_LOG_CONFIG),
                 **resource_limits,
                 labels={
                     SERVICE_HUB_OWNER_LABEL: service_hub_owner_value(
@@ -223,7 +261,9 @@ class DockerExecutor:
             container_needs_stop = True
             result = self._wait_for_container(container, deadline)
             container_needs_stop = False
-            self._forward_logs(container.logs(stdout=True, stderr=True))
+            # Audit M-4: stream the log read-back instead of materializing it,
+            # so a chatty plugin cannot grow the runner's memory with the Job.
+            self._forward_logs(container.logs(stdout=True, stderr=True, stream=True, follow=False))
         except _CancellationRequested:
             _stop_container(container)
             container_needs_stop = False
@@ -286,19 +326,32 @@ class DockerExecutor:
         relative = container_path.resolve(strict=False).relative_to(self._data_root)
         return str(self._docker_host_data_root.joinpath(*relative.parts))
 
-    def _forward_logs(self, lines: bytes | str | Iterable[bytes | str]) -> None:
-        if isinstance(lines, bytes | str):
-            lines = [lines]
-        for raw_line in lines:
-            text = (
-                raw_line.decode("utf-8", errors="replace")
-                if isinstance(raw_line, bytes)
-                else raw_line
-            )
-            for line in text.splitlines():
-                event = parse_runner_line(line)
-                if event is not None:
-                    self._event_callback(event)
+    def _forward_logs(self, chunks: bytes | str | Iterable[bytes | str]) -> None:
+        """Forward runner events from the container log read-back (audit M-4).
+
+        Chunks are decoded and split into lines as they arrive, so complete
+        event lines are forwarded live while only a bounded trailing window
+        (``_LOG_TAIL_MAX_BYTES``) of unparsed text is ever held in memory — a
+        plugin that floods stdout without newlines cannot grow this runner.
+        Each forwarded line is clamped through :func:`truncate_runner_line`
+        first, so one oversized event message cannot invalidate the protocol.
+        """
+        if isinstance(chunks, bytes | str):
+            chunks = [chunks]
+        pending = ""
+        for chunk in chunks:
+            text = chunk.decode("utf-8", errors="replace") if isinstance(chunk, bytes) else chunk
+            pending = _bounded_tail(pending + text, _LOG_TAIL_MAX_BYTES)
+            *complete, pending = pending.split("\n")
+            for line in complete:
+                self._forward_line(line)
+        if pending:
+            self._forward_line(pending)
+
+    def _forward_line(self, line: str) -> None:
+        event = parse_runner_line(truncate_runner_line(line.rstrip("\r\n")))
+        if event is not None:
+            self._event_callback(event)
 
 
 def _normalize_digest(value: str | None) -> str | None:
@@ -308,6 +361,29 @@ def _normalize_digest(value: str | None) -> str | None:
     if separator and prefix == "sha256":
         return suffix
     return value
+
+
+def _discard_loaded_images(client: DockerClientProtocol, images: Sequence[Any]) -> None:
+    """Best-effort removal of images a rejected archive load introduced (L-14).
+
+    A multi-image tar is refused before any digest check, but its images are
+    already in the daemon's local store by then; leaving them behind would let
+    one rejected install pollute the host indefinitely. Removal failures are
+    logged, never raised — the install result must stay FAILED regardless.
+    """
+    for image in images:
+        try:
+            client.images.remove(str(image.id), force=True)
+        except Exception:
+            _LOGGER.warning("Could not remove image from rejected archive load", exc_info=True)
+
+
+def _bounded_tail(text: str, max_bytes: int) -> str:
+    """Keep only the trailing ``max_bytes`` of UTF-8 text (audit M-4)."""
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[-max_bytes:].decode("utf-8", errors="ignore")
 
 
 def _trusted_host_data_root(value: str) -> PurePosixPath:

@@ -72,3 +72,58 @@ def test_post_json_preserves_http_client_errors(monkeypatch: pytest.MonkeyPatch)
         post_json("http://hub/internal/v1", "token", "/jobs/claim", {"runtime_type": "docker"})
 
     assert raised.value is error
+
+
+def test_post_json_with_retry_retries_http_errors_with_backoff() -> None:
+    """A transient 5xx on the terminal completion must not kill the main loop (M-3)."""
+    from deploy.runner.service_common import post_json_with_retry
+
+    error = HTTPError("http://hub/internal/v1/jobs/job_1/complete", 503, "unavailable", {}, None)
+    attempts: list[str] = []
+    delays: list[float] = []
+
+    def flaky(_: str, __: str, path: str, ___: dict[str, Any]) -> dict[str, Any] | None:
+        attempts.append(path)
+        if len(attempts) < 3:
+            raise error
+        return {"id": "job_1", "status": "FAILED"}
+
+    result = post_json_with_retry(
+        "http://hub/internal/v1",
+        "token",
+        "/jobs/job_1/complete",
+        {"runtime_type": "docker"},
+        post=flaky,
+        sleep=delays.append,
+        backoff_seconds=0.5,
+    )
+
+    assert result == {"id": "job_1", "status": "FAILED"}
+    assert len(attempts) == 3
+    assert delays == [0.5, 1.0]
+
+
+def test_post_json_with_retry_gives_up_after_final_attempt() -> None:
+    """After the last attempt the failure is logged and the caller continues."""
+    from deploy.runner.service_common import post_json_with_retry
+
+    error = HTTPError("http://hub/internal/v1/jobs/job_1/complete", 500, "boom", {}, None)
+    attempts: list[str] = []
+    delays: list[float] = []
+
+    def reject(_: str, __: str, path: str, ___: dict[str, Any]) -> dict[str, Any] | None:
+        attempts.append(path)
+        raise error
+
+    result = post_json_with_retry(
+        "http://hub/internal/v1",
+        "token",
+        "/jobs/job_1/complete",
+        {"runtime_type": "docker"},
+        post=reject,
+        sleep=delays.append,
+    )
+
+    assert result is None
+    assert len(attempts) == 3
+    assert delays == [1.0, 2.0]

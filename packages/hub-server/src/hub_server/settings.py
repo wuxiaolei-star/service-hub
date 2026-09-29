@@ -57,6 +57,13 @@ class RunnerSettings(StrictSettingsModel):
     resource_limits: RunnerResourceLimitsSettings | None = Field(
         default_factory=RunnerResourceLimitsSettings
     )
+    # Per-Job runner-event log caps (audit M-4): when either cap is reached on
+    # ``<workspace>/meta/events.jsonl`` the Hub writes one system event noting
+    # the truncation and drops further events for that Job. The contract also
+    # bounds each message (RUNNER_MESSAGE_MAX_LENGTH), so the byte cap cannot
+    # be circumvented by a single event.
+    event_log_max_count: int = Field(default=5000, gt=0)
+    event_log_max_bytes: int = Field(default=16 * 1024 * 1024, gt=0)
 
 
 class AuthSettings(StrictSettingsModel):

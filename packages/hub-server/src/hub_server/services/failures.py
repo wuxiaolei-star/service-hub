@@ -50,6 +50,11 @@ HUB_SOURCE = "hub"
 # plugin never produced is attributed to the plugin itself.
 PLUGIN_OUTPUT_MISSING = "PLUGIN_OUTPUT_MISSING"
 
+# Audit M-3 (E-06): the completion path degrades a Hub-side output
+# registration failure into this Job's FAILED outcome instead of bouncing the
+# runner with a 5xx (which cascaded through the restart reconcile).
+PLUGIN_OUTPUT_REGISTER_FAILED = "PLUGIN_OUTPUT_REGISTER_FAILED"
+
 _TIMEOUT_ERROR_CODES = frozenset({"JOB_TIMED_OUT"})
 _RUNNER_ERROR_CODES = frozenset({"RUNNER_FAILED", "HUB_RESTARTED"})
 

@@ -80,7 +80,7 @@ class JobWorkspaceService:
         destination_relative = f"jobs/{job.job_key}"
         temporary = self._storage.create_temporary_directory("jobs")
         try:
-            for child in ("input", "work", "output", "logs"):
+            for child in ("input", "work", "output", "logs", "meta"):
                 (temporary / child).mkdir()
             with _no_autoflush(job):
                 runtime_inputs = self._prepare_inputs(temporary, job.inputs_json, input_files)

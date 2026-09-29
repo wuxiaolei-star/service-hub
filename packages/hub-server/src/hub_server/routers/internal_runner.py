@@ -5,10 +5,18 @@ from __future__ import annotations
 import hmac
 import json
 import os
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Response, status
-from python_hub_contracts import JobRuntimeSpec, JobStatus, PluginBuildManifest, PluginManifest
+from python_hub_contracts import (
+    JobRuntimeSpec,
+    JobStatus,
+    LogEvent,
+    LogLevel,
+    PluginBuildManifest,
+    PluginManifest,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -30,7 +38,12 @@ from hub_server.schemas import (
     RunnerOperationCompleteRequest,
     RunnerReconcileResponse,
 )
-from hub_server.services.failures import PLUGIN_OUTPUT_MISSING, failure_summary
+from hub_server.services.failures import (
+    PLUGIN_OUTPUT_MISSING,
+    PLUGIN_OUTPUT_REGISTER_FAILED,
+    failure_summary,
+)
+from hub_server.services.job_events import event_log_relative_path
 from hub_server.services.runner_operations import RunnerOperationService
 from hub_server.services.workspaces import JobWorkspaceService
 from hub_server.settings import HubSettings
@@ -165,6 +178,7 @@ def append_job_event(
     _: RunnerAuthorization,
     session: Annotated[Session, Depends(get_session)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
 ) -> RunnerEventAcceptedResponse:
     job = _matching_job(session, job_key, request.runtime_type)
     if job.status == JobStatus.PREPARING:
@@ -173,7 +187,7 @@ def append_job_event(
         )
     elif job.status != JobStatus.RUNNING:
         raise _job_state_conflict()
-    _append_event(storage, job, request)
+    _append_event(storage, job, request, settings)
     return RunnerEventAcceptedResponse(id=job.job_key, status="RUNNING")
 
 
@@ -213,20 +227,33 @@ def complete_job(
     terminal_status = JobStatus(request.result.status)
     error_summary = failure_summary(request.result.error)
     if terminal_status is JobStatus.SUCCESS:
-        for output in request.result.files:
-            JobWorkspaceService(storage).register_output(
-                job,
-                logical_name=output.name,
-                relative_path=output.path,
-                mime_type="application/octet-stream",
-            )
-        missing = _missing_required_file_outputs(job)
-        if missing:
-            # The runner reported SUCCESS, but the manifest output contract is
-            # not satisfied: flip to FAILED through the same state machine as
-            # any other failure instead of trusting the self-reported status.
+        try:
+            for output in request.result.files:
+                JobWorkspaceService(storage).register_output(
+                    job,
+                    logical_name=output.name,
+                    relative_path=output.path,
+                    mime_type="application/octet-stream",
+                )
+        except HubError as error:
+            # Audit M-3 (E-06): a storage-side registration failure must not
+            # bounce the runner with a 5xx — that used to cascade through the
+            # runner restart reconcile into every other Job of the runtime.
+            # The failure is absorbed into this one Job's terminal state and
+            # answered with 200 so the runner main loop keeps running.
             terminal_status = JobStatus.FAILED
-            error_summary = f"{PLUGIN_OUTPUT_MISSING}: {', '.join(missing)}"
+            error_summary = f"{PLUGIN_OUTPUT_REGISTER_FAILED}: {error.message}"
+        else:
+            # First terminal failure wins: when registration already failed the
+            # required-output check would only add secondary noise on top of the
+            # harder "reported file does not exist" signal.
+            missing = _missing_required_file_outputs(job)
+            if missing:
+                # The runner reported SUCCESS, but the manifest output contract is
+                # not satisfied: flip to FAILED through the same state machine as
+                # any other failure instead of trusting the self-reported status.
+                terminal_status = JobStatus.FAILED
+                error_summary = f"{PLUGIN_OUTPUT_MISSING}: {', '.join(missing)}"
     try:
         completed = HubRepository(session).transition_job(
             job,
@@ -259,9 +286,7 @@ def _missing_required_file_outputs(job: Job) -> list[str]:
     return [
         output.name
         for output in manifest.outputs
-        if output.required
-        and output.type in {"file", "files"}
-        and output.name not in registered
+        if output.required and output.type in {"file", "files"} and output.name not in registered
     ]
 
 
@@ -335,22 +360,132 @@ def _matching_job(session: Session, job_key: str, runtime_type: str) -> Job:
 
 
 def _append_event(
-    storage: LocalStorage, job: Job, request: RunnerJobEventRequest
+    storage: LocalStorage,
+    job: Job,
+    request: RunnerJobEventRequest,
+    settings: HubSettings,
 ) -> None:
+    """Append one runner event below ``<workspace>/meta/`` (audit M-2).
+
+    ``logs/`` is mounted read-write into the plugin container, so the event
+    stream used to sit within the plugin's write reach. ``meta/`` is never
+    mounted (see the Docker volume map), keeping the Hub's record out of the
+    plugin's reach.
+
+    Audit M-4: the per-Job stream is capped at ``runner.event_log_max_count``
+    events / ``runner.event_log_max_bytes`` bytes. Once a cap is reached one
+    system event records the truncation and further events for that Job are
+    dropped — the request still succeeds so the runner is never blocked on
+    telemetry.
+    """
     if job.workspace_path != f"jobs/{job.job_key}":
         raise HubError(
             code="RUNNER_JOB_INVALID",
             message="Job 工作区无效",
             status_code=409,
         )
-    log_directory = storage.open_relative(f"{job.workspace_path}/logs")
-    log_directory.mkdir(parents=True, exist_ok=True)
-    event_path = log_directory / "events.jsonl"
+    event_path = storage.open_relative(event_log_relative_path(job.workspace_path))
+    event_path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(request.event.model_dump(mode="json"), ensure_ascii=False) + "\n"
+    incoming_bytes = len(line.encode("utf-8"))
+    budget = _event_budget(event_path, job.job_key)
+    if budget.exceeded(
+        settings.runner.event_log_max_count,
+        settings.runner.event_log_max_bytes,
+        incoming_bytes,
+    ):
+        if not budget.truncated:
+            budget.truncated = True
+            marker = LogEvent(
+                protocol_version="1.0",
+                type="log",
+                level=LogLevel.ERROR,
+                message=(
+                    "事件日志达到上限; 本 Job 后续事件不再记录 "
+                    f"(count>={settings.runner.event_log_max_count} or "
+                    f"bytes>={settings.runner.event_log_max_bytes})"
+                ),
+            ).model_dump(mode="json")
+            budget.record(
+                _write_event_line(
+                    event_path,
+                    json.dumps(marker, ensure_ascii=False) + "\n",
+                )
+            )
+        return
+    budget.record(_write_event_line(event_path, line))
+
+
+def _write_event_line(event_path: Path, line: str) -> int:
+    """Append one encoded line and return its byte size."""
+    encoded_size = len(line.encode("utf-8"))
     with event_path.open("a", encoding="utf-8", newline="\n") as output:
         output.write(line)
         output.flush()
         os.fsync(output.fileno())
+    return encoded_size
+
+
+class _EventBudget:
+    """In-process per-Job event counters, re-derived when the file disagrees.
+
+    The cache is validated against the file's size on every append: a Hub
+    restart (cold cache), a concurrent writer, or any other divergence simply
+    re-scans the file once, so the cap can only ever under-count transiently,
+    never unbound the stream.
+    """
+
+    __slots__ = ("count", "expected_size", "size_bytes", "truncated")
+
+    def __init__(self, count: int, size_bytes: int) -> None:
+        self.count = count
+        self.size_bytes = size_bytes
+        self.expected_size = size_bytes
+        self.truncated = False
+
+    def exceeded(self, max_count: int, max_bytes: int, incoming_bytes: int) -> bool:
+        if self.count >= max_count:
+            return True
+        return self.size_bytes + incoming_bytes > max_bytes
+
+    def record(self, written_bytes: int) -> None:
+        self.count += 1
+        self.size_bytes += written_bytes
+        self.expected_size += written_bytes
+
+
+_EVENT_BUDGETS: dict[str, _EventBudget] = {}
+
+
+def _event_budget(event_path: Path, job_key: str) -> _EventBudget:
+    # Keyed by the concrete path so distinct storage roots (tests, multi-app
+    # processes) never share counters; validated by size so a stale entry from
+    # a restarted Hub is re-derived instead of trusted.
+    cache_key = f"{job_key}:{event_path}"
+    current_size: int | None = None
+    budget = _EVENT_BUDGETS.get(cache_key)
+    if budget is not None:
+        try:
+            current_size = event_path.stat().st_size
+        except OSError:
+            current_size = None
+        if current_size is not None and current_size == budget.expected_size:
+            return budget
+    count, size_bytes = _scan_event_file(event_path)
+    budget = _EventBudget(count, size_bytes)
+    _EVENT_BUDGETS[cache_key] = budget
+    return budget
+
+
+def _scan_event_file(event_path: Path) -> tuple[int, int]:
+    """Count lines and bytes of an existing event log (cold-start budget)."""
+    try:
+        raw = event_path.read_bytes()
+    except OSError:
+        return 0, 0
+    if not raw:
+        return 0, 0
+    return raw.count(b"\n"), len(raw)
 
 
 def _job_state_conflict() -> HubError:

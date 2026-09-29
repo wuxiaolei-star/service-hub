@@ -76,7 +76,7 @@ def _seed_job(
     status: str,
     messages: list[str],
 ) -> None:
-    """Create one Job with its build chain and a real events.jsonl below storage."""
+    """Create one Job with its build chain and a real meta/events.jsonl below storage."""
     with client.app.state.session_factory() as session:
         plugin = Plugin(plugin_key=f"plugin_{job_key}", name="Stream Plugin")
         version = PluginVersion(
@@ -120,7 +120,7 @@ def _seed_job(
             )
         )
         session.commit()
-    log_path = client.app.state.storage.open_relative(f"jobs/{job_key}/logs/events.jsonl")
+    log_path = client.app.state.storage.open_relative(f"jobs/{job_key}/meta/events.jsonl")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
         "".join(_event_line(message) for message in messages),
@@ -156,10 +156,10 @@ def _append_log_lines_later(
     *,
     delay_seconds: float,
 ) -> threading.Timer:
-    """Append more runner events to events.jsonl while the stream is open."""
+    """Append more runner events to meta/events.jsonl while the stream is open."""
 
     def append() -> None:
-        log_path = client.app.state.storage.open_relative(f"jobs/{job_key}/logs/events.jsonl")
+        log_path = client.app.state.storage.open_relative(f"jobs/{job_key}/meta/events.jsonl")
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write("".join(_event_line(message) for message in messages))
 
@@ -363,3 +363,121 @@ def test_stream_viewer_token_allowed_and_anonymous_denied(tmp_path: Path) -> Non
         allowed = client.get("/api/v1/jobs/job_stream_roles/logs/stream", headers=headers)
         assert allowed.status_code == 200
         assert _log_messages(_parse_sse(allowed.text.splitlines())) == ["hello"]
+
+
+# --- Audit M-2: relocation to meta/ and tolerant line decoding ---------------
+
+
+def _write_legacy_log(client: TestClient, job_key: str, text: str) -> None:
+    log_path = client.app.state.storage.open_relative(f"jobs/{job_key}/logs/events.jsonl")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(text, encoding="utf-8")
+
+
+def test_stream_falls_back_to_legacy_logs_location(tmp_path: Path) -> None:
+    """Jobs from before the M-2 relocation must keep streaming from logs/."""
+    with _client(tmp_path) as client:
+        headers = _viewer_headers(client)
+        _seed_job(
+            client,
+            "job_stream_legacy_meta",
+            status="SUCCESS",
+            messages=[],
+        )
+        legacy_key = "job_stream_legacy"
+        _seed_job(client, legacy_key, status="SUCCESS", messages=[])
+        # Only the legacy file exists for this Job: remove the meta copy.
+        client.app.state.storage.open_relative(
+            f"jobs/{legacy_key}/meta/events.jsonl"
+        ).unlink()
+        _write_legacy_log(
+            client,
+            legacy_key,
+            _event_line("old-format") + _event_line("still-works"),
+        )
+
+        response = client.get(
+            f"/api/v1/jobs/{legacy_key}/logs/stream", headers=headers
+        )
+
+        assert response.status_code == 200
+        events = _parse_sse(response.text.splitlines())
+        assert _log_messages(events) == ["old-format", "still-works"]
+        assert events[-1] == ("end", "{}")
+
+
+def test_stream_prefers_meta_over_legacy_when_both_exist(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        headers = _viewer_headers(client)
+        job_key = "job_stream_both"
+        _seed_job(client, job_key, status="SUCCESS", messages=["new-location"])
+        _write_legacy_log(client, job_key, _event_line("old-location"))
+
+        response = client.get(f"/api/v1/jobs/{job_key}/logs/stream", headers=headers)
+
+        assert response.status_code == 200
+        assert _log_messages(_parse_sse(response.text.splitlines())) == ["new-location"]
+
+
+def test_stream_skips_unparsable_lines_without_dying(tmp_path: Path) -> None:
+    """A corrupt legacy line must not 500 the stream or swallow the good events."""
+    with _client(tmp_path) as client:
+        headers = _viewer_headers(client)
+        job_key = "job_stream_corrupt"
+        _seed_job(client, job_key, status="FAILED", messages=["before"])
+        log_path = client.app.state.storage.open_relative(
+            f"jobs/{job_key}/meta/events.jsonl"
+        )
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write('{"protocol_version": "1.0", truncated garbage\n')
+            handle.write("[not, an, object]\n")
+            handle.write(_event_line("after"))
+
+        response = client.get(f"/api/v1/jobs/{job_key}/logs/stream", headers=headers)
+
+        assert response.status_code == 200
+        events = _parse_sse(response.text.splitlines())
+        assert _log_messages(events) == ["before", "after"]
+        assert events[-1] == ("end", "{}")
+
+
+def test_stream_legacy_bad_lines_do_not_poison_the_stream(tmp_path: Path) -> None:
+    """Legacy garbage is skipped and the stream keeps serving its chosen file.
+
+    The read location is resolved once when the stream starts: a stream that
+    began on the legacy file stays on it (mid-stream meta/ creation does not
+    interleave foreign events), and the legacy garbage line is dropped without
+    ending the stream.
+    """
+    with _client(tmp_path) as client:
+        headers = _viewer_headers(client)
+        job_key = "job_stream_mixed_legacy"
+        _seed_job(client, job_key, status="RUNNING", messages=[])
+        client.app.state.storage.open_relative(
+            f"jobs/{job_key}/meta/events.jsonl"
+        ).unlink()
+        _write_legacy_log(
+            client,
+            job_key,
+            'garbage {"broken": \n' + _event_line("legacy-good"),
+        )
+        appended = _append_log_lines_later(
+            client,
+            job_key,
+            ["meta-1"],
+            delay_seconds=0.5,
+        )
+        timer = _complete_job_later(client, job_key, delay_seconds=1.5)
+        appended.start()
+        timer.start()
+        lines = _collect_stream(
+            client,
+            f"/api/v1/jobs/{job_key}/logs/stream",
+            headers,
+        )
+        appended.join()
+        timer.join()
+
+        events = _parse_sse(lines)
+        assert _log_messages(events) == ["legacy-good"]
+        assert events[-1] == ("end", "{}")

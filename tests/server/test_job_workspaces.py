@@ -139,6 +139,7 @@ def test_workspace_copies_input_and_serializes_runtime_spec(
         "work",
         "output",
         "logs",
+        "meta",
         "job.json",
     }
     runtime = JobRuntimeSpec.model_validate_json((workspace / "job.json").read_text("utf-8"))

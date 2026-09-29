@@ -6,7 +6,7 @@ import json
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Annotated, BinaryIO, cast
+from typing import Annotated, BinaryIO
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -17,6 +17,10 @@ from hub_server.dependencies import get_storage
 from hub_server.dependencies_auth import require_role
 from hub_server.errors import HubError
 from hub_server.models import Job
+from hub_server.services.job_events import (
+    decode_event_line,
+    resolve_event_log_path,
+)
 from hub_server.storage import LocalStorage
 
 router = APIRouter(tags=["logs-stream"], dependencies=[Depends(require_role("viewer"))])
@@ -52,7 +56,13 @@ def _event_stream(
     job_key: str,
     workspace_path: str | None,
 ) -> Iterator[str]:
-    """Tail ``<workspace>/logs/events.jsonl`` by byte offset until the Job settles."""
+    """Tail the Job's ``meta/events.jsonl`` by byte offset until it settles.
+
+    Jobs from before the audit-M-2 relocation still stream from their legacy
+    ``logs/events.jsonl`` (see :func:`resolve_event_log_path`). Unparsable
+    lines — possible in hand-migrated legacy files — are skipped instead of
+    tearing down the stream.
+    """
     deadline = time.monotonic() + _STREAM_MAX_SECONDS
     try:
         log_path = _log_path(storage, workspace_path)
@@ -88,14 +98,14 @@ def _event_stream(
                 # never re-sent once its remainder arrives.
                 offset += len(complete_lines) + 1
                 for raw_line in complete_lines.split(b"\n"):
-                    item = _decode_log_item(raw_line)
+                    item = decode_event_line(raw_line)
                     if item is not None:
                         yield _sse_event("log", item)
             if job.status in _TERMINAL_STATUSES:
                 if pending:
                     # The writer is finished and this tail never got its newline;
                     # emit the fragment exactly like the previous full-file read.
-                    item = _decode_log_item(pending)
+                    item = decode_event_line(pending)
                     pending = b""
                     if item is not None:
                         yield _sse_event("log", item)
@@ -116,18 +126,11 @@ def _event_stream(
 def _log_path(storage: LocalStorage, workspace_path: str | None) -> Path | None:
     if workspace_path is None:
         return None
-    return storage.open_relative(f"{workspace_path}/logs/events.jsonl")
+    return resolve_event_log_path(storage, workspace_path)
 
 
 def _load_job(session: Session, job_key: str) -> Job | None:
     return session.scalar(select(Job).where(Job.job_key == job_key))
-
-
-def _decode_log_item(raw_line: bytes) -> dict[str, object] | None:
-    loaded = json.loads(raw_line)
-    if isinstance(loaded, dict):
-        return cast(dict[str, object], loaded)
-    return None
 
 
 def _sse_event(event: str, data: object) -> str:

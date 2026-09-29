@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import queue
 import re
@@ -10,13 +11,20 @@ import tarfile
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Literal
 
 import zstandard
-from python_hub_contracts import JobStatus, RunnerEvent, RuntimeType, parse_runner_line
+from python_hub_contracts import (
+    JobStatus,
+    RunnerEvent,
+    RuntimeType,
+    parse_runner_line,
+    truncate_runner_line,
+)
 
 # Windows-only signal constants: typeshed only declares them for win32, so on a
 # Linux CI mypy (which analyses with --platform linux) rejects a direct module
@@ -40,6 +48,10 @@ class RunnerBuild:
     id: str
     runtime_type: RuntimeType
     runtime_archive: str
+    # sha256 of the conda-pack archive as declared in the (signed) build
+    # manifest and forwarded on the claim (audit L-13): the runner verifies it
+    # before unpacking, mirroring the Docker digest check.
+    fingerprint: str | None = None
     timeout_seconds: int | None = None
 
 
@@ -88,6 +100,11 @@ JobProcessRunner = Callable[..., CommandResult]
 _MAX_ENVIRONMENT_SIZE_BYTES = 20 * 1024 * 1024 * 1024
 _MAX_ENVIRONMENT_MEMBERS = 1_000_000
 _BUILD_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+# Audit M-4: only the trailing slice of plugin stdout/stderr is retained in
+# memory. Events are parsed live as lines arrive; the retained tail backs the
+# fallback re-parse and error summaries when live forwarding did not happen.
+_OUTPUT_TAIL_MAX_BYTES = 8 * 1024 * 1024
+_HASH_CHUNK_SIZE_BYTES = 1024 * 1024
 
 
 class CondaExecutor:
@@ -120,9 +137,21 @@ class CondaExecutor:
             raise ValueError("CondaExecutor only accepts conda-pack builds")
         if _BUILD_ID_PATTERN.fullmatch(build.id) is None:
             return InstallResult(status="FAILED", error_summary="invalid Build ID")
+        # Audit L-13: the conda runtime fingerprint must be verified before the
+        # archive is unpacked, closing the same gap the Docker digest check
+        # already covers. Fail closed when the claim carries no fingerprint.
+        if build.fingerprint is None:
+            return InstallResult(status="FAILED", error_summary="conda runtime fingerprint missing")
         final_root = self._environment_root(build.id)
         temporary_root = self._environments_root / f"{build.id}-{uuid.uuid4().hex}.tmp"
         archive_path = self._safe_data_path(build.runtime_archive)
+        try:
+            if _sha256_file(archive_path) != build.fingerprint:
+                return InstallResult(
+                    status="FAILED", error_summary="conda runtime fingerprint mismatch"
+                )
+        except OSError as error:
+            return InstallResult(status="FAILED", error_summary=str(error)[:2000])
         promoted = False
         try:
             self._environments_root.mkdir(parents=True, exist_ok=True)
@@ -247,7 +276,7 @@ class CondaExecutor:
             )
         if not result.events_forwarded:
             for line in result.stdout.splitlines():
-                event = parse_runner_line(line)
+                event = parse_runner_line(truncate_runner_line(line))
                 if event is not None:
                     self._event_callback(event)
         if result.returncode == 0:
@@ -387,8 +416,8 @@ def _run_job_process(
     for reader in readers:
         reader.start()
 
-    stdout: list[str] = []
-    stderr: list[str] = []
+    stdout_tail = _TailBuffer(_OUTPUT_TAIL_MAX_BYTES)
+    stderr_tail = _TailBuffer(_OUTPUT_TAIL_MAX_BYTES)
     open_streams = len(readers)
     deadline = time.monotonic() + timeout
     termination_reason: Literal["cancelled", "timeout"] | None = None
@@ -416,11 +445,11 @@ def _run_job_process(
                 open_streams -= 1
                 continue
             if source == "stderr":
-                stderr.append(line)
+                stderr_tail.append(line)
                 continue
-            stdout.append(line)
+            stdout_tail.append(line)
             try:
-                event = parse_runner_line(line.rstrip("\r\n"))
+                event = parse_runner_line(truncate_runner_line(line.rstrip("\r\n")))
                 if event is not None:
                     event_callback(event)
             except Exception as error:
@@ -431,19 +460,46 @@ def _run_job_process(
             reader.join(timeout=1)
         returncode = process.wait()
         if control_error is not None:
-            stderr.append(control_error)
+            stderr_tail.append(control_error)
             if returncode == 0:
                 returncode = 1
         return CommandResult(
             returncode=returncode,
-            stdout="".join(stdout),
-            stderr="".join(stderr),
+            stdout=stdout_tail.text(),
+            stderr=stderr_tail.text(),
             termination_reason=termination_reason,
             events_forwarded=True,
         )
     finally:
         if process.poll() is None:
             _terminate_process_group(process)
+
+
+class _TailBuffer:
+    """Retain only the trailing ``max_bytes`` of an append-only text stream.
+
+    Audit M-4: an unbounded plugin stdout would grow the runner's memory with
+    the Job's wall time. Chunks are appended and the oldest ones are dropped
+    once the retained payload exceeds the bound; a single chunk larger than
+    the bound is kept as-is (event lines are small, so the bound holds in
+    practice and no chunk is ever split mid-line).
+    """
+
+    def __init__(self, max_bytes: int) -> None:
+        self._max_bytes = max_bytes
+        self._chunks: deque[tuple[str, int]] = deque()
+        self._size = 0
+
+    def append(self, chunk: str) -> None:
+        size = len(chunk.encode("utf-8", errors="replace"))
+        self._chunks.append((chunk, size))
+        self._size += size
+        while self._size > self._max_bytes and len(self._chunks) > 1:
+            _, dropped_size = self._chunks.popleft()
+            self._size -= dropped_size
+
+    def text(self) -> str:
+        return "".join(chunk for chunk, _ in self._chunks)
 
 
 def _read_process_stream(
@@ -484,6 +540,15 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
     except (OSError, ValueError):
         process.kill()
     process.wait()
+
+
+def _sha256_file(path: Path) -> str:
+    """Stream one file through sha256 without loading it into memory (audit L-13)."""
+    digest = hashlib.sha256()
+    with path.open("rb") as payload:
+        while chunk := payload.read(_HASH_CHUNK_SIZE_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _failed_install(

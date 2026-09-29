@@ -47,12 +47,14 @@ from .plugin_manifest import (
 )
 from .runner_events import (
     RUNNER_EVENT_PREFIX,
+    RUNNER_MESSAGE_MAX_LENGTH,
     LogEvent,
     LogLevel,
     ProgressEvent,
     RunnerEvent,
     RunnerEventParseError,
     parse_runner_line,
+    truncate_runner_line,
 )
 from .signing import (
     SIGNATURE_ALGORITHM,
@@ -70,6 +72,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "RUNNER_EVENT_PREFIX",
+    "RUNNER_MESSAGE_MAX_LENGTH",
     "SIGNATURE_ALGORITHM",
     "CondaPackRuntime",
     "DockerRuntime",
@@ -122,4 +125,5 @@ __all__ = [
     "parse_signature_document",
     "render_signature_document",
     "signature_message",
+    "truncate_runner_line",
 ]

@@ -40,20 +40,30 @@ def _settings(
     tmp_path: Path,
     *,
     resource_limits: RunnerResourceLimitsSettings | _Default | None = _DEFAULT,
+    event_log_max_count: int | None = None,
+    event_log_max_bytes: int | None = None,
 ) -> HubSettings:
     resolved_limits = (
         RunnerResourceLimitsSettings() if resource_limits is _DEFAULT else resource_limits
     )
+    runner = RunnerSettings(
+        shared_token="runner-test-secret",
+        poll_interval_seconds=1,
+        resource_limits=resolved_limits,
+    )
+    overrides: dict[str, object] = {}
+    if event_log_max_count is not None:
+        overrides["event_log_max_count"] = event_log_max_count
+    if event_log_max_bytes is not None:
+        overrides["event_log_max_bytes"] = event_log_max_bytes
+    if overrides:
+        runner = runner.model_copy(update=overrides)
     return HubSettings(
         deployment=DeploymentSettings(mode="offline"),
         storage=StorageSettings(root=tmp_path / "data"),
         database=DatabaseSettings(url=f"sqlite:///{(tmp_path / 'hub.db').as_posix()}"),
         uploads=UploadSettings(max_size_bytes=1024),
-        runner=RunnerSettings(
-            shared_token="runner-test-secret",
-            poll_interval_seconds=1,
-            resource_limits=resolved_limits,
-        ),
+        runner=runner,
         auth=AuthSettings(mode="off"),
         platform_os="linux",
         platform_arch="amd64",
@@ -493,7 +503,9 @@ def test_job_event_starts_job_and_completion_records_terminal_state(
     assert event.json() == {"id": job_key, "status": "RUNNING"}
     assert completion.json() == {"id": job_key, "status": "SUCCESS"}
     settings = client.app.state.settings
-    event_log = settings.storage.root / "jobs" / job_key / "logs" / "events.jsonl"
+    # Audit M-2: the event log lives below meta/, outside the plugin
+    # container's read-write volume map.
+    event_log = settings.storage.root / "jobs" / job_key / "meta" / "events.jsonl"
     assert json.loads(event_log.read_text("utf-8"))["percent"] == 25
     with client.app.state.session_factory() as session:
         persisted = session.scalar(select(Job).where(Job.job_key == job_key))
@@ -612,3 +624,130 @@ def _all_strings(value: object) -> list[str]:
     if isinstance(value, dict):
         return [item for child in value.values() for item in _all_strings(child)]
     return []
+
+
+# --- Audit M-4: per-Job runner-event log caps --------------------------------
+
+
+def _log_event(message: str) -> dict[str, object]:
+    return {
+        "runtime_type": "docker",
+        "event": {
+            "protocol_version": "1.0",
+            "type": "log",
+            "level": "INFO",
+            "message": message,
+        },
+    }
+
+
+def test_job_event_log_caps_count_and_writes_single_system_marker(
+    tmp_path: Path,
+) -> None:
+    """Once the count cap is hit, one system event lands and further drops are silent."""
+    settings = _settings(tmp_path, event_log_max_count=2)
+    with TestClient(create_app(settings)) as test_client:
+        with test_client.app.state.session_factory() as session:
+            job = _seed_pending_job(session, "docker")
+            job_key = job.job_key
+        claim = _runner_post(test_client, "/internal/v1/jobs/claim", {"runtime_type": "docker"})
+        assert claim.status_code == 200
+
+        for index in range(5):
+            response = _runner_post(
+                test_client,
+                f"/internal/v1/jobs/{job_key}/events",
+                _log_event(f"event-{index}"),
+            )
+            assert response.status_code == 200
+
+        event_log = settings.storage.root / "jobs" / job_key / "meta" / "events.jsonl"
+        lines = [json.loads(line) for line in event_log.read_text("utf-8").splitlines()]
+        assert len(lines) == 3  # two accepted events plus one system marker
+        assert lines[0]["message"] == "event-0"
+        assert lines[1]["message"] == "event-1"
+        assert "上限" in lines[2]["message"]
+        assert lines[2]["level"] == "ERROR"
+
+
+def test_job_event_log_caps_bytes(tmp_path: Path) -> None:
+    """The byte cap stops the stream before one Job can fill the data disk."""
+    settings = _settings(tmp_path, event_log_max_bytes=256)
+    with TestClient(create_app(settings)) as test_client:
+        with test_client.app.state.session_factory() as session:
+            job = _seed_pending_job(session, "docker")
+            job_key = job.job_key
+        claim = _runner_post(test_client, "/internal/v1/jobs/claim", {"runtime_type": "docker"})
+        assert claim.status_code == 200
+
+        for index in range(10):
+            response = _runner_post(
+                test_client,
+                f"/internal/v1/jobs/{job_key}/events",
+                _log_event(f"event-{index}" + "x" * 64),
+            )
+            assert response.status_code == 200
+
+        event_log = settings.storage.root / "jobs" / job_key / "meta" / "events.jsonl"
+        raw = event_log.read_bytes()
+        lines = raw.decode("utf-8").splitlines()
+        assert len(lines) < 10
+        marker = json.loads(lines[-1])
+        assert "上限" in marker["message"]
+        assert marker["level"] == "ERROR"
+
+
+# --- Audit M-3 (E-06): output registration failures degrade to one FAILED Job -
+
+
+def test_register_output_failure_fails_job_and_answers_runner_with_200(
+    client: TestClient,
+) -> None:
+    """A Hub-side registration error must not bounce the runner with a 5xx."""
+    with client.app.state.session_factory() as session:
+        job = _seed_pending_job(session, "docker")
+        job_key = job.job_key
+    claim = _runner_post(client, "/internal/v1/jobs/claim", {"runtime_type": "docker"})
+    assert claim.status_code == 200
+
+    # The runner reports an output file that is not on disk below output/ —
+    # register_output raises the HubError JOB_OUTPUT_NOT_FOUND (422). Zero-byte
+    # payloads cannot be used to trip the HubError because the contract itself
+    # rejects size<=0 before the route runs.
+    now = datetime.now(UTC)
+    completion = _runner_post(
+        client,
+        f"/internal/v1/jobs/{job_key}/complete",
+        {
+            "runtime_type": "docker",
+            "exit_code": 0,
+            "result": {
+                "protocol_version": "1.0",
+                "job_id": job_key,
+                "status": "SUCCESS",
+                "started_at": (now - timedelta(seconds=1)).isoformat(),
+                "finished_at": now.isoformat(),
+                "duration_ms": 1000,
+                "message": "complete",
+                "data": {},
+                "files": [
+                    {
+                        "name": "result_files",
+                        "path": "shapefile.zip",
+                        "format": "zip",
+                        "size": 16,
+                        "sha256": "0" * 64,
+                    }
+                ],
+                "error": None,
+            },
+        },
+    )
+
+    # 200 with the degraded terminal state — the runner main loop keeps going.
+    assert completion.status_code == 200
+    assert completion.json() == {"id": job_key, "status": "FAILED"}
+    with client.app.state.session_factory() as session:
+        persisted = session.scalar(select(Job).where(Job.job_key == job_key))
+        assert persisted.status == "FAILED"
+        assert persisted.error_summary.startswith("PLUGIN_OUTPUT_REGISTER_FAILED:")
