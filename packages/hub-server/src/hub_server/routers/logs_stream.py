@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated, BinaryIO
 
@@ -50,13 +51,19 @@ def stream_job_logs(
     )
 
 
-def _event_stream(
+async def _event_stream(
     session_factory: sessionmaker[Session],
     storage: LocalStorage,
     job_key: str,
     workspace_path: str | None,
-) -> Iterator[str]:
+) -> AsyncIterator[str]:
     """Tail the Job's ``meta/events.jsonl`` by byte offset until it settles.
+
+    The poller is an async generator (audit L-10): a sync generator would park
+    one threadpool worker for the full ``_STREAM_MAX_SECONDS`` window per
+    connected client, so a handful of open log streams could exhaust the pool
+    every other request shares. The per-poll session query and file read stay
+    short and are executed inline between awaits.
 
     Jobs from before the audit-M-2 relocation still stream from their legacy
     ``logs/events.jsonl`` (see :func:`resolve_event_log_path`). Unparsable
@@ -114,7 +121,9 @@ def _event_stream(
             if time.monotonic() >= deadline:
                 yield _sse_event("end", {})
                 return
-            time.sleep(_POLL_INTERVAL_SECONDS)
+            # Yield control to the event loop while waiting for the next poll
+            # instead of blocking a threadpool token (audit L-10).
+            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
     except (GeneratorExit, ConnectionResetError):
         # Client disconnects: stop polling immediately without emitting anything.
         return

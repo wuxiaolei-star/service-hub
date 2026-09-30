@@ -5,12 +5,12 @@ from __future__ import annotations
 import secrets
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from hub_server.dependencies import get_session, get_settings
-from hub_server.dependencies_auth import ROLE_ORDER, Actor, get_actor, require_role
+from hub_server.dependencies_auth import ROLE_ORDER, Actor, actor_ip, get_actor, require_role
 from hub_server.errors import HubError
 from hub_server.models import ApiKeyRecord, UserRecord
 from hub_server.services.audit import record as audit
@@ -67,7 +67,10 @@ def list_users(session: Annotated[Session, Depends(get_session)]) -> dict[str, o
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_user(
-    body: CreateUserRequest, session: Annotated[Session, Depends(get_session)]
+    body: CreateUserRequest,
+    request: Request,
+    actor: Annotated[Actor, Depends(get_actor)],
+    session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, object]:
     if session.query(UserRecord).filter(UserRecord.username == body.username).one_or_none():
         raise HubError(
@@ -80,13 +83,14 @@ def create_user(
     session.flush()
     audit(
         session,
-        actor_type="user",
-        actor_id=None,
-        actor_name="admin",
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
         action="user.create",
         resource_type="user",
         resource_id=str(user.id),
         detail={"username": user.username, "role": user.role},
+        ip=actor_ip(request),
     )
     session.commit()
     return _user_response(user)
@@ -105,18 +109,22 @@ def user_usage(
 
 @router.post("/{user_id}/disable")
 def disable_user(
-    user_id: int, session: Annotated[Session, Depends(get_session)]
+    user_id: int,
+    request: Request,
+    actor: Annotated[Actor, Depends(get_actor)],
+    session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, object]:
     user = _get_user(session, user_id)
     user.is_active = False
     audit(
         session,
-        actor_type="user",
-        actor_id=None,
-        actor_name="admin",
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
         action="user.disable",
         resource_type="user",
         resource_id=str(user.id),
+        ip=actor_ip(request),
     )
     session.commit()
     return _user_response(user)
@@ -124,7 +132,10 @@ def disable_user(
 
 @router.post("/{user_id}/reset-password")
 def reset_password(
-    user_id: int, session: Annotated[Session, Depends(get_session)]
+    user_id: int,
+    request: Request,
+    actor: Annotated[Actor, Depends(get_actor)],
+    session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, object]:
     """Reset one user's password and return the one-time plaintext."""
     user = _get_user(session, user_id)
@@ -133,12 +144,13 @@ def reset_password(
     user.must_change_password = True
     audit(
         session,
-        actor_type="user",
-        actor_id=None,
-        actor_name="admin",
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
         action="user.reset_password",
         resource_type="user",
         resource_id=str(user.id),
+        ip=actor_ip(request),
     )
     session.commit()
     return {"username": user.username, "password": password, "must_change_password": True}
@@ -172,6 +184,7 @@ def list_api_keys(
 @key_router.post("", status_code=status.HTTP_201_CREATED)
 def create_api_key(
     body: CreateApiKeyRequest,
+    request: Request,
     actor: Annotated[Actor, Depends(get_actor)],
     session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, object]:
@@ -188,13 +201,14 @@ def create_api_key(
     record, plaintext = service.create_api_key(name=body.name, role=body.role)
     audit(
         session,
-        actor_type="user",
-        actor_id=None,
-        actor_name="admin",
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
         action="api_key.create",
         resource_type="api_key",
         resource_id=str(record.id),
         detail={"name": record.name, "role": record.role},
+        ip=actor_ip(request),
     )
     session.commit()
     return {
@@ -208,7 +222,10 @@ def create_api_key(
 
 @key_router.post("/{key_id}/revoke")
 def revoke_api_key(
-    key_id: int, session: Annotated[Session, Depends(get_session)]
+    key_id: int,
+    request: Request,
+    actor: Annotated[Actor, Depends(get_actor)],
+    session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, object]:
     service = AuthService(session)
     record = session.get(ApiKeyRecord, key_id)
@@ -217,12 +234,13 @@ def revoke_api_key(
     service.revoke_api_key(key_id)
     audit(
         session,
-        actor_type="user",
-        actor_id=None,
-        actor_name="admin",
+        actor_type=actor.kind,
+        actor_id=actor.id,
+        actor_name=actor.name,
         action="api_key.revoke",
         resource_type="api_key",
         resource_id=str(record.id),
+        ip=actor_ip(request),
     )
     session.commit()
     return {"id": record.id, "name": record.name, "revoked": True}

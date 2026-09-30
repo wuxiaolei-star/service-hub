@@ -184,6 +184,66 @@ def test_change_password_audit_row_carries_the_client_address(client: TestClient
     assert entries[0]["ip"] == "203.0.113.9"
 
 
+def test_bootstrap_rotation_removes_the_credential_file(client: TestClient) -> None:
+    """The seed admin's rotation must take bootstrap-admin.json with it (audit L-8).
+
+    The file holds the one-time password in plaintext; leaving it readable on
+    disk after the forced first change keeps the abandoned secret recoverable.
+    """
+    bootstrap_file = client.app.state.settings.storage.root / "bootstrap-admin.json"
+    credentials = _read_bootstrap(client)
+    assert bootstrap_file.is_file()
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": credentials["username"], "password": credentials["password"]},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+    changed = client.post(
+        "/api/v1/auth/change-password",
+        json={"old_password": credentials["password"], "new_password": "brand-new-passw0rd"},
+        headers=headers,
+    )
+
+    assert changed.status_code == 200
+    assert not bootstrap_file.exists()
+
+
+def test_unrelated_rotation_keeps_the_bootstrap_file(client: TestClient) -> None:
+    """Only the file's own owner triggers the cleanup.
+
+    A different user rotating first must not destroy the seed admin's still
+    unread one-time credential, or the admin could be locked out of a fresh
+    deployment.
+    """
+    bootstrap_file = client.app.state.settings.storage.root / "bootstrap-admin.json"
+    assert bootstrap_file.is_file()
+    credentials = _read_bootstrap(client)
+    admin_login = client.post(
+        "/api/v1/auth/login",
+        json={"username": credentials["username"], "password": credentials["password"]},
+    )
+    created = client.post(
+        "/api/v1/users",
+        json={"username": "colleague", "password": "colleague-pass", "role": "operator"},
+        headers={"Authorization": f"Bearer {admin_login.json()['token']}"},
+    )
+    assert created.status_code == 201, created.text
+
+    user_login = client.post(
+        "/api/v1/auth/login",
+        json={"username": "colleague", "password": "colleague-pass"},
+    )
+    changed = client.post(
+        "/api/v1/auth/change-password",
+        json={"old_password": "colleague-pass", "new_password": "colleague-pass-2"},
+        headers={"Authorization": f"Bearer {user_login.json()['token']}"},
+    )
+
+    assert changed.status_code == 200
+    assert bootstrap_file.is_file()
+
+
 def test_bootstrap_writes_file_only_when_users_are_empty(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))):
         bootstrap_file = tmp_path / "data" / "bootstrap-admin.json"

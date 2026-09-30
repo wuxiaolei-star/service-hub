@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from hub_server.main import create_app
-from hub_server.models import FileRecord, UserRecord
+from hub_server.models import FileRecord, Job, UserRecord
 from hub_server.services.auth import hash_password
 from hub_server.services.quotas import QuotaService, UploadCap
 from hub_server.settings import (
@@ -319,3 +319,149 @@ def test_a_stale_precheck_cannot_commit_an_over_quota_upload(
         assert response.json()["error"]["details"]["quota"] == "total_bytes"  # type: ignore[union-attr]
         assert _file_record_count(client) == 0
         assert _stored_payloads(client) == []
+
+
+# --- Job creation: per-user concurrency, PENDING cap, and the rerun route ----
+
+
+def _job_body(file_id: str) -> dict[str, object]:
+    return {
+        "plugin_id": "nc_to_shp",
+        "version": "1.0.0",
+        "runtime_type": "docker",
+        "inputs": {"source_nc": file_id},
+        "params": {},
+    }
+
+
+def _set_job_status(client: TestClient, job_key: str, status_value: str) -> None:
+    with client.app.state.session_factory() as session:
+        job = session.query(Job).filter_by(job_key=job_key).one()
+        job.status = status_value
+        session.commit()
+
+
+def _job_count(client: TestClient) -> int:
+    with client.app.state.session_factory() as session:
+        return session.query(Job).count()
+
+
+def test_rerun_enforces_the_per_user_concurrent_quota(tmp_path: Path) -> None:
+    """A rerun is a fresh creation and pays the same quota as create (audit L-1)."""
+    with _client(tmp_path) as client:
+        _seed_build(client, runtime_type="docker")
+        _add_user(client, "op", "operator", quota_concurrent_jobs=1)
+        token = _token_for(client, "op")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        uploaded = _upload(client, token, b"nc")
+        file_id = uploaded.json()["file_id"]  # type: ignore[union-attr]
+        first = client.post("/api/v1/jobs", headers=headers, json=_job_body(file_id))
+        assert first.status_code == 201
+        original_key = str(first.json()["job_id"])
+        _set_job_status(client, original_key, "FAILED")
+        # A second PENDING Job occupies the operator's only concurrency slot.
+        blocker = client.post("/api/v1/jobs", headers=headers, json=_job_body(file_id))
+        assert blocker.status_code == 201
+
+        rerun = client.post(f"/api/v1/jobs/{original_key}/rerun", headers=headers)
+
+        assert rerun.status_code == 409
+        body = rerun.json()["error"]
+        assert body["code"] == "QUOTA_EXCEEDED"
+        assert body["details"]["quota"] == "concurrent_jobs"
+        assert _job_count(client) == 2
+
+
+def test_a_stale_precheck_cannot_commit_an_over_quota_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The in-transaction quota check decides, not the router pre-check (audit L-2).
+
+    The first ``enforce_job_creation`` call is the router's pre-check; the
+    second runs inside ``JobService.create`` after the Job row is flushed and
+    the write lock is held. A lying pre-check must still end in a rejection
+    with neither a second Job row nor an orphan workspace behind.
+    """
+    with _client(tmp_path) as client:
+        _seed_build(client, runtime_type="docker")
+        _add_user(client, "op", "operator", quota_concurrent_jobs=1)
+        token = _token_for(client, "op")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        uploaded = _upload(client, token, b"nc")
+        file_id = uploaded.json()["file_id"]  # type: ignore[union-attr]
+        first = client.post("/api/v1/jobs", headers=headers, json=_job_body(file_id))
+        assert first.status_code == 201
+        original_key = str(first.json()["job_id"])
+        _set_job_status(client, original_key, "FAILED")
+        # A second PENDING Job occupies the operator's only concurrency slot,
+        # so the truthful quota math rejects the rerun; the pre-check lies.
+        blocker = client.post("/api/v1/jobs", headers=headers, json=_job_body(file_id))
+        assert blocker.status_code == 201
+
+        real = QuotaService.enforce_job_creation
+        calls = {"count": 0}
+
+        def lying_precheck_then_real(
+            self: QuotaService, actor: object, **_kwargs: object
+        ) -> None:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return  # the pre-check lies about available headroom
+            real(self, actor, **_kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(QuotaService, "enforce_job_creation", lying_precheck_then_real)
+
+        rerun = client.post(f"/api/v1/jobs/{original_key}/rerun", headers=headers)
+
+        assert calls["count"] == 2, "the authoritative in-transaction check must run"
+        assert rerun.status_code == 409
+        body = rerun.json()["error"]
+        assert body["code"] == "QUOTA_EXCEEDED"
+        assert body["details"]["quota"] == "concurrent_jobs"
+        assert _job_count(client) == 2
+
+
+def test_pending_jobs_cap_rejects_creation(tmp_path: Path) -> None:
+    """A user's queued PENDING jobs stay bounded even with a roomy
+    concurrency quota (audit L-5): otherwise a stalled runner lets clients
+    queue unbounded work that occupies quota slots without ever running."""
+    quotas = QuotasSettings(max_pending_jobs_per_user=1)
+    with _client(tmp_path, quotas) as client:
+        _seed_build(client, runtime_type="docker")
+        _add_user(client, "op", "operator")
+        token = _token_for(client, "op")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        uploaded = _upload(client, token, b"nc")
+        file_id = uploaded.json()["file_id"]  # type: ignore[union-attr]
+        first = client.post("/api/v1/jobs", headers=headers, json=_job_body(file_id))
+        assert first.status_code == 201
+
+        second = client.post("/api/v1/jobs", headers=headers, json=_job_body(file_id))
+
+        assert second.status_code == 409
+        body = second.json()["error"]
+        assert body["code"] == "USER_PENDING_QUOTA_EXCEEDED"
+        assert body["details"] == {"used": 1, "limit": 1}
+
+
+def test_terminal_jobs_free_the_pending_quota(tmp_path: Path) -> None:
+    """Only PENDING rows count against the cap; finished work does not."""
+    quotas = QuotasSettings(max_pending_jobs_per_user=1)
+    with _client(tmp_path, quotas) as client:
+        _seed_build(client, runtime_type="docker")
+        _add_user(client, "op", "operator")
+        token = _token_for(client, "op")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        uploaded = _upload(client, token, b"nc")
+        file_id = uploaded.json()["file_id"]  # type: ignore[union-attr]
+        first = client.post("/api/v1/jobs", headers=headers, json=_job_body(file_id))
+        assert first.status_code == 201
+        _set_job_status(client, str(first.json()["job_id"]), "FAILED")
+
+        second = client.post("/api/v1/jobs", headers=headers, json=_job_body(file_id))
+
+        assert second.status_code == 201

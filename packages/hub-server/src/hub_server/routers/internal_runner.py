@@ -57,7 +57,13 @@ def _authorize_runner(
     token: Annotated[str | None, Header(alias="X-Hub-Runner-Token")] = None,
 ) -> None:
     expected = settings.runner.shared_token.get_secret_value()
-    if token is None or not hmac.compare_digest(token, expected):
+    # Compare as bytes (audit L-18): header decoding can hand us a str holding
+    # non-ASCII code points, and hmac.compare_digest on such str values raises
+    # TypeError (a 500) instead of comparing. Encoding both sides with errors
+    # ignored keeps the constant-time comparison total; a mangled candidate can
+    # only ever match by already spelling the real secret.
+    supplied = token.encode("utf-8", "ignore") if token is not None else b""
+    if not hmac.compare_digest(supplied, expected.encode("utf-8", "ignore")):
         raise HubError(
             code="RUNNER_AUTH_FAILED",
             message="Runner 身份验证失败",

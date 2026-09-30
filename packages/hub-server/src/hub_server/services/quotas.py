@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+from python_hub_contracts import JobStatus
 from sqlalchemy import ColumnElement, func
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,16 @@ def _quota_exceeded(quota: str, used: int, limit: int) -> HubError:
         message="超出资源配额限制",
         status_code=409,
         details={"quota": quota, "used": used, "limit": limit},
+    )
+
+
+def _pending_quota_exceeded(used: int, limit: int) -> HubError:
+    """Build the stable refusal for a user with too many queued PENDING jobs."""
+    return HubError(
+        code="USER_PENDING_QUOTA_EXCEEDED",
+        message="待处理作业数量超出上限",
+        status_code=409,
+        details={"used": used, "limit": limit},
     )
 
 
@@ -186,8 +197,24 @@ class QuotaService:
             "active_jobs": int(active_jobs or 0),
         }
 
-    def enforce_job_creation(self, actor: Actor) -> None:
-        """Reject job creation beyond the user's concurrent-job limit."""
+    def enforce_job_creation(
+        self, actor: Actor, *, exclude_job_id: int | None = None
+    ) -> None:
+        """Reject job creation beyond a user's concurrent and PENDING limits.
+
+        Called twice per creation (audit L-2): once by the router as a cheap
+        pre-check before the slow workspace staging, and once by
+        ``JobService.create`` *after* the Job row is flushed — at that point
+        this connection already holds SQLite's write lock, so no concurrent
+        creation can commit between the count and our own insert. The second
+        call is the authoritative one; this closes the count-then-insert race
+        the same way ``routers/files.py`` closes it for uploads.
+
+        ``exclude_job_id`` removes the caller's own (already flushed) row from
+        both counts — without it the authoritative pass would always count
+        itself and reject, exactly like ``enforce_upload`` excludes the row it
+        just flushed.
+        """
         if self._is_exempt(actor):
             return
         user = self._user(actor)
@@ -196,13 +223,29 @@ class QuotaService:
         limit = user.quota_concurrent_jobs
         if limit is None:
             limit = self._settings.max_concurrent_jobs
+        active_conditions: list[ColumnElement[bool]] = [
+            Job.owner_user_id == actor.id,
+            Job.status.in_(ACTIVE_JOB_STATUSES),
+        ]
+        pending_conditions: list[ColumnElement[bool]] = [
+            Job.owner_user_id == actor.id,
+            Job.status == JobStatus.PENDING.value,
+        ]
+        if exclude_job_id is not None:
+            # The caller's own flushed row must not count against itself.
+            active_conditions.append(Job.id != exclude_job_id)
+            pending_conditions.append(Job.id != exclude_job_id)
         active = (
-            self._session.query(func.count(Job.id))
-            .filter(
-                Job.owner_user_id == actor.id,
-                Job.status.in_(ACTIVE_JOB_STATUSES),
-            )
-            .scalar()
+            self._session.query(func.count(Job.id)).filter(*active_conditions).scalar()
         )
         if active is not None and active + 1 > limit:
             raise _quota_exceeded("concurrent_jobs", active, limit)
+        # PENDING cap over the user's jobs as a whole (every plugin/build):
+        # queued-but-never-started work must stay bounded even when the
+        # concurrent quota is high or the runner is down (audit L-5).
+        pending_limit = self._settings.max_pending_jobs_per_user
+        pending = (
+            self._session.query(func.count(Job.id)).filter(*pending_conditions).scalar()
+        )
+        if pending is not None and pending + 1 > pending_limit:
+            raise _pending_quota_exceeded(int(pending), pending_limit)

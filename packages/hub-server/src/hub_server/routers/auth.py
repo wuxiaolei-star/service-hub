@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
 from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -30,6 +33,8 @@ from hub_server.settings import HubSettings
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 MIN_PASSWORD_LENGTH = 10
+
+_LOGGER = logging.getLogger(__name__)
 
 # Pre-generated argon2id hash of a throwaway secret (audit L-11). Verifying a
 # submitted password against it for unknown usernames makes the "user does not
@@ -219,12 +224,39 @@ def me(
     }
 
 
+def _discard_bootstrap_credential(settings: HubSettings, username: str) -> None:
+    """Remove the bootstrap credential file once its owner rotates away from it.
+
+    ``main._bootstrap_admin`` drops the seed admin's one-time password into
+    ``<storage root>/bootstrap-admin.json``; leaving it behind after the forced
+    first rotation keeps the old (still-attractive-to-attackers) secret readable
+    on disk (audit L-8). Only the file's own owner triggers the removal, so an
+    unrelated user rotating first cannot destroy the seed admin's unread
+    credential; a corrupt file has no deliverable secret left and is removed.
+    The cleanup is best-effort hygiene and must never fail the rotation.
+    """
+    path = Path(settings.storage.root) / "bootstrap-admin.json"
+    try:
+        if not path.is_file():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            owned = isinstance(payload, dict) and payload.get("username") == username
+        except (OSError, ValueError):
+            owned = True
+        if owned:
+            path.unlink()
+    except OSError:
+        _LOGGER.warning("无法删除 bootstrap 管理员凭据文件: %s", path, exc_info=True)
+
+
 @router.post("/change-password")
 def change_password(
     body: ChangePasswordRequest,
     request: Request,
     actor: Annotated[Actor, Depends(require_role("viewer"))],
     session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[HubSettings, Depends(get_settings)],
 ) -> dict[str, object]:
     """Rotate the current user's password and clear the bootstrap flag."""
     if actor.kind != "user" or actor.id is None:
@@ -253,4 +285,5 @@ def change_password(
         ip=actor_ip(request),
     )
     session.commit()
+    _discard_bootstrap_credential(settings, user.username)
     return {"username": user.username, "must_change_password": False}

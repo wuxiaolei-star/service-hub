@@ -95,7 +95,7 @@ tail -f /opt/service-hub/deploy/ci/releases.log   # 每次上线：commit / 耗�
 
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
-| `HUB_CI_GATE` | `wait` | `wait`：查公开 check-runs API，绿才部署、黄/红扣住、API 失败放行；`strict`：API 失败也扣住；`off`：不查 |
+| `HUB_CI_GATE` | `strict`（2026-09-30 起，原 `wait`） | 查公开 check-runs API，绿才部署、黄/红扣住；`strict`：API 不可达/响应不可读也扣住（审计 L-15，fail-open 只在显式 `wait` 下发生，且每次放行都会向 `releases.log` 记一行 `result=WARNING`）；`wait`：API 失败放行（兼容开关）；`off`：不查 |
 | `DEPLOY_REPO_SLUG` | `wuxiaolei-star/service-hub` | CI 门禁查询的 GitHub 仓库 |
 | `HUB_PIPELINE_GATE` | `0`（跳过） | `1`/`true`/`run` 时在服务器容器内补跑 pytest 质量门；`--run-gate` / `--skip-gate` 参数可逐次覆盖 |
 | `HUB_MIN_FREE_MB` | `2048` | 部署前磁盘水位，低于阈值直接拒绝部署（防备份把盘写满） |

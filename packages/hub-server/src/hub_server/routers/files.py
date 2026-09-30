@@ -625,6 +625,13 @@ def complete_chunked_upload(
 
     service = _file_service(session, storage, settings)
     stored = _merge_chunks(staging, body.total_chunks, upload_id)
+    if stored.size_bytes > settings.uploads.max_size_bytes:
+        # Authoritative re-check over the merged total (audit L-6). The per-chunk
+        # guard compares against a snapshot of the staged bytes taken before the
+        # write, so concurrent part uploads can race past the cap; the merged
+        # total measured here is final, which closes that TOCTOU window.
+        shutil.rmtree(staging, ignore_errors=True)
+        raise UploadTooLargeError(max_size_bytes=settings.uploads.max_size_bytes)
     record = service.install_upload_metadata(
         service.new_file_key(),
         body.filename,

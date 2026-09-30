@@ -141,6 +141,11 @@ class QuotasSettings(StrictSettingsModel):
     max_total_bytes: int = Field(default=1024**4, gt=0)
     max_file_count: int = Field(default=10000, gt=0)
     max_concurrent_jobs: int = Field(default=8, gt=0)
+    # Ceiling on a user's PENDING jobs (audit L-5). The concurrent-job quota
+    # counts non-terminal work, so a stalled runner that never picks Jobs up
+    # would otherwise let a client queue unbounded PENDING rows that occupy
+    # quota slots and workspace-staging effort without ever running.
+    max_pending_jobs_per_user: int = Field(default=10, gt=0)
 
 
 class RetentionSettings(StrictSettingsModel):

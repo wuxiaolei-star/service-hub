@@ -17,7 +17,7 @@
 #   DEPLOY_MODE     branch | tag             (default branch)
 #   DEPLOY_TAG_GLOB tag pattern for tag mode (default 'v*')
 #   DEPLOY_REPO_SLUG GitHub owner/repo used by the CI gate
-#   HUB_CI_GATE     wait (default) | strict | off — hold deployment until the
+#   HUB_CI_GATE     strict (default) | wait | off — hold deployment until the
 #                   commit's GitHub Actions checks conclude (see below)
 #   PIPELINE_ARGS   extra flags for deploy-pipeline.sh, e.g. "--skip-gate"
 #
@@ -107,22 +107,25 @@ fi
 # ships unverified code and deploying after it failed ships known-broken code.
 # For a public repo the check-runs API is readable without credentials, so the
 # poller itself can hold until the commit's checks conclude.
-#   HUB_CI_GATE = wait (default) | strict | off
-#     wait:   deploy on green, hold while pending or red, deploy if the API is
-#             unreachable (a broken API must not brick deployments)
-#     strict: additionally hold when the API is unreachable
+#   HUB_CI_GATE = strict (default) | wait | off
+#     strict: deploy on green, hold while pending, red, or when the API is
+#             unreachable (audit L-15: an unreachable gate must not fail open)
+#     wait:   like strict, but deploys when the API is unreachable; every such
+#             fail-open deployment is recorded as a WARNING in releases.log
 #     off:    never query (e.g. while the repository is private)
-if [ "${HUB_CI_GATE:-wait}" != "off" ]; then
+if [ "${HUB_CI_GATE:-strict}" != "off" ]; then
   REPO_SLUG="${DEPLOY_REPO_SLUG:-wuxiaolei-star/service-hub}"
   GATE_PAYLOAD=$(curl -fsS -m 20 -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/$REPO_SLUG/commits/$TARGET_SHA/check-runs" 2>/dev/null || echo "")
   if [ -z "$GATE_PAYLOAD" ]; then
     log "CI gate: check-runs API unreachable"
-    if [ "${HUB_CI_GATE:-wait}" = "strict" ]; then
+    if [ "${HUB_CI_GATE:-strict}" != "wait" ]; then
       log "CI gate: strict mode, holding this tick"
       exit 0
     fi
-    log "CI gate: deploying anyway (wait mode tolerates API failures)"
+    echo "$(stamp) commit=$TARGET_SHA result=WARNING ci_gate=unreachable mode=wait deployed=anyway" \
+      >> "$REMOTE_DIR/deploy/ci/releases.log"
+    log "CI gate: deploying anyway (wait mode tolerates API failures; WARNING recorded)"
   else
     GATE_VERDICT=$(python3 - "$GATE_PAYLOAD" <<'PY'
 import json, sys
@@ -154,11 +157,13 @@ PY
         exit 0 ;;
       *)
         log "CI gate: API response unreadable"
-        if [ "${HUB_CI_GATE:-wait}" = "strict" ]; then
+        if [ "${HUB_CI_GATE:-strict}" != "wait" ]; then
           log "CI gate: strict mode, holding this tick"
           exit 0
         fi
-        log "CI gate: deploying anyway (wait mode tolerates API failures)" ;;
+        echo "$(stamp) commit=$TARGET_SHA result=WARNING ci_gate=unreadable mode=wait deployed=anyway" \
+          >> "$REMOTE_DIR/deploy/ci/releases.log"
+        log "CI gate: deploying anyway (wait mode tolerates API failures; WARNING recorded)" ;;
     esac
   fi
 fi

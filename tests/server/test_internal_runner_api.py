@@ -751,3 +751,60 @@ def test_register_output_failure_fails_job_and_answers_runner_with_200(
         persisted = session.scalar(select(Job).where(Job.job_key == job_key))
         assert persisted.status == "FAILED"
         assert persisted.error_summary.startswith("PLUGIN_OUTPUT_REGISTER_FAILED:")
+
+
+def test_non_ascii_runner_token_is_rejected_not_500(client: TestClient) -> None:
+    """A header carrying non-ASCII characters must 403, not explode (audit L-18).
+
+    Starlette hands ``hmac.compare_digest`` header strings that can hold
+    non-ASCII code points, on which the str comparison raises TypeError (a
+    500). The comparison now runs on bytes, so any mangled candidate — sent
+    here as raw UTF-8 header bytes at the ASGI layer — is simply refused.
+    """
+    async def call() -> tuple[int, str]:
+        async def receive() -> dict[str, object]:
+            return {
+                "type": "http.request",
+                "body": b'{"runtime_type": "docker"}',
+                "more_body": False,
+            }
+
+        messages: list[dict[str, object]] = []
+
+        async def send(message: dict[str, object]) -> None:
+            messages.append(message)
+
+        await client.app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/internal/v1/jobs/claim",
+                "raw_path": b"/internal/v1/jobs/claim",
+                "query_string": b"",
+                "root_path": "",
+                "headers": [
+                    (b"host", b"testserver"),
+                    (b"content-type", b"application/json"),
+                    (b"x-hub-runner-token", "wrong-τoken-中".encode()),
+                ],
+                "client": ("testclient", 50000),
+                "server": ("testserver", 80),
+            },
+            receive,
+            send,
+        )
+        start = next(m for m in messages if m["type"] == "http.response.start")
+        body = b"".join(
+            bytes(m.get("body") or b"")
+            for m in messages
+            if m["type"] == "http.response.body"
+        )
+        return int(start["status"]), body.decode("utf-8")
+
+    status, payload = client.portal.call(call)
+
+    assert status == 403
+    assert "RUNNER_AUTH_FAILED" in payload

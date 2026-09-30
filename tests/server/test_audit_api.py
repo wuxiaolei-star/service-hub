@@ -113,3 +113,81 @@ def test_audit_logs_support_actor_and_action_filter(client: TestClient) -> None:
     filtered = client.get("/api/v1/audit-logs", params={"action": "user.create"}).json()
     assert all(entry["action"] == "user.create" for entry in filtered["items"])
     assert filtered["items"]
+
+
+def test_user_governance_audit_rows_carry_the_real_actor(client: TestClient) -> None:
+    """Governance rows name the identity that acted, not a hardcoded "admin" (L-9).
+
+    All five users/api-keys mutations used to write ``actor_id=None`` with a
+    literal "admin" name, so an action performed by an operator (or via an API
+    key) was unattributable in the audit trail.
+    """
+    from hub_server.models import AuditLogRecord, UserRecord
+
+    factory = client.app.state.session_factory
+    with factory() as session:
+        admin_id = session.query(UserRecord).filter_by(username="admin").one().id
+
+    created = client.post(
+        "/api/v1/users",
+        json={"username": "governed_op", "password": "long-enough-pass", "role": "operator"},
+    )
+    assert created.status_code == 201
+    user_id = int(created.json()["id"])
+
+    operator_login = client.post(
+        "/api/v1/auth/login", json={"username": "governed_op", "password": "long-enough-pass"}
+    )
+    operator_headers = {"Authorization": f"Bearer {operator_login.json()['token']}"}
+
+    key = client.post(
+        "/api/v1/api-keys",
+        json={"name": "governed-key", "role": "operator"},
+        headers=operator_headers,
+    )
+    assert key.status_code == 201
+    key_id = int(key.json()["id"])
+    revoked = client.post(f"/api/v1/api-keys/{key_id}/revoke", headers=operator_headers)
+    assert revoked.status_code == 200
+
+    assert client.post(f"/api/v1/users/{user_id}/disable").status_code == 200
+    reset = client.post(f"/api/v1/users/{user_id}/reset-password")
+    assert reset.status_code == 200
+
+    with factory() as session:
+        rows = {
+            row.action: row
+            for row in session.query(AuditLogRecord)
+            .filter(
+                AuditLogRecord.action.in_(
+                    [
+                        "user.create",
+                        "user.disable",
+                        "user.reset_password",
+                        "api_key.create",
+                        "api_key.revoke",
+                    ]
+                )
+            )
+            .all()
+        }
+    assert set(rows) == {
+        "user.create",
+        "user.disable",
+        "user.reset_password",
+        "api_key.create",
+        "api_key.revoke",
+    }
+    admin_rows = ("user.create", "user.disable", "user.reset_password")
+    for action in admin_rows:
+        row = rows[action]
+        assert (row.actor_type, row.actor_id, row.actor_name) == ("user", admin_id, "admin")
+        assert row.ip is not None, f"{action} must attribute a source address"
+    for action in ("api_key.create", "api_key.revoke"):
+        row = rows[action]
+        assert (row.actor_type, row.actor_id, row.actor_name) == (
+            "user",
+            user_id,
+            "governed_op",
+        )
+        assert row.ip is not None, f"{action} must attribute a source address"

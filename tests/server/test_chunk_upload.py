@@ -291,6 +291,43 @@ def test_quota_exceeded_at_complete_returns_409_and_cleans_staging(
     assert (_staging_root(client) / upload_id).exists() is False
 
 
+def test_chunk_complete_over_total_cap_returns_413_and_cleans_staging(
+    client: TestClient,
+) -> None:
+    """The merged total is the final word on the file cap (audit L-6).
+
+    The per-part guard compares against a snapshot of the staged bytes taken
+    before each write, so two parts uploaded in parallel can each pass their
+    own check and still race past the cap together. This test plants such a
+    pair directly on disk; the merge must refuse the combined size and leave
+    neither a record nor a staging directory behind.
+    """
+    headers = _operator_headers(client)
+    created = client.post(
+        "/api/v1/files/chunk/init",
+        headers=headers,
+        # A lying declaration: the client promised 1000 bytes but races in more.
+        json={"filename": "big.nc", "total_size": 1000},
+    )
+    upload_id = created.json()["upload_id"]
+    staging = _staging_root(client) / upload_id
+    (staging / "chunk_0000").write_bytes(b"a" * 700)
+    (staging / "chunk_0001").write_bytes(b"b" * 700)
+
+    completed = client.post(
+        f"/api/v1/files/chunk/{upload_id}/complete",
+        headers=headers,
+        json={"filename": "big.nc", "total_chunks": 2},
+    )
+
+    assert completed.status_code == 413
+    assert completed.json()["error"]["code"] == "UPLOAD_TOO_LARGE"
+    factory = client.app.state.session_factory
+    with factory() as session:
+        assert session.query(FileRecord).count() == 0
+    assert staging.exists() is False
+
+
 def test_retention_sweeper_removes_stale_chunk_staging_directories(
     client: TestClient,
 ) -> None:

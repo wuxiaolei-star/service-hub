@@ -9,6 +9,11 @@
 # (single line "username:password", root-owned 0600, never in git). Without either the
 # script says so and exits 0: a missing credential is not a deploy failure.
 #
+# Every dynamic value (credentials, plugin id/version, file id) reaches python
+# through environment variables and is assembled into JSON there (audit L-17):
+# interpolating them into python source or a hand-built JSON string breaks the
+# moment a password contains a quote.
+#
 # Optional environment:
 #   HUB_API_BASE               default http://127.0.0.1:18000/api/v1
 #   HUB_WALKTHROUGH_PLUGIN     default nc_to_shp
@@ -39,28 +44,34 @@ if [ -z "$PASSWORD" ]; then
   exit 0
 fi
 
-TOKEN=$(curl -fsS -X POST "$API_BASE/auth/login" \
-  -H 'Content-Type: application/json' \
-  -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}" \
+# The login/job JSON documents are assembled by python from environment
+# variables: python owns the quoting, so a password containing quotes or
+# backslashes survives intact (audit L-17).
+LOGIN_BODY=$(env WALK_USERNAME="$USERNAME" WALK_PASSWORD="$PASSWORD" python3 -c '
+import json, os
+print(json.dumps({"username": os.environ["WALK_USERNAME"], "password": os.environ["WALK_PASSWORD"]}))
+')
+TOKEN=$(printf '%s' "$LOGIN_BODY" | curl -fsS -X POST "$API_BASE/auth/login" \
+  -H 'Content-Type: application/json' -d @- \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])') \
   || { log "login failed"; exit 1; }
 AUTH="Authorization: Bearer $TOKEN"
 
 PLUGINS=$(curl -fsS -H "$AUTH" "$API_BASE/plugins") \
   || { log "registry unavailable"; exit 1; }
-echo "$PLUGINS" | python3 -c "
-import json, sys
-items = json.load(sys.stdin)['items']
-ids = {item['id'] for item in items}
-sys.exit(0 if '$PLUGIN_ID' in ids else 1)
-" || { log "plugin $PLUGIN_ID missing from the registry"; exit 1; }
+echo "$PLUGINS" | PLUGIN_ID="$PLUGIN_ID" python3 -c '
+import json, os, sys
+items = json.load(sys.stdin)["items"]
+ids = {item["id"] for item in items}
+sys.exit(0 if os.environ["PLUGIN_ID"] in ids else 1)
+' || { log "plugin $PLUGIN_ID missing from the registry"; exit 1; }
 
 if [ -z "${HUB_WALKTHROUGH_VERSION:-}" ]; then
-  PLUGIN_VERSION=$(echo "$PLUGINS" | python3 -c "
-import json, sys
-items = json.load(sys.stdin)['items']
-print(next(item['latest_version'] for item in items if item['id'] == '$PLUGIN_ID'))
-")
+  PLUGIN_VERSION=$(echo "$PLUGINS" | PLUGIN_ID="$PLUGIN_ID" python3 -c '
+import json, os
+items = json.load(sys.stdin)["items"]
+print(next(item["latest_version"] for item in items if item["id"] == os.environ["PLUGIN_ID"]))
+')
 else
   PLUGIN_VERSION="$HUB_WALKTHROUGH_VERSION"
 fi
@@ -79,9 +90,16 @@ FILE_ID=$(curl -fsS -X POST -H "$AUTH" -F "file=@$SAMPLE" "$API_BASE/files" \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["file_id"])') \
   || { log "sample upload failed"; exit 1; }
 
+JOB_BODY=$(env PLUGIN_ID="$PLUGIN_ID" PLUGIN_VERSION="$PLUGIN_VERSION" FILE_ID="$FILE_ID" python3 -c '
+import json, os
+print(json.dumps({
+    "plugin_id": os.environ["PLUGIN_ID"],
+    "version": os.environ["PLUGIN_VERSION"],
+    "inputs": {"source_nc": os.environ["FILE_ID"]},
+}))
+')
 JOB=$(curl -fsS -X POST -H "$AUTH" -H 'Content-Type: application/json' \
-  -d "{\"plugin_id\":\"$PLUGIN_ID\",\"version\":\"$PLUGIN_VERSION\",\"inputs\":{\"source_nc\":\"$FILE_ID\"}}" \
-  "$API_BASE/jobs") \
+  -d "$JOB_BODY" "$API_BASE/jobs") \
   || { log "job creation failed"; exit 1; }
 JOB_KEY=$(echo "$JOB" | python3 -c 'import json, sys; print(json.load(sys.stdin)["job_id"])')
 log "job $JOB_KEY created ($PLUGIN_ID@$PLUGIN_VERSION)"

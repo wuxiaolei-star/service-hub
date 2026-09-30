@@ -85,7 +85,11 @@ def create_job(
         # leave an orphan PENDING Job queued for a runner. Validate the target first;
         # enqueue_callback re-validates when it persists the row.
         normalize_webhook_url(request.callback.url, settings.webhooks)
-    QuotaService(session, settings.quotas).enforce_job_creation(actor)
+    # The router-level check is the cheap pre-check that fails before the slow
+    # workspace staging; JobService.create re-runs it inside its transaction
+    # (after the row flush holds the write lock), and that pass decides (L-2).
+    quota = QuotaService(session, settings.quotas)
+    quota.enforce_job_creation(actor)
     job = JobService(session, storage, settings).create(
         plugin_id=request.plugin_id,
         version=request.version,
@@ -93,6 +97,9 @@ def create_job(
         inputs=request.inputs,
         params=request.params,
         owner_user_id=actor.id if actor.kind == "user" else None,
+        enforce_quota=lambda job: quota.enforce_job_creation(
+            actor, exclude_job_id=job.id
+        ),
     )
     if request.callback is not None:
         enqueue_callback(
@@ -353,6 +360,11 @@ def rerun_job(
     service = JobService(session, storage, settings)
     original = service.terminal_job(job_key)
     plugin_version = original.plugin_build.plugin_version
+    # A rerun is a fresh creation, so it pays the same per-user quota as
+    # create_job — both as a pre-check and inside the creation transaction
+    # (audit L-1: the rerun route used to bypass the concurrency quota).
+    quota = QuotaService(session, settings.quotas)
+    quota.enforce_job_creation(actor)
     job = service.create(
         plugin_id=plugin_version.plugin.plugin_key,
         version=plugin_version.version,
@@ -361,6 +373,9 @@ def rerun_job(
         params=original.params_json,
         owner_user_id=actor.id if actor.kind == "user" else None,
         replayed_from=original.job_key,
+        enforce_quota=lambda job: quota.enforce_job_creation(
+            actor, exclude_job_id=job.id
+        ),
     )
     audit(
         session,

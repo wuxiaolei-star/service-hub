@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import cast
 
@@ -60,6 +60,7 @@ class JobService:
         params: Mapping[str, object],
         owner_user_id: int | None = None,
         replayed_from: str | None = None,
+        enforce_quota: Callable[[Job], None] | None = None,
     ) -> Job:
         selected_runtime: RuntimeType = runtime_type or "docker"
         build = self._resolve_enabled_build(plugin_id, version, selected_runtime)
@@ -100,6 +101,16 @@ class JobService:
         try:
             self._session.add(job)
             self._session.flush()
+            if enforce_quota is not None:
+                # Authoritative per-user quota check (audit L-2). It runs after
+                # the Job row is flushed, so this connection already holds the
+                # write lock and no concurrent creation can commit between the
+                # count and our own insert — the same closure of the
+                # count-then-insert race the upload path applies in
+                # routers/files.py. The flushed Job's id is excluded so the row
+                # does not count against itself. A rejection here rolls back
+                # the flushed row and discards the staged workspace below.
+                enforce_quota(job)
             workspace_service.install(staged, job)
             installed = True
             self._session.commit()

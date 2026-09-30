@@ -481,3 +481,17 @@ def test_stream_legacy_bad_lines_do_not_poison_the_stream(tmp_path: Path) -> Non
         events = _parse_sse(lines)
         assert _log_messages(events) == ["legacy-good"]
         assert events[-1] == ("end", "{}")
+
+
+def test_event_stream_is_an_async_generator() -> None:
+    """The SSE poller must await its sleep, not block a thread (audit L-10).
+
+    A sync generator parked one threadpool worker per connected stream for up
+    to ``_STREAM_MAX_SECONDS``; the async generator yields the event loop back
+    between polls so open log streams cannot exhaust the shared pool.
+    """
+    import inspect
+
+    from hub_server.routers.logs_stream import _event_stream
+
+    assert inspect.isasyncgenfunction(_event_stream)
