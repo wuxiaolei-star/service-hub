@@ -14,6 +14,7 @@ from hub_server.errors import HubError
 from hub_server.models import Job, JobFile, Pipeline, PipelineRun
 from hub_server.services.audit import record as audit
 from hub_server.services.jobs import JobService
+from hub_server.services.quotas import QuotaService
 from hub_server.settings import HubSettings
 from hub_server.storage import LocalStorage
 
@@ -45,6 +46,10 @@ def start_run(
     plugin_id, version, runtime_type, inputs, params = _step_fields(steps[0])
     if _prev_reference(inputs) is not None:
         raise _invalid("首步输入不能引用 $prev 输出")
+    # Audit L-1 同类旁路: 首步 Job 也受每用户配额约束(预检 + 事务内权威校验,
+    # 与 create_job/rerun 一致); 后续步骤由 system 推进, 不做每用户校验。
+    quota = QuotaService(session, settings.quotas)
+    quota.enforce_job_creation(actor)
     job = JobService(session, storage, settings).create(
         plugin_id=plugin_id,
         version=version,
@@ -52,6 +57,9 @@ def start_run(
         inputs=inputs,
         params=params,
         owner_user_id=actor.id if actor.kind == "user" else None,
+        enforce_quota=lambda job: quota.enforce_job_creation(
+            actor, exclude_job_id=job.id
+        ),
     )
     job.pipeline_run_id = run.id
     _audit_step(session, actor, run, step=0, job=job, ip=request_ip)
