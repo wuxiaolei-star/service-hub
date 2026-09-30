@@ -68,7 +68,7 @@ sys.exit(0 if os.environ["PLUGIN_ID"] in ids else 1)
 
 if [ -z "${HUB_WALKTHROUGH_VERSION:-}" ]; then
   PLUGIN_VERSION=$(echo "$PLUGINS" | PLUGIN_ID="$PLUGIN_ID" python3 -c '
-import json, os
+import json, os, sys
 items = json.load(sys.stdin)["items"]
 print(next(item["latest_version"] for item in items if item["id"] == os.environ["PLUGIN_ID"]))
 ')
