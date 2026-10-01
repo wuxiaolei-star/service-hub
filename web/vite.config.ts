@@ -12,6 +12,10 @@ export default defineConfig(({ mode }) => {
       globals: true,
       // antd forms + jsdom are CPU-bound; a fully parallel run on a shared or
       // Windows dev box can starve individual files well past the 5s default.
+      // Two CI timeouts on JobDetailPage under full parallelism (the 656adb3-era
+      // frontend batch and the v1.2 docs push) with zero local failures: run test
+      // files sequentially instead.
+      fileParallelism: false,
       testTimeout: 20_000,
     },
     server: {
